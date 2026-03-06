@@ -1,0 +1,29 @@
+# Pre-commit hooks 配置
+# 安装: pre-commit install
+# 运行: pre-commit run --all-files
+# 文档: https://pre-commit.com
+
+repos:
+  # Ruff - Python代码检查和格式化
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      # Ruff linter
+      - id: ruff
+        args: [--fix]
+        types_or: [python, pyi]
+      
+      # Ruff formatter
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # 基础检查
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace      # 删除行尾空格
+      - id: end-of-file-fixer        # 确保文件以换行符结尾
+      - id: check-yaml               # 检查YAML语法
+      - id: check-added-large-files  # 防止提交大文件
+      - id: check-merge-conflict     # 检查合并冲突标记
+      - id: mixed-line-ending        # 检查混合换行符
