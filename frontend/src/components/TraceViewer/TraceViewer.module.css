@@ -1,0 +1,190 @@
+.container {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+/* Overview */
+.overview {
+    padding: var(--spacing-lg);
+    background: var(--color-bg-primary);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.overviewHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-md);
+}
+
+.overviewHeader h3 {
+    font-size: 1.125rem;
+    margin: 0;
+}
+
+.overviewStats {
+    display: flex;
+    gap: var(--spacing-xl);
+}
+
+.stat {
+    display: flex;
+    flex-direction: column;
+}
+
+.statValue {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+}
+
+.statLabel {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+
+/* Section Title */
+.sectionTitle {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin: 0 0 var(--spacing-md) 0;
+    padding: var(--spacing-md) var(--spacing-lg) 0;
+}
+
+/* Nodes Section */
+.nodesSection {
+    padding: var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.nodesList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.nodeCard {
+    display: flex;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.nodeCard:hover {
+    border-color: var(--color-border-hover);
+}
+
+.nodeCard.selected {
+    border-color: var(--color-brand-primary);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+}
+
+.nodeIndex {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-bg-tertiary);
+    border-radius: 50%;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+}
+
+.nodeInfo {
+    flex: 1;
+}
+
+.nodeHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-xs);
+}
+
+.nodeName {
+    font-weight: 500;
+    color: var(--color-text-primary);
+}
+
+.nodeMeta {
+    display: flex;
+    gap: var(--spacing-md);
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+
+/* Timeline Section */
+.timelineSection {
+    padding: var(--spacing-lg);
+}
+
+.timeline {
+    position: relative;
+    padding-left: 100px;
+}
+
+.timeline::before {
+    content: '';
+    position: absolute;
+    left: 90px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--color-border);
+}
+
+.timelineItem {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) 0;
+}
+
+.timelineTime {
+    position: absolute;
+    left: -100px;
+    width: 80px;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    text-align: right;
+}
+
+.timelineDot {
+    position: absolute;
+    left: -10px;
+    width: 8px;
+    height: 8px;
+    background: var(--color-bg-elevated);
+    border: 2px solid var(--color-brand-primary);
+    border-radius: 50%;
+}
+
+.timelineContent {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--color-bg-primary);
+    border-radius: var(--radius-sm);
+    margin-left: var(--spacing-md);
+}
+
+.timelineIcon {
+    font-size: 0.875rem;
+}
+
+.timelineText {
+    font-size: 0.8125rem;
+    color: var(--color-text-secondary);
+}
