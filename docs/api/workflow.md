@@ -1,0 +1,135 @@
+# Workflow API（核心内容生成链路）
+
+## 统一响应模型
+
+所有 workflow 运行态接口返回：
+
+```json
+{
+  "workflow_run_id": "string",
+  "status": "running|needs_clarification|awaiting_outline_approval|awaiting_fact_check_approval|completed|failed",
+  "state": {}
+}
+```
+
+## 状态流转（简化）
+
+`start -> (needs_clarification?) -> awaiting_outline_approval -> awaiting_fact_check_approval? -> completed`
+
+## 接口清单
+
+### 1) `POST /api/workflow/start`
+
+- 鉴权：当前实现未强制登录
+- 请求体：
+
+```json
+{ "user_input": "写一篇关于 AI Agent 架构的文章" }
+```
+
+- 成功响应（示例）：
+
+```json
+{
+  "workflow_run_id": "wf_123",
+  "status": "running",
+  "state": {}
+}
+```
+
+### 2) `GET /api/workflow/{workflow_run_id}`
+
+- 鉴权：当前实现未强制登录
+- Path 参数：`workflow_run_id: string`
+- 典型错误：`404`（workflow 不存在）
+
+### 3) `POST /api/workflow/{workflow_run_id}/clarify`
+
+- 用途：提交澄清回答（`needs_clarification` 阶段）
+- 请求体：
+
+```json
+{
+  "clarifications": {
+    "audience": "后端工程师",
+    "tone": "正式严谨"
+  }
+}
+```
+
+### 4) `POST /api/workflow/{workflow_run_id}/approve-outline`
+
+- 用途：提纲审批
+- 请求体：
+
+```json
+{
+  "action": "approve",
+  "feedback": "",
+  "modified_outline": null
+}
+```
+
+- `action` 枚举：`approve | modify | regenerate`
+
+### 5) `POST /api/workflow/{workflow_run_id}/approve-fact-check`
+
+- 用途：审批高风险事实项（人机门控关键接口）
+- 请求体：
+
+```json
+{
+  "decisions": {
+    "claim_1": "confirm",
+    "claim_2": "manual"
+  },
+  "manual_corrections": {
+    "claim_2": "修正后的事实描述"
+  }
+}
+```
+
+- `decisions` 枚举值：`confirm | use_suggestion | manual`
+
+### 6) `GET /api/workflow/{workflow_run_id}/rerun-options`
+
+- 用途：获取可重跑节点
+
+### 7) `POST /api/workflow/{workflow_run_id}/rerun`
+
+- 用途：从指定节点重跑
+- 请求体：
+
+```json
+{
+  "from_node": "generate_outline",
+  "updated_input": {},
+  "reason": "用户要求调整结构"
+}
+```
+
+### 8) `GET /api/workflow/{workflow_run_id}/rerun-history`
+
+- 用途：查询重跑历史
+
+## `state` 关键字段约定
+
+- `clarification_questions`: 当前需要回答的问题列表（流程判断入口）
+- `outline`: 提纲对象
+- `fact_check_report`: 事实核查报告
+- `final_content`: 章节内容预览映射，形如：
+
+```json
+{
+  "section_1": {
+    "preview": "前100字符...",
+    "word_count": 523
+  }
+}
+```
+
+## 澄清优先级约定
+
+- `high`: 必答
+- `medium`: 建议回答
+- `low`: 可选
