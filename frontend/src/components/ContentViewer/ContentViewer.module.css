@@ -1,0 +1,176 @@
+.container {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+/* Header */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: var(--spacing-lg);
+    background: var(--color-bg-primary);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.titleSection {
+    flex: 1;
+}
+
+.title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin: 0 0 var(--spacing-sm) 0;
+    background: var(--color-brand-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.stats {
+    display: flex;
+    gap: var(--spacing-md);
+}
+
+.stat {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+}
+
+.exportButtons {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+/* Abstract */
+.abstract {
+    padding: var(--spacing-lg);
+    background: rgba(88, 166, 255, 0.05);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.abstractLabel {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    margin: 0 0 var(--spacing-sm) 0;
+}
+
+.abstract p {
+    margin: 0;
+    line-height: 1.7;
+    color: var(--color-text-secondary);
+}
+
+/* TOC */
+.toc {
+    padding: var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.tocLabel {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    margin: 0 0 var(--spacing-md) 0;
+}
+
+.tocList {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.tocList li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.tocLink {
+    font-size: 0.875rem;
+    color: var(--color-text-primary);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+}
+
+.tocLink:hover {
+    color: var(--color-brand-primary);
+}
+
+.tocWordCount {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+
+/* Content */
+.content {
+    padding: var(--spacing-lg);
+}
+
+.section {
+    margin-bottom: var(--spacing-xl);
+    padding-bottom: var(--spacing-xl);
+    border-bottom: 1px dashed var(--color-border);
+}
+
+.section:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.sectionHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.sectionTitle {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--color-text-primary);
+}
+
+.sectionContent {
+    line-height: 1.8;
+    color: var(--color-text-secondary);
+}
+
+.sectionContent p {
+    margin: 0 0 var(--spacing-md) 0;
+}
+
+.sectionContent p:last-child {
+    margin-bottom: 0;
+}
+
+/* Edit Area */
+.editArea {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.editTextarea {
+    min-height: 200px;
+    font-family: inherit;
+    line-height: 1.8;
+}
+
+.editActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+}

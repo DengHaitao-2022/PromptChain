@@ -1,0 +1,160 @@
+.container {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+}
+
+.title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin: 0 0 var(--spacing-lg) 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Timeline */
+.timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+/* Step */
+.step {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    position: relative;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+}
+
+.step:hover {
+    background: var(--color-bg-tertiary);
+}
+
+.step.current {
+    background: rgba(88, 166, 255, 0.1);
+}
+
+/* Connector line */
+.connector {
+    position: absolute;
+    left: 27px;
+    top: -12px;
+    width: 2px;
+    height: 12px;
+    background: var(--color-border);
+}
+
+.connectorActive {
+    background: var(--color-success);
+}
+
+/* Indicator */
+.indicator {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    transition: all var(--transition-fast);
+}
+
+.pending .indicator {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-muted);
+    border: 2px solid var(--color-border);
+}
+
+.running .indicator {
+    background: rgba(88, 166, 255, 0.2);
+    border: 2px solid var(--color-brand-primary);
+}
+
+.completed .indicator {
+    background: var(--color-success);
+    color: white;
+}
+
+.interrupted .indicator {
+    background: var(--color-warning);
+    color: white;
+}
+
+.failed .indicator {
+    background: var(--color-danger);
+    color: white;
+}
+
+.indicatorIcon {
+    line-height: 1;
+}
+
+/* Spinner */
+.spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(88, 166, 255, 0.3);
+    border-top-color: var(--color-brand-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Info */
+.info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.stepLabel {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--color-text-primary);
+}
+
+.pending .stepLabel {
+    color: var(--color-text-muted);
+}
+
+.stepMeta {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+
+.running .stepMeta {
+    color: var(--color-brand-primary);
+}
+
+.interrupted .stepMeta {
+    color: var(--color-warning);
+}
+
+.failed .stepMeta {
+    color: var(--color-danger);
+}
+
+/* Artifact Badge */
+.artifactBadge {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    padding: 2px 8px;
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-sm);
+}

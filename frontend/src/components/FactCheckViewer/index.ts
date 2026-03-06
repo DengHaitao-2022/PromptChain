@@ -1,0 +1,1 @@
+export { FactCheckViewer } from './FactCheckViewer';
