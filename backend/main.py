@@ -77,6 +77,12 @@ class ClarifyRequest(BaseModel):
     clarifications: Dict[str, str]  # {field: answer}
 
 
+class ApproveFactCheckRequest(BaseModel):
+    """事实核查审批请求"""
+    decisions: Dict[str, str]
+    manual_corrections: Dict[str, str] = {}
+
+
 class WorkflowResponse(BaseModel):
     """工作流响应"""
     workflow_run_id: str
@@ -173,6 +179,31 @@ async def clarify_intent(workflow_run_id: str, request: ClarifyRequest):
             workflow_run_id=result["workflow_run_id"],
             status=result["status"],
             state=simplified_state
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflow/{workflow_run_id}/approve-fact-check", response_model=WorkflowResponse)
+async def approve_fact_check(workflow_run_id: str, request: ApproveFactCheckRequest):
+    """处理事实核查高风险项审批"""
+    from graph import get_workflow
+
+    try:
+        workflow = get_workflow()
+        result = await workflow.resume(
+            workflow_run_id=workflow_run_id,
+            user_input={
+                "fact_check_decisions": request.decisions,
+                "manual_corrections": request.manual_corrections,
+                "awaiting_fact_check_approval": False,
+            },
+        )
+
+        return WorkflowResponse(
+            workflow_run_id=result["workflow_run_id"],
+            status=result["status"],
+            state=_simplify_state(result["state"]),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
