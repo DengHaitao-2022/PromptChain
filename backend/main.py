@@ -401,10 +401,7 @@ def _simplify_state(state: dict) -> dict:
         elif key in ["clarification_questions"]:
             # 转换 Uncertainty 对象
             if isinstance(value, list):
-                simplified[key] = [
-                    q.model_dump() if hasattr(q, "model_dump") else q
-                    for q in value
-                ]
+                simplified[key] = _normalize_clarification_questions(value)
             else:
                 simplified[key] = value
         else:
@@ -434,6 +431,48 @@ def _extract_workflow_status(workflow: Any, workflow_run: Any, graph_state: dict
     if hasattr(raw_status, "value"):
         return str(raw_status.value)
     return str(raw_status)
+
+
+def _map_clarification_priority(value: Any) -> str:
+    """把后端数值优先级映射为前端枚举优先级。"""
+    if isinstance(value, str):
+        if value in {"high", "medium", "low"}:
+            return value
+        try:
+            value = int(value)
+        except ValueError:
+            return "low"
+
+    if isinstance(value, int):
+        if value <= 2:
+            return "high"
+        if value == 3:
+            return "medium"
+        return "low"
+
+    return "low"
+
+
+def _normalize_clarification_questions(items: list[Any]) -> list[dict]:
+    """统一澄清问题输出结构与优先级枚举。"""
+    normalized: list[dict] = []
+    for item in items:
+        if hasattr(item, "model_dump"):
+            question = item.model_dump()
+        elif isinstance(item, dict):
+            question = item
+        else:
+            continue
+
+        normalized.append(
+            {
+                "field": question.get("field"),
+                "question": question.get("question"),
+                "priority": _map_clarification_priority(question.get("priority", 5)),
+                "default_assumption": question.get("default_assumption"),
+            }
+        )
+    return normalized
 
 
 # ==================== 启动 ====================
