@@ -1,0 +1,117 @@
+/* 节点通用样式 */
+.node {
+  min-width: 180px;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: white;
+  border: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.node:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.node.selected {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.nodeContent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview {
+  font-size: 12px;
+  color: #666;
+  background: #f5f5f5;
+  padding: 6px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.hint {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.handle {
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border: 2px solid #94a3b8;
+  transition: all 0.2s ease;
+}
+
+.handle:hover {
+  background: #3b82f6;
+  border-color: #3b82f6;
+}
+
+/* 输入节点 - 蓝色 */
+.inputNode {
+  border-left: 4px solid #3b82f6;
+}
+
+.inputNode .nodeHeader {
+  color: #3b82f6;
+}
+
+/* 处理节点 - 绿色 */
+.processNode {
+  border-left: 4px solid #22c55e;
+}
+
+.processNode .nodeHeader {
+  color: #22c55e;
+}
+
+/* 门控节点 - 黄色 */
+.gateNode {
+  border-left: 4px solid #eab308;
+}
+
+.gateNode .nodeHeader {
+  color: #ca8a04;
+}
+
+/* 核查节点 - 橙色 */
+.checkerNode {
+  border-left: 4px solid #f97316;
+}
+
+.checkerNode .nodeHeader {
+  color: #ea580c;
+}
+
+/* 输出节点 - 紫色 */
+.outputNode {
+  border-left: 4px solid #a855f7;
+}
+
+.outputNode .nodeHeader {
+  color: #9333ea;
+}
