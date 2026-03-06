@@ -1,0 +1,413 @@
+"""
+事实核查节点 (Chain of Verification - CoVe)
+
+实现四步验证链：
+1. 生成基线响应（已由其他节点完成）
+2. 规划验证问题
+3. 独立执行验证（Factored模式，避免确认偏误）
+4. 生成最终修正
+
+Source: Chain of Verification (CoVe) - Meta AI Research
+"""
+from typing import List, Optional
+from datetime import datetime
+from pydantic import BaseModel, Field
+from langchain_core.prompts import ChatPromptTemplate
+
+from models import (
+    FactClaim, 
+    VerificationResult, 
+    FactCheckReport,
+    ArtifactType, 
+    NodeRun, 
+    NodeRunStatus, 
+    LLMCallRecord,
+    HumanDecision
+)
+from services import get_llm, get_structured_llm, get_artifact_store, get_current_model_info
+
+
+# ==================== Prompt 模板 ====================
+
+EXTRACT_CLAIMS_PROMPT = """从以下文章内容中提取所有事实性声明。
+
+事实性声明包括：
+- 数字/统计数据（如"增长了50%"）
+- 日期/时间（如"2024年发布"）
+- 引用/来源（如"根据XXX研究"）
+- 政策/规定（如"按照XXX规定"）
+- 具体事件（如"XXX公司推出了XXX产品"）
+
+## 文章内容
+{content}
+
+## 要求
+1. 仅提取需要核实的事实性声明
+2. 不要提取主观观点或常识性内容
+3. 每个声明应该是独立可验证的
+
+请输出JSON格式的事实声明列表。"""
+
+
+GENERATE_VERIFICATION_QUESTIONS_PROMPT = """为以下事实声明生成验证问题。
+
+## 事实声明
+{claim_text}
+
+## 声明类型
+{claim_category}
+
+## 要求
+生成一个可用于验证此声明真伪的具体问题。
+问题应该：
+1. 具体且可回答
+2. 不包含原声明中的结论
+3. 能够独立验证声明的准确性
+
+请只输出一个验证问题（纯文本，不需要其他格式）。"""
+
+
+EXECUTE_VERIFICATION_PROMPT = """请回答以下问题。
+
+## 问题
+{question}
+
+## 要求
+1. 仅基于你的知识库回答
+2. 如果不确定，请明确表示
+3. 提供尽可能准确的答案
+
+请直接回答问题。"""
+
+
+EVALUATE_CLAIM_PROMPT = """评估以下事实声明的准确性。
+
+## 原始声明
+{claim_text}
+
+## 验证问题
+{verification_question}
+
+## 验证答案
+{verification_answer}
+
+## 要求
+请评估原始声明与验证答案是否一致，输出：
+1. is_verified: 声明是否准确（true/false）
+2. confidence: 置信度（0-1之间的小数）
+3. risk_level: 风险等级（"low"/"medium"/"high"）
+4. suggested_correction: 如果声明不准确，提供建议修正（可为null）
+
+请输出JSON格式。"""
+
+
+# ==================== 结构化输出模型 ====================
+
+class ClaimList(BaseModel):
+    """提取的事实声明列表"""
+    claims: List[FactClaim] = Field(default_factory=list)
+
+
+class VerificationEvaluation(BaseModel):
+    """验证评估结果"""
+    is_verified: bool
+    confidence: float = Field(ge=0, le=1)
+    risk_level: str = Field(pattern="^(low|medium|high)$")
+    suggested_correction: Optional[str] = None
+
+
+# ==================== CoVe 四步验证链 ====================
+
+async def extract_fact_claims(content: str, section_id: str) -> List[FactClaim]:
+    """
+    步骤1：从内容中提取事实性声明
+    """
+    llm = get_structured_llm(ClaimList)
+    prompt = ChatPromptTemplate.from_template(EXTRACT_CLAIMS_PROMPT)
+    chain = prompt | llm
+    
+    result: ClaimList = await chain.ainvoke({"content": content})
+    
+    # 为每个claim设置section_id
+    for claim in result.claims:
+        claim.section_id = section_id
+    
+    return result.claims
+
+
+async def generate_verification_question(claim: FactClaim) -> str:
+    """
+    步骤2：为声明生成验证问题
+    """
+    llm = get_llm(temperature=0.3)
+    prompt = ChatPromptTemplate.from_template(GENERATE_VERIFICATION_QUESTIONS_PROMPT)
+    chain = prompt | llm
+    
+    result = await chain.ainvoke({
+        "claim_text": claim.text,
+        "claim_category": claim.category
+    })
+    
+    return result.content.strip()
+
+
+async def execute_verification(question: str) -> str:
+    """
+    步骤3：独立回答验证问题（Factored模式）
+    
+    关键：不提供原始声明作为上下文，避免确认偏误
+    """
+    llm = get_llm(temperature=0.2)  # 低温度以获得更确定的答案
+    prompt = ChatPromptTemplate.from_template(EXECUTE_VERIFICATION_PROMPT)
+    chain = prompt | llm
+    
+    result = await chain.ainvoke({"question": question})
+    
+    return result.content.strip()
+
+
+async def evaluate_claim_accuracy(
+    claim: FactClaim,
+    verification_question: str,
+    verification_answer: str
+) -> VerificationResult:
+    """
+    步骤4：评估声明准确性
+    """
+    llm = get_structured_llm(VerificationEvaluation)
+    prompt = ChatPromptTemplate.from_template(EVALUATE_CLAIM_PROMPT)
+    chain = prompt | llm
+    
+    evaluation: VerificationEvaluation = await chain.ainvoke({
+        "claim_text": claim.text,
+        "verification_question": verification_question,
+        "verification_answer": verification_answer
+    })
+    
+    return VerificationResult(
+        claim_id=claim.id,
+        is_verified=evaluation.is_verified,
+        confidence=evaluation.confidence,
+        risk_level=evaluation.risk_level,
+        suggested_correction=evaluation.suggested_correction,
+        verification_question=verification_question,
+        verification_answer=verification_answer
+    )
+
+
+# ==================== 主节点函数 ====================
+
+async def check_facts(state: dict) -> dict:
+    """
+    事实核查节点 - 完整的 CoVe 验证链
+    
+    输入 state:
+        - draft_sections: Dict[str, str] 或 final_content
+        - workflow_run_id: str
+    
+    输出更新:
+        - fact_check_report: FactCheckReport
+        - fact_check_artifact_id: str
+        - awaiting_fact_check_approval: bool (如有高风险项)
+    """
+    # 获取要核查的内容
+    content_dict = state.get("final_content") or state.get("draft_sections", {})
+    workflow_run_id = state["workflow_run_id"]
+    store = get_artifact_store()
+    
+    # 创建节点运行记录
+    node_run = NodeRun(
+        workflow_run_id=workflow_run_id,
+        node_name="check_facts",
+        node_type="llm_call",
+        started_at=datetime.utcnow(),
+        status=NodeRunStatus.RUNNING
+    )
+    await store.create_node_run(node_run)
+    
+    try:
+        all_claims: List[FactClaim] = []
+        all_results: List[VerificationResult] = []
+        
+        # 遍历每个章节提取并验证事实声明
+        for section_id, content in content_dict.items():
+            # 步骤1：提取事实声明
+            start_time = datetime.utcnow()
+            claims = await extract_fact_claims(content, section_id)
+            end_time = datetime.utcnow()
+            
+            all_claims.extend(claims)
+            
+            # 记录LLM调用（动态获取模型配置）
+            model_info = get_current_model_info()
+            llm_call = LLMCallRecord(
+                model=model_info["model"],
+                provider=model_info["provider"],
+                latency_ms=int((end_time - start_time).total_seconds() * 1000),
+                prompt_preview=f"Extract claims from section {section_id}",
+                response_preview=f"Found {len(claims)} claims"
+            )
+            node_run.llm_calls.append(llm_call)
+            
+            # 对每个声明执行 CoVe 验证
+            for claim in claims:
+                # 步骤2：生成验证问题
+                start_time = datetime.utcnow()
+                question = await generate_verification_question(claim)
+                
+                # 步骤3：独立执行验证
+                answer = await execute_verification(question)
+                
+                # 步骤4：评估准确性
+                result = await evaluate_claim_accuracy(claim, question, answer)
+                end_time = datetime.utcnow()
+                
+                all_results.append(result)
+                
+                # 记录LLM调用
+                llm_call = LLMCallRecord(
+                    model="gpt-4o",
+                    provider="openai",
+                    latency_ms=int((end_time - start_time).total_seconds() * 1000),
+                    prompt_preview=f"Verify: {claim.text[:50]}...",
+                    response_preview=f"Verified: {result.is_verified}, Risk: {result.risk_level}"
+                )
+                node_run.llm_calls.append(llm_call)
+        
+        # 生成报告
+        report = FactCheckReport(
+            claims=all_claims,
+            results=all_results
+        )
+        report.compute_stats()
+        
+        # 创建 Artifact
+        artifact = await store.create_artifact(
+            type=ArtifactType.FACT_CHECK_REPORT,
+            content=report.model_dump(),
+            workflow_run_id=workflow_run_id,
+            node_run_id=node_run.id
+        )
+        node_run.output_artifact_ids.append(artifact.id)
+        
+        # 如果有高风险项，标记为需要用户确认
+        if report.has_high_risk_items():
+            node_run.status = NodeRunStatus.INTERRUPTED
+            await store.update_node_run(node_run)
+            
+            return {
+                **state,
+                "fact_check_report": report,
+                "fact_check_artifact_id": artifact.id,
+                "awaiting_fact_check_approval": True
+            }
+        
+        # 无高风险项，直接完成
+        node_run.complete(NodeRunStatus.COMPLETED)
+        await store.update_node_run(node_run)
+        
+        return {
+            **state,
+            "fact_check_report": report,
+            "fact_check_artifact_id": artifact.id,
+            "awaiting_fact_check_approval": False
+        }
+        
+    except Exception as e:
+        node_run.complete(NodeRunStatus.FAILED, str(e))
+        await store.update_node_run(node_run)
+        raise
+
+
+async def approve_fact_check(state: dict) -> dict:
+    """
+    处理用户对事实核查结果的审批
+    
+    输入 state:
+        - fact_check_report: FactCheckReport
+        - fact_check_decisions: Dict[claim_id, decision]
+          decision: "confirm" | "use_suggestion" | "manual"
+        - manual_corrections: Dict[claim_id, correction_text]
+    """
+    report: FactCheckReport = state["fact_check_report"]
+    decisions = state.get("fact_check_decisions", {})
+    manual_corrections = state.get("manual_corrections", {})
+    workflow_run_id = state["workflow_run_id"]
+    store = get_artifact_store()
+    
+    # 创建节点运行记录
+    node_run = NodeRun(
+        workflow_run_id=workflow_run_id,
+        node_name="approve_fact_check",
+        node_type="user_input",
+        started_at=datetime.utcnow(),
+        status=NodeRunStatus.RUNNING
+    )
+    await store.create_node_run(node_run)
+    
+    try:
+        # 应用用户决策
+        corrections_to_apply = {}
+        
+        for claim_id, decision in decisions.items():
+            # 找到对应的结果
+            result = next((r for r in report.results if r.claim_id == claim_id), None)
+            claim = next((c for c in report.claims if c.id == claim_id), None)
+            
+            if not result or not claim:
+                continue
+            
+            if decision == "confirm":
+                # 用户确认无误，标记为已验证
+                result.is_verified = True
+                result.risk_level = "low"
+            elif decision == "use_suggestion" and result.suggested_correction:
+                # 采用系统建议的修正
+                corrections_to_apply[claim.section_id] = {
+                    "original": claim.text,
+                    "replacement": result.suggested_correction
+                }
+            elif decision == "manual" and claim_id in manual_corrections:
+                # 使用用户手动提供的修正
+                corrections_to_apply[claim.section_id] = {
+                    "original": claim.text,
+                    "replacement": manual_corrections[claim_id]
+                }
+        
+        # 记录人工决策
+        node_run.human_decision = HumanDecision(
+            decision_type="modify" if corrections_to_apply else "approve",
+            user_input=str(decisions)
+        )
+        
+        # 更新报告
+        report.compute_stats()
+        
+        # 创建新版本 Artifact
+        artifact = await store.create_artifact(
+            type=ArtifactType.FACT_CHECK_REPORT,
+            content=report.model_dump(),
+            workflow_run_id=workflow_run_id,
+            node_run_id=node_run.id,
+            parent_version_id=state.get("fact_check_artifact_id"),
+            metadata={
+                "user_decisions": decisions,
+                "corrections_applied": corrections_to_apply
+            }
+        )
+        node_run.output_artifact_ids.append(artifact.id)
+        node_run.complete(NodeRunStatus.COMPLETED)
+        await store.update_node_run(node_run)
+        
+        return {
+            **state,
+            "fact_check_report": report,
+            "fact_check_artifact_id": artifact.id,
+            "awaiting_fact_check_approval": False,
+            "fact_corrections": corrections_to_apply
+        }
+        
+    except Exception as e:
+        node_run.complete(NodeRunStatus.FAILED, str(e))
+        await store.update_node_run(node_run)
+        raise
