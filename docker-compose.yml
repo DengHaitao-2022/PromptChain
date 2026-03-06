@@ -37,6 +37,7 @@ services:
       retries: 5
 
   # 后端服务 (可选，也可本地运行)
+  # 本地开发推荐直接使用: uv run uvicorn main:app --reload
   # backend:
   #   build: ./backend
   #   container_name: promptchain-backend
