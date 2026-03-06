@@ -1,0 +1,42 @@
+/* 工作流编辑器容器样式 */
+.editorContainer {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+    background: #f8fafc;
+}
+
+/* 画布区域 */
+.canvas {
+    flex: 1;
+    height: 100%;
+}
+
+/* 面板样式 */
+.panel {
+    display: flex;
+    gap: 8px;
+}
+
+/* 保存按钮 */
+.saveButton {
+    padding: 8px 16px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+}
+
+.saveButton:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
+}
+
+.saveButton:active {
+    transform: translateY(0);
+}
