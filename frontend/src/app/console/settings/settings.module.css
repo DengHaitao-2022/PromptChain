@@ -1,0 +1,251 @@
+/* 设置页面通用样式 */
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.title {
+    font-size: 28px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 8px 0;
+}
+
+.subtitle {
+    color: #6b7280;
+    margin: 0 0 32px 0;
+}
+
+.section {
+    margin-bottom: 32px;
+}
+
+.sectionTitle {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0 0 16px 0;
+}
+
+/* 表单元素 */
+.inviteForm {
+    display: flex;
+    gap: 12px;
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.input {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.input:focus {
+    outline: none;
+    border-color: #6366f1;
+}
+
+.select {
+    padding: 10px 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+    background: white;
+    min-width: 120px;
+}
+
+.button {
+    padding: 10px 20px;
+    background: #6366f1;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.button:hover:not(:disabled) {
+    background: #5558dd;
+}
+
+.button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* 列表 */
+.list {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.listItem {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.listItem:last-child {
+    border-bottom: none;
+}
+
+.avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 16px;
+    text-transform: uppercase;
+}
+
+.itemInfo {
+    flex: 1;
+}
+
+.itemName {
+    font-weight: 500;
+    color: #1f2937;
+}
+
+.itemMeta {
+    font-size: 13px;
+    color: #6b7280;
+}
+
+.itemRole {
+    text-align: right;
+}
+
+.roleTag {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.roleTag.owner {
+    background: #fef3c7;
+    color: #d97706;
+}
+
+.roleTag.admin {
+    background: #dbeafe;
+    color: #2563eb;
+}
+
+.roleTag.editor {
+    background: #d1fae5;
+    color: #059669;
+}
+
+.roleTag.viewer {
+    background: #f3f4f6;
+    color: #6b7280;
+}
+
+/* 卡片样式 */
+.card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.cardHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.cardTitle {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0;
+}
+
+/* 表格 */
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th,
+.table td {
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 14px;
+}
+
+.table th {
+    background: #f9fafb;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.table td {
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.table tr:last-child td {
+    border-bottom: none;
+}
+
+/* 加载和空状态 */
+.loading {
+    display: flex;
+    justify-content: center;
+    padding: 40px;
+}
+
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid #e5e7eb;
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.empty {
+    text-align: center;
+    padding: 48px;
+    background: white;
+    border-radius: 12px;
+    color: #6b7280;
+}
+
+.dangerButton {
+    color: #dc2626;
+    background: none;
+    border: 1px solid #dc2626;
+}
+
+.dangerButton:hover {
+    background: #fee2e2;
+}
