@@ -58,3 +58,6 @@ def test_clarification_questions_are_exposed_with_enum_priority(monkeypatch):
     q = res.json()["state"]["clarification_questions"][0]
     assert q["priority"] in {"high", "medium", "low"}
     assert "field" in q and "question" in q
+    gate = res.json()["state"]["gate"]
+    assert gate["gate_type"] == "clarification"
+    assert gate["questions"][0]["default_assumption"] == "轻松活泼"

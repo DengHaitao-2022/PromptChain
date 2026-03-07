@@ -6,11 +6,13 @@
 2. /api/trace - Trace 回放 API
 3. WebSocket - 实时状态推送
 """
+from datetime import UTC, datetime
+import os
+from typing import Any, Dict, Literal, Optional
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, Dict, Any, List
-import os
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -60,6 +62,19 @@ app.include_router(version_router, prefix="/api", tags=["workflow-version"])
 
 # ==================== 请求/响应模型 ====================
 
+WorkflowStatus = Literal[
+    "running",
+    "paused",
+    "needs_clarification",
+    "awaiting_outline_approval",
+    "awaiting_fact_check_approval",
+    "completed",
+    "failed",
+]
+OutlineAction = Literal["approve", "modify", "regenerate"]
+FactCheckDecision = Literal["confirm", "use_suggestion", "manual"]
+
+
 class StartWorkflowRequest(BaseModel):
     """启动工作流请求"""
     user_input: str
@@ -67,7 +82,7 @@ class StartWorkflowRequest(BaseModel):
 
 class ApproveOutlineRequest(BaseModel):
     """提纲审批请求"""
-    action: str  # "approve" | "modify" | "regenerate"
+    action: OutlineAction
     feedback: Optional[str] = ""
     modified_outline: Optional[Dict[str, Any]] = None
 
@@ -79,14 +94,24 @@ class ClarifyRequest(BaseModel):
 
 class ApproveFactCheckRequest(BaseModel):
     """事实核查审批请求"""
-    decisions: Dict[str, str]
-    manual_corrections: Dict[str, str] = {}
+    decisions: Dict[str, FactCheckDecision]
+    manual_corrections: Dict[str, str] = Field(default_factory=dict)
+
+
+class PauseWorkflowRequest(BaseModel):
+    """手动暂停工作流请求"""
+    reason: Optional[str] = None
+
+
+class ResumeWorkflowRequest(BaseModel):
+    """恢复手动暂停的工作流请求"""
+    pass
 
 
 class WorkflowResponse(BaseModel):
     """工作流响应"""
     workflow_run_id: str
-    status: str
+    status: WorkflowStatus
     state: Dict[str, Any]
 
 
@@ -116,15 +141,16 @@ async def start_workflow(request: StartWorkflowRequest):
     try:
         workflow = get_workflow()
         result = await workflow.start(request.user_input)
-
-        # 简化状态返回（移除大型对象的详细内容）
-        simplified_state = _simplify_state(result["state"])
-
-        return WorkflowResponse(
+        workflow_run = await _get_workflow_run_if_exists(result["workflow_run_id"])
+        status = _normalize_status(result["status"])
+        return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
-            status=result["status"],
-            state=simplified_state
+            status=status,
+            state=result["state"],
+            workflow_run=workflow_run,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -139,24 +165,29 @@ async def approve_outline(workflow_run_id: str, request: ApproveOutlineRequest):
     - modify: 修改提纲（需提供 modified_outline）
     - regenerate: 重新生成（可提供 feedback）
     """
-    from graph import get_workflow
-
     try:
-        workflow = get_workflow()
+        _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
+        _assert_status(
+            status,
+            allowed={"awaiting_outline_approval"},
+            action="提纲审批",
+            paused_detail="当前工作流已手动暂停，请先恢复后再处理提纲审批。",
+        )
         result = await workflow.approve_outline(
             workflow_run_id=workflow_run_id,
             action=request.action,
             feedback=request.feedback or "",
             modified_outline=request.modified_outline
         )
-
-        simplified_state = _simplify_state(result["state"])
-
-        return WorkflowResponse(
+        refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+        return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
-            status=result["status"],
-            state=simplified_state
+            status=_normalize_status(result["status"]),
+            state=result["state"],
+            workflow_run=refreshed_workflow_run,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -164,22 +195,27 @@ async def approve_outline(workflow_run_id: str, request: ApproveOutlineRequest):
 @app.post("/api/workflow/{workflow_run_id}/clarify", response_model=WorkflowResponse)
 async def clarify_intent(workflow_run_id: str, request: ClarifyRequest):
     """提供澄清回答"""
-    from graph import get_workflow
-
     try:
-        workflow = get_workflow()
+        _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
+        _assert_status(
+            status,
+            allowed={"needs_clarification"},
+            action="澄清提交",
+            paused_detail="当前工作流已手动暂停，请先恢复后再提交澄清回答。",
+        )
         result = await workflow.resume(
             workflow_run_id=workflow_run_id,
             user_input={"user_clarifications": request.clarifications}
         )
-
-        simplified_state = _simplify_state(result["state"])
-
-        return WorkflowResponse(
+        refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+        return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
-            status=result["status"],
-            state=simplified_state
+            status=_normalize_status(result["status"]),
+            state=result["state"],
+            workflow_run=refreshed_workflow_run,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -187,10 +223,14 @@ async def clarify_intent(workflow_run_id: str, request: ClarifyRequest):
 @app.post("/api/workflow/{workflow_run_id}/approve-fact-check", response_model=WorkflowResponse)
 async def approve_fact_check(workflow_run_id: str, request: ApproveFactCheckRequest):
     """处理事实核查高风险项审批"""
-    from graph import get_workflow
-
     try:
-        workflow = get_workflow()
+        _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
+        _assert_status(
+            status,
+            allowed={"awaiting_fact_check_approval"},
+            action="事实核查审批",
+            paused_detail="当前工作流已手动暂停，请先恢复后再处理事实核查审批。",
+        )
         result = await workflow.resume(
             workflow_run_id=workflow_run_id,
             user_input={
@@ -199,12 +239,15 @@ async def approve_fact_check(workflow_run_id: str, request: ApproveFactCheckRequ
                 "awaiting_fact_check_approval": False,
             },
         )
-
-        return WorkflowResponse(
+        refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+        return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
-            status=result["status"],
-            state=_simplify_state(result["state"]),
+            status=_normalize_status(result["status"]),
+            state=result["state"],
+            workflow_run=refreshed_workflow_run,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -212,23 +255,87 @@ async def approve_fact_check(workflow_run_id: str, request: ApproveFactCheckRequ
 @app.get("/api/workflow/{workflow_run_id}", response_model=WorkflowResponse)
 async def get_workflow_status(workflow_run_id: str):
     """获取工作流状态"""
-    from services import get_artifact_store
-    from graph import get_workflow
-
-    store = get_artifact_store()
-    workflow_run = await store.get_workflow_run(workflow_run_id)
-
-    if not workflow_run:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-
-    workflow = get_workflow()
-    graph_state = await _get_graph_state(workflow, workflow_run_id)
-    status = _extract_workflow_status(workflow, workflow_run, graph_state)
-
-    return WorkflowResponse(
+    _, _, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+    return _build_workflow_response(
         workflow_run_id=workflow_run_id,
         status=status,
-        state=_simplify_state(graph_state),
+        state=graph_state,
+        workflow_run=workflow_run,
+    )
+
+
+@app.post("/api/workflow/{workflow_run_id}/pause", response_model=WorkflowResponse)
+async def pause_workflow(workflow_run_id: str, request: PauseWorkflowRequest):
+    """用户主动暂停工作流。"""
+    from models import WorkflowRunStatus
+
+    store, _, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+
+    if status in _GATE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="当前工作流正在等待人工 Gate，请使用对应审批接口继续。",
+        )
+    if status in {"completed", "failed"}:
+        raise HTTPException(status_code=409, detail="当前工作流已结束，无法暂停。")
+    if status == "paused":
+        return _build_workflow_response(
+            workflow_run_id=workflow_run_id,
+            status="paused",
+            state=graph_state,
+            workflow_run=workflow_run,
+        )
+
+    metadata = _ensure_workflow_metadata(workflow_run)
+    pause_state = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
+    pause_state.update(
+        {
+            "reason": request.reason,
+            "paused_at": pause_state.get("paused_at") or _now_iso(),
+            "source": "user",
+        }
+    )
+    metadata["pause"] = pause_state
+    workflow_run.status = WorkflowRunStatus.PAUSED
+    await store.update_workflow_run(workflow_run)
+
+    return _build_workflow_response(
+        workflow_run_id=workflow_run_id,
+        status="paused",
+        state=graph_state,
+        workflow_run=workflow_run,
+    )
+
+
+@app.post("/api/workflow/{workflow_run_id}/resume", response_model=WorkflowResponse)
+async def resume_workflow(workflow_run_id: str, _: ResumeWorkflowRequest):
+    """恢复用户手动暂停的工作流。"""
+    from models import WorkflowRunStatus
+
+    store, _, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+    raw_status = _get_workflow_run_status(workflow_run)
+
+    if status in _GATE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="当前工作流处于 Gate 等待态，请使用澄清或审批接口继续。",
+        )
+    if status != "paused" and raw_status != "paused":
+        raise HTTPException(status_code=409, detail="当前工作流未处于手动暂停状态。")
+
+    metadata = _ensure_workflow_metadata(workflow_run)
+    pause_state = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
+    pause_state["paused_at"] = pause_state.get("paused_at") or _now_iso()
+    pause_state["resumed_at"] = _now_iso()
+    metadata["pause"] = pause_state
+    workflow_run.status = WorkflowRunStatus.RUNNING
+    await store.update_workflow_run(workflow_run)
+
+    return _build_workflow_response(
+        workflow_run_id=workflow_run_id,
+        status="running",
+        state=graph_state,
+        workflow_run=workflow_run,
     )
 
 
@@ -238,11 +345,27 @@ async def get_workflow_status(workflow_run_id: str):
 async def get_workflow_trace(workflow_run_id: str):
     """获取工作流完整追踪"""
     from services import get_trace_service
+    from graph import get_workflow
+    from services import get_artifact_store
 
     try:
         trace_service = get_trace_service()
         trace = await trace_service.get_workflow_trace(workflow_run_id)
-        return trace
+        store = get_artifact_store()
+        workflow_run = await store.get_workflow_run(workflow_run_id)
+        if not workflow_run:
+            raise ValueError(f"WorkflowRun not found: {workflow_run_id}")
+
+        workflow = get_workflow()
+        graph_state = await _get_graph_state(workflow, workflow_run_id)
+        status = _extract_workflow_status(workflow, workflow_run, graph_state)
+
+        return _normalize_trace_payload(
+            trace,
+            workflow_run=workflow_run,
+            graph_state=graph_state,
+            status=status,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -375,7 +498,81 @@ async def get_rerun_history(workflow_run_id: str):
 
 # ==================== 工具函数 ====================
 
-def _simplify_state(state: dict) -> dict:
+_GATE_STATUS_TO_TYPE: dict[str, str] = {
+    "needs_clarification": "clarification",
+    "awaiting_outline_approval": "outline_approval",
+    "awaiting_fact_check_approval": "fact_check",
+}
+_GATE_STATUSES = set(_GATE_STATUS_TO_TYPE)
+
+
+def _normalize_status(value: Any) -> WorkflowStatus:
+    normalized = str(value)
+    if normalized not in {
+        "running",
+        "paused",
+        "needs_clarification",
+        "awaiting_outline_approval",
+        "awaiting_fact_check_approval",
+        "completed",
+        "failed",
+    }:
+        return "running"
+    return normalized  # type: ignore[return-value]
+
+
+def _build_workflow_response(
+    workflow_run_id: str,
+    status: WorkflowStatus,
+    state: dict,
+    workflow_run: Any | None = None,
+) -> WorkflowResponse:
+    return WorkflowResponse(
+        workflow_run_id=workflow_run_id,
+        status=status,
+        state=_simplify_state(state, workflow_run=workflow_run, status=status),
+    )
+
+
+async def _get_workflow_run_if_exists(workflow_run_id: str) -> Any | None:
+    from services import get_artifact_store
+
+    store = get_artifact_store()
+    return await store.get_workflow_run(workflow_run_id)
+
+
+async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, dict, WorkflowStatus]:
+    from graph import get_workflow
+    from services import get_artifact_store
+
+    store = get_artifact_store()
+    workflow_run = await store.get_workflow_run(workflow_run_id)
+    if not workflow_run:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    workflow = get_workflow()
+    graph_state = await _get_graph_state(workflow, workflow_run_id)
+    status = _extract_workflow_status(workflow, workflow_run, graph_state)
+    return store, workflow, workflow_run, graph_state, status
+
+
+def _assert_status(
+    current_status: WorkflowStatus,
+    *,
+    allowed: set[WorkflowStatus],
+    action: str,
+    paused_detail: str,
+) -> None:
+    if current_status == "paused":
+        raise HTTPException(status_code=409, detail=paused_detail)
+    if current_status not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"当前工作流状态为 {current_status}，不能执行{action}。",
+        )
+
+
+def _simplify_state(state: dict, *, workflow_run: Any | None = None, status: WorkflowStatus | None = None) -> dict:
     """简化状态返回，移除大型对象"""
     simplified = {}
 
@@ -407,6 +604,22 @@ def _simplify_state(state: dict) -> dict:
         else:
             simplified[key] = value
 
+    current_node = state.get("current_node") or getattr(workflow_run, "current_node", None)
+    if current_node:
+        simplified["current_node"] = current_node
+
+    error = state.get("error")
+    if error:
+        simplified["error"] = error
+
+    pause = _normalize_pause_state(workflow_run)
+    if pause:
+        simplified["pause"] = pause
+
+    gate = _normalize_gate_state(status, state, workflow_run)
+    if gate:
+        simplified["gate"] = gate
+
     return simplified
 
 
@@ -423,14 +636,53 @@ async def _get_graph_state(workflow: Any, workflow_run_id: str) -> dict:
 
 
 def _extract_workflow_status(workflow: Any, workflow_run: Any, graph_state: dict) -> str:
-    """优先使用图状态推导状态，缺失时回退到 WorkflowRun 状态字段。"""
+    """优先使用图状态推导 Gate/终态，再回退到 WorkflowRun 持久化状态。"""
+    graph_status: str | None = None
     if graph_state:
-        return workflow._get_workflow_status(graph_state)
+        graph_status = workflow._get_workflow_status(graph_state)
+        if graph_status in _GATE_STATUSES:
+            return graph_status
+        if graph_status in {"completed", "failed"}:
+            return graph_status
+        if graph_state.get("error"):
+            return "failed"
 
+    raw_status = _get_workflow_run_status(workflow_run)
+    if raw_status == "paused":
+        return "paused"
+    if raw_status in {"completed", "failed"}:
+        return raw_status
+    if graph_status:
+        return graph_status
+    return "running"
+
+
+def _get_workflow_run_status(workflow_run: Any) -> str:
     raw_status = getattr(workflow_run, "status", "running")
     if hasattr(raw_status, "value"):
         return str(raw_status.value)
     return str(raw_status)
+
+
+def _ensure_workflow_metadata(workflow_run: Any) -> dict[str, Any]:
+    metadata = getattr(workflow_run, "metadata", None)
+    if isinstance(metadata, dict):
+        return metadata
+    metadata = {}
+    setattr(workflow_run, "metadata", metadata)
+    return metadata
+
+
+def _coerce_iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    return str(value)
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _map_clarification_priority(value: Any) -> str:
@@ -473,6 +725,180 @@ def _normalize_clarification_questions(items: list[Any]) -> list[dict]:
             }
         )
     return normalized
+
+
+def _coerce_mapping(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump()
+    return value if isinstance(value, dict) else {}
+
+
+def _normalize_pause_state(workflow_run: Any | None) -> dict[str, Any] | None:
+    if workflow_run is None:
+        return None
+
+    metadata = _ensure_workflow_metadata(workflow_run)
+    pause_state = metadata.get("pause")
+    if not isinstance(pause_state, dict):
+        return None
+
+    return {
+        "reason": pause_state.get("reason"),
+        "paused_at": _coerce_iso(pause_state.get("paused_at")),
+        "resumed_at": _coerce_iso(pause_state.get("resumed_at")),
+        "source": pause_state.get("source") or "user",
+    }
+
+
+def _build_outline_gate_questions(state: dict) -> list[dict[str, Any]]:
+    outline = _coerce_mapping(state.get("outline"))
+    sections = outline.get("sections")
+    question: dict[str, Any] = {
+        "question": "请确认当前提纲是否可以进入正文生成。",
+        "action_options": ["approve", "modify", "regenerate"],
+    }
+    if isinstance(sections, list):
+        question["section_count"] = len(sections)
+    if isinstance(outline.get("total_target_words"), int):
+        question["target_words"] = outline["total_target_words"]
+    return [question]
+
+
+def _build_fact_check_gate_questions(state: dict) -> list[dict[str, Any]]:
+    report = _coerce_mapping(state.get("fact_check_report"))
+    results = report.get("results")
+    if not isinstance(results, list):
+        return []
+
+    questions: list[dict[str, Any]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if result.get("risk_level") != "high":
+            continue
+        questions.append(
+            {
+                "claim_id": result.get("claim_id"),
+                "question": result.get("verification_question"),
+                "risk_level": result.get("risk_level"),
+                "suggested_correction": result.get("suggested_correction"),
+            }
+        )
+    return questions
+
+
+def _normalize_gate_state(
+    status: WorkflowStatus | None,
+    state: dict,
+    workflow_run: Any | None,
+) -> dict[str, Any] | None:
+    if status not in _GATE_STATUSES:
+        return None
+
+    metadata = _ensure_workflow_metadata(workflow_run) if workflow_run is not None else {}
+    gate_metadata = metadata.get("gate") if isinstance(metadata.get("gate"), dict) else {}
+    gate_type = gate_metadata.get("gate_type") or _GATE_STATUS_TO_TYPE[status]
+
+    if gate_type == "clarification":
+        questions = _normalize_clarification_questions(state.get("clarification_questions", []))
+        answers = state.get("user_clarifications")
+        trigger_reason = gate_metadata.get("trigger_reason") or "missing_information"
+    elif gate_type == "outline_approval":
+        questions = gate_metadata.get("questions") or _build_outline_gate_questions(state)
+        answers = state.get("user_decision")
+        trigger_reason = gate_metadata.get("trigger_reason") or "outline_review"
+    else:
+        questions = gate_metadata.get("questions") or _build_fact_check_gate_questions(state)
+        answers = state.get("fact_check_decisions") or state.get("manual_corrections")
+        trigger_reason = gate_metadata.get("trigger_reason") or "fact_risk"
+
+    return {
+        "gate_type": gate_type,
+        "trigger_reason": trigger_reason,
+        "questions": questions,
+        "answers": answers or gate_metadata.get("answers"),
+        "opened_at": _coerce_iso(gate_metadata.get("opened_at")),
+        "handled_at": _coerce_iso(gate_metadata.get("handled_at")),
+        "resolution": gate_metadata.get("resolution"),
+    }
+
+
+def _normalize_trace_payload(
+    trace: dict[str, Any],
+    *,
+    workflow_run: Any,
+    graph_state: dict,
+    status: WorkflowStatus,
+) -> dict[str, Any]:
+    workflow_payload = dict(trace.get("workflow") or {})
+    workflow_payload["status"] = status
+
+    current_node = graph_state.get("current_node") or workflow_payload.get("current_node") or getattr(workflow_run, "current_node", None)
+    if current_node:
+        workflow_payload["current_node"] = current_node
+
+    pause = _normalize_pause_state(workflow_run)
+    if pause:
+        workflow_payload["pause"] = pause
+
+    gate = _normalize_gate_state(status, graph_state, workflow_run)
+    if gate:
+        workflow_payload["gate"] = gate
+
+    error = graph_state.get("error")
+    if error:
+        workflow_payload["error"] = error
+
+    return {
+        **trace,
+        "workflow": workflow_payload,
+        "timeline": _enrich_timeline(trace.get("timeline", []), workflow_run, graph_state, status),
+    }
+
+
+def _enrich_timeline(
+    timeline: list[dict[str, Any]],
+    workflow_run: Any,
+    graph_state: dict,
+    status: WorkflowStatus,
+) -> list[dict[str, Any]]:
+    events = [dict(event) for event in timeline]
+    event_names = {event.get("event") for event in events}
+    current_node = graph_state.get("current_node") or getattr(workflow_run, "current_node", None)
+
+    pause = _normalize_pause_state(workflow_run)
+    if pause and pause.get("paused_at") and "workflow_paused" not in event_names:
+        events.append(
+            {
+                "timestamp": pause["paused_at"],
+                "event": "workflow_paused",
+                "current_node": current_node,
+                "reason": pause.get("reason"),
+            }
+        )
+    if pause and pause.get("resumed_at") and "workflow_resumed" not in event_names:
+        events.append(
+            {
+                "timestamp": pause["resumed_at"],
+                "event": "workflow_resumed",
+                "current_node": current_node,
+            }
+        )
+
+    gate = _normalize_gate_state(status, graph_state, workflow_run)
+    if gate and "workflow_gate_waiting" not in event_names:
+        events.append(
+            {
+                "timestamp": gate.get("opened_at") or _coerce_iso(getattr(workflow_run, "started_at", None)) or _now_iso(),
+                "event": "workflow_gate_waiting",
+                "gate_type": gate["gate_type"],
+                "questions": gate.get("questions", []),
+                "current_node": current_node,
+            }
+        )
+
+    events.sort(key=lambda event: event.get("timestamp") or "")
+    return events
 
 
 # ==================== 启动 ====================
