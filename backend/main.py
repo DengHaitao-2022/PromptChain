@@ -78,6 +78,8 @@ FactCheckDecision = Literal["confirm", "use_suggestion", "manual"]
 class StartWorkflowRequest(BaseModel):
     """启动工作流请求"""
     user_input: str
+    workflow_definition_id: Optional[str] = None
+    workflow_version_id: Optional[str] = None
 
 
 class ApproveOutlineRequest(BaseModel):
@@ -140,7 +142,11 @@ async def start_workflow(request: StartWorkflowRequest):
 
     try:
         workflow = get_workflow()
-        result = await workflow.start(request.user_input)
+        result = await workflow.start(
+            request.user_input,
+            workflow_definition_id=request.workflow_definition_id,
+            workflow_version_id=request.workflow_version_id,
+        )
         workflow_run = await _get_workflow_run_if_exists(result["workflow_run_id"])
         status = _normalize_status(result["status"])
         return _build_workflow_response(
@@ -151,6 +157,79 @@ async def start_workflow(request: StartWorkflowRequest):
         )
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflow/{workflow_run_id}/pause", response_model=WorkflowResponse)
+async def pause_workflow(workflow_run_id: str, request: PauseWorkflowRequest):
+    """用户主动暂停工作流。"""
+    try:
+        _, workflow, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+
+        if status in _GATE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail="当前工作流正在等待人工 Gate，请使用对应审批接口继续。",
+            )
+        if status in {"completed", "failed"}:
+            raise HTTPException(status_code=409, detail="当前工作流已结束，无法暂停。")
+        if status == "paused":
+            return _build_workflow_response(
+                workflow_run_id=workflow_run_id,
+                status="paused",
+                state=graph_state,
+                workflow_run=workflow_run,
+            )
+
+        result = await workflow.pause(
+            workflow_run_id=workflow_run_id,
+            reason=request.reason or "",
+        )
+
+        refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+        return _build_workflow_response(
+            workflow_run_id=result["workflow_run_id"],
+            status=_normalize_status(result["status"]),
+            state=result["state"],
+            workflow_run=refreshed_workflow_run,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflow/{workflow_run_id}/resume", response_model=WorkflowResponse)
+async def resume_workflow(workflow_run_id: str, _: ResumeWorkflowRequest):
+    """恢复用户手动暂停的工作流。"""
+    try:
+        _, workflow, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+        raw_status = _get_workflow_run_status(workflow_run)
+
+        if status in _GATE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail="当前工作流处于 Gate 等待态，请使用澄清或审批接口继续。",
+            )
+        if status != "paused" and raw_status != "paused":
+            raise HTTPException(status_code=409, detail="当前工作流未处于手动暂停状态。")
+
+        result = await workflow.resume_paused(workflow_run_id)
+        refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+
+        return _build_workflow_response(
+            workflow_run_id=result["workflow_run_id"],
+            status=_normalize_status(result["status"]),
+            state=result["state"],
+            workflow_run=refreshed_workflow_run,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
