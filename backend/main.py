@@ -63,6 +63,8 @@ app.include_router(version_router, prefix="/api", tags=["workflow-version"])
 class StartWorkflowRequest(BaseModel):
     """启动工作流请求"""
     user_input: str
+    workflow_definition_id: Optional[str] = None
+    workflow_version_id: Optional[str] = None
 
 
 class ApproveOutlineRequest(BaseModel):
@@ -81,6 +83,16 @@ class ApproveFactCheckRequest(BaseModel):
     """事实核查审批请求"""
     decisions: Dict[str, str]
     manual_corrections: Dict[str, str] = {}
+
+
+class PauseWorkflowRequest(BaseModel):
+    """手动暂停工作流请求"""
+    reason: Optional[str] = ""
+
+
+class ResumeWorkflowRequest(BaseModel):
+    """手动恢复工作流请求"""
+    pass
 
 
 class WorkflowResponse(BaseModel):
@@ -115,7 +127,11 @@ async def start_workflow(request: StartWorkflowRequest):
 
     try:
         workflow = get_workflow()
-        result = await workflow.start(request.user_input)
+        result = await workflow.start(
+            request.user_input,
+            workflow_definition_id=request.workflow_definition_id,
+            workflow_version_id=request.workflow_version_id,
+        )
 
         # 简化状态返回（移除大型对象的详细内容）
         simplified_state = _simplify_state(result["state"])
@@ -125,6 +141,49 @@ async def start_workflow(request: StartWorkflowRequest):
             status=result["status"],
             state=simplified_state
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflow/{workflow_run_id}/pause", response_model=WorkflowResponse)
+async def pause_workflow(workflow_run_id: str, request: PauseWorkflowRequest):
+    """用户主动暂停工作流。"""
+    from graph import get_workflow
+
+    try:
+        workflow = get_workflow()
+        result = await workflow.pause(
+            workflow_run_id=workflow_run_id,
+            reason=request.reason or "",
+        )
+
+        return WorkflowResponse(
+            workflow_run_id=result["workflow_run_id"],
+            status=result["status"],
+            state=_simplify_state(result["state"]),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflow/{workflow_run_id}/resume", response_model=WorkflowResponse)
+async def resume_workflow(workflow_run_id: str, _: ResumeWorkflowRequest):
+    """恢复用户手动暂停的工作流。"""
+    from graph import get_workflow
+
+    try:
+        workflow = get_workflow()
+        result = await workflow.resume_paused(workflow_run_id)
+
+        return WorkflowResponse(
+            workflow_run_id=result["workflow_run_id"],
+            status=result["status"],
+            state=_simplify_state(result["state"]),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -424,13 +483,24 @@ async def _get_graph_state(workflow: Any, workflow_run_id: str) -> dict:
 
 def _extract_workflow_status(workflow: Any, workflow_run: Any, graph_state: dict) -> str:
     """优先使用图状态推导状态，缺失时回退到 WorkflowRun 状态字段。"""
-    if graph_state:
-        return workflow._get_workflow_status(graph_state)
-
     raw_status = getattr(workflow_run, "status", "running")
-    if hasattr(raw_status, "value"):
-        return str(raw_status.value)
-    return str(raw_status)
+    persisted_status = str(raw_status.value) if hasattr(raw_status, "value") else str(raw_status)
+
+    if graph_state:
+        graph_status = workflow._get_workflow_status(graph_state)
+        if graph_status in {
+            "needs_clarification",
+            "awaiting_outline_approval",
+            "awaiting_fact_check_approval",
+        }:
+            return graph_status
+        if persisted_status == "paused":
+            return "paused"
+        if persisted_status in {"completed", "failed"}:
+            return persisted_status
+        return graph_status
+
+    return persisted_status
 
 
 def _map_clarification_priority(value: Any) -> str:
