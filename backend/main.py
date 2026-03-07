@@ -6,10 +6,10 @@
 2. /api/trace - Trace 回放 API
 3. WebSocket - 实时状态推送
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 import os
 from dotenv import load_dotenv
 
@@ -34,7 +34,7 @@ app.add_middleware(
 # ==================== 注册路由 ====================
 
 # 认证路由
-from routes.auth_routes import router as auth_router
+from routes.auth_routes import get_current_user, router as auth_router
 app.include_router(auth_router, prefix="/api", tags=["auth"])
 
 # 工作空间路由
@@ -90,6 +90,28 @@ class WorkflowResponse(BaseModel):
     state: Dict[str, Any]
 
 
+async def require_workspace_permission(user: dict, resource: str, action: str) -> str:
+    """按当前 access_token 中的工作空间上下文校验权限。"""
+    from db.postgres_store import get_postgres_store
+    from services.permission_service import PermissionService
+
+    user_id = user.get("sub") or user.get("id")
+    workspace_id = user.get("workspace_id")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="请先选择工作空间")
+
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        permission_service = PermissionService(session)
+        await permission_service.require_permission(user_id, workspace_id, resource, action)
+
+    return workspace_id
+
+
 # ==================== API 路由 ====================
 
 @app.get("/")
@@ -103,7 +125,7 @@ async def root():
 
 
 @app.post("/api/workflow/start", response_model=WorkflowResponse)
-async def start_workflow(request: StartWorkflowRequest):
+async def start_workflow(request: StartWorkflowRequest, user: dict = Depends(get_current_user)):
     """
     启动新的内容生成工作流
 
@@ -114,6 +136,7 @@ async def start_workflow(request: StartWorkflowRequest):
     from graph import get_workflow
 
     try:
+        await require_workspace_permission(user, "workflow", "execute")
         workflow = get_workflow()
         result = await workflow.start(request.user_input)
 
@@ -125,12 +148,18 @@ async def start_workflow(request: StartWorkflowRequest):
             status=result["status"],
             state=simplified_state
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/workflow/{workflow_run_id}/approve-outline", response_model=WorkflowResponse)
-async def approve_outline(workflow_run_id: str, request: ApproveOutlineRequest):
+async def approve_outline(
+    workflow_run_id: str,
+    request: ApproveOutlineRequest,
+    user: dict = Depends(get_current_user),
+):
     """
     处理提纲审批
 
@@ -142,6 +171,7 @@ async def approve_outline(workflow_run_id: str, request: ApproveOutlineRequest):
     from graph import get_workflow
 
     try:
+        await require_workspace_permission(user, "workflow", "execute")
         workflow = get_workflow()
         result = await workflow.approve_outline(
             workflow_run_id=workflow_run_id,
@@ -157,16 +187,23 @@ async def approve_outline(workflow_run_id: str, request: ApproveOutlineRequest):
             status=result["status"],
             state=simplified_state
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/workflow/{workflow_run_id}/clarify", response_model=WorkflowResponse)
-async def clarify_intent(workflow_run_id: str, request: ClarifyRequest):
+async def clarify_intent(
+    workflow_run_id: str,
+    request: ClarifyRequest,
+    user: dict = Depends(get_current_user),
+):
     """提供澄清回答"""
     from graph import get_workflow
 
     try:
+        await require_workspace_permission(user, "workflow", "execute")
         workflow = get_workflow()
         result = await workflow.resume(
             workflow_run_id=workflow_run_id,
@@ -180,16 +217,23 @@ async def clarify_intent(workflow_run_id: str, request: ClarifyRequest):
             status=result["status"],
             state=simplified_state
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/workflow/{workflow_run_id}/approve-fact-check", response_model=WorkflowResponse)
-async def approve_fact_check(workflow_run_id: str, request: ApproveFactCheckRequest):
+async def approve_fact_check(
+    workflow_run_id: str,
+    request: ApproveFactCheckRequest,
+    user: dict = Depends(get_current_user),
+):
     """处理事实核查高风险项审批"""
     from graph import get_workflow
 
     try:
+        await require_workspace_permission(user, "workflow", "execute")
         workflow = get_workflow()
         result = await workflow.resume(
             workflow_run_id=workflow_run_id,
@@ -205,17 +249,20 @@ async def approve_fact_check(workflow_run_id: str, request: ApproveFactCheckRequ
             status=result["status"],
             state=_simplify_state(result["state"]),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/workflow/{workflow_run_id}", response_model=WorkflowResponse)
-async def get_workflow_status(workflow_run_id: str):
+async def get_workflow_status(workflow_run_id: str, user: dict = Depends(get_current_user)):
     """获取工作流状态"""
     from services import get_artifact_store
     from graph import get_workflow
 
     store = get_artifact_store()
+    await require_workspace_permission(user, "workflow_run", "read")
     workflow_run = await store.get_workflow_run(workflow_run_id)
 
     if not workflow_run:
@@ -235,40 +282,47 @@ async def get_workflow_status(workflow_run_id: str):
 # ==================== Trace API ====================
 
 @app.get("/api/trace/{workflow_run_id}")
-async def get_workflow_trace(workflow_run_id: str):
+async def get_workflow_trace(workflow_run_id: str, user: dict = Depends(get_current_user)):
     """获取工作流完整追踪"""
     from services import get_trace_service
 
     try:
+        await require_workspace_permission(user, "workflow_run", "read")
         trace_service = get_trace_service()
         trace = await trace_service.get_workflow_trace(workflow_run_id)
         return trace
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/trace/node/{node_run_id}")
-async def get_node_detail(node_run_id: str):
+async def get_node_detail(node_run_id: str, user: dict = Depends(get_current_user)):
     """获取节点运行详情"""
     from services import get_trace_service
 
     try:
+        await require_workspace_permission(user, "workflow_run", "read")
         trace_service = get_trace_service()
         detail = await trace_service.get_node_detail(node_run_id)
         return detail
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/artifact/{artifact_id}")
-async def get_artifact(artifact_id: str):
+async def get_artifact(artifact_id: str, user: dict = Depends(get_current_user)):
     """获取 Artifact 详情"""
     from services import get_artifact_store
 
+    await require_workspace_permission(user, "workflow_run", "read")
     store = get_artifact_store()
     artifact = await store.get_artifact(artifact_id)
 
@@ -279,27 +333,33 @@ async def get_artifact(artifact_id: str):
 
 
 @app.get("/api/artifact/{artifact_id}/history")
-async def get_artifact_history(artifact_id: str):
+async def get_artifact_history(artifact_id: str, user: dict = Depends(get_current_user)):
     """获取 Artifact 版本历史"""
     from services import get_trace_service
 
     try:
+        await require_workspace_permission(user, "workflow_run", "read")
         trace_service = get_trace_service()
         history = await trace_service.get_artifact_history(artifact_id)
         return history
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/workflow/{workflow_run_id}/rerun-options")
-async def get_rerun_options(workflow_run_id: str):
+async def get_rerun_options(workflow_run_id: str, user: dict = Depends(get_current_user)):
     """获取可重跑的节点列表"""
     from services import get_rerun_service
 
     try:
+        await require_workspace_permission(user, "workflow_run", "read")
         rerun_service = get_rerun_service()
         options = await rerun_service.get_rerun_options(workflow_run_id)
         return {"options": options}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -312,7 +372,11 @@ class RerunRequest(BaseModel):
 
 
 @app.post("/api/workflow/{workflow_run_id}/rerun")
-async def rerun_workflow(workflow_run_id: str, request: RerunRequest):
+async def rerun_workflow(
+    workflow_run_id: str,
+    request: RerunRequest,
+    user: dict = Depends(get_current_user),
+):
     """
     从指定节点重跑工作流
 
@@ -322,6 +386,7 @@ async def rerun_workflow(workflow_run_id: str, request: RerunRequest):
     from graph import get_workflow
 
     try:
+        await require_workspace_permission(user, "workflow", "execute")
         rerun_service = get_rerun_service()
 
         # 1. 准备重跑状态
@@ -356,19 +421,24 @@ async def rerun_workflow(workflow_run_id: str, request: RerunRequest):
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/workflow/{workflow_run_id}/rerun-history")
-async def get_rerun_history(workflow_run_id: str):
+async def get_rerun_history(workflow_run_id: str, user: dict = Depends(get_current_user)):
     """获取工作流的重跑历史"""
     from services import get_rerun_service
 
     try:
+        await require_workspace_permission(user, "workflow_run", "read")
         rerun_service = get_rerun_service()
         history = await rerun_service.get_rerun_history(workflow_run_id)
         return {"history": history}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

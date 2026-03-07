@@ -3,18 +3,19 @@
 
 提供模型配置、密钥管理、API Key 管理、审计日志、Dashboard 等功能
 """
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime, timedelta
 import uuid
 import secrets
 import hashlib
 
-from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from db.postgres_store import get_postgres_store
+from services.auth_service import AuthService
 from services.permission_service import PermissionService
-from models.auth_models import MemberRole
+from models.auth_models import UserStatus
 from models.admin_models import (
     ModelProvider, ModelProviderCreate, ModelProviderUpdate, ModelProviderType,
     Secret, SecretCreate, SecretResponse,
@@ -23,6 +24,7 @@ from models.admin_models import (
     DashboardStats,
 )
 from models.admin_orm import ModelProviderORM, SecretORM, ApiKeyORM, AuditLogORM
+from models.auth_orm import MembershipORM, UserORM
 from routes.auth_routes import get_current_user
 
 from sqlalchemy.future import select
@@ -30,6 +32,12 @@ from sqlalchemy import and_, func, desc
 
 
 router = APIRouter()
+
+
+class UpdateUserStatusRequest(BaseModel):
+    """更新账号状态请求"""
+
+    status: UserStatus
 
 
 # ==================== 辅助函数 ====================
@@ -92,19 +100,19 @@ async def get_dashboard(request: Request):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
-        # 检查权限
+        # Dashboard 属于管理后台资源，普通成员不应访问。
         permission_service = PermissionService(session)
-        await permission_service.require_permission(user_id, workspace_id, "workflow", "read")
-        
+        await permission_service.require_permission(user_id, workspace_id, "member", "read")
+
         # 获取统计数据（使用现有的 workflow_runs 表）
         from models.artifact import WorkflowRunStatus
         from db.postgres_store import WorkflowRunORM
-        
+
         today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        
+
         # 今日运行次数
         result = await session.execute(
             select(func.count(WorkflowRunORM.id)).where(
@@ -112,7 +120,7 @@ async def get_dashboard(request: Request):
             )
         )
         today_runs = result.scalar() or 0
-        
+
         # 今日成功运行
         result = await session.execute(
             select(func.count(WorkflowRunORM.id)).where(
@@ -123,7 +131,7 @@ async def get_dashboard(request: Request):
             )
         )
         today_success = result.scalar() or 0
-        
+
         # 今日失败运行
         result = await session.execute(
             select(func.count(WorkflowRunORM.id)).where(
@@ -134,7 +142,7 @@ async def get_dashboard(request: Request):
             )
         )
         today_failed = result.scalar() or 0
-        
+
         # 今日平均耗时
         result = await session.execute(
             select(func.avg(WorkflowRunORM.total_duration_ms)).where(
@@ -145,22 +153,21 @@ async def get_dashboard(request: Request):
             )
         )
         today_avg_duration = result.scalar() or 0
-        
+
         # 总运行次数
         result = await session.execute(
             select(func.count(WorkflowRunORM.id))
         )
         total_runs = result.scalar() or 0
-        
+
         # 成员数量
-        from models.auth_orm import MembershipORM
         result = await session.execute(
             select(func.count(MembershipORM.id)).where(
                 MembershipORM.workspace_id == workspace_id
             )
         )
         total_members = result.scalar() or 0
-        
+
         # 最近运行
         result = await session.execute(
             select(WorkflowRunORM)
@@ -168,7 +175,7 @@ async def get_dashboard(request: Request):
             .limit(10)
         )
         recent_runs_orm = result.scalars().all()
-        
+
         recent_runs = []
         for run in recent_runs_orm:
             recent_runs.append({
@@ -178,7 +185,7 @@ async def get_dashboard(request: Request):
                 "started_at": run.started_at,
                 "duration_ms": run.total_duration_ms,
             })
-        
+
         return {
             "today_runs": today_runs,
             "today_success_runs": today_success,
@@ -187,6 +194,74 @@ async def get_dashboard(request: Request):
             "total_runs": total_runs,
             "total_members": total_members,
             "recent_runs": recent_runs,
+        }
+
+
+@router.patch("/admin/users/{target_user_id}/status")
+async def update_user_status(request: Request, target_user_id: str, body: UpdateUserStatusRequest):
+    """
+    更新账号状态。
+
+    当前仅支持在成员管理场景下启用或停用当前工作空间成员账号。
+    """
+    if body.status not in {UserStatus.ACTIVE, UserStatus.SUSPENDED}:
+        raise HTTPException(status_code=400, detail="仅支持启用或停用账号")
+
+    payload = await get_current_user(request)
+    user_id = payload["sub"]
+    workspace_id = await get_workspace_id_from_request(request)
+
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        permission_service = PermissionService(session)
+        await permission_service.require_permission(user_id, workspace_id, "member", "manage")
+
+        result = await session.execute(
+            select(MembershipORM, UserORM)
+            .join(UserORM, MembershipORM.user_id == UserORM.id)
+            .where(
+                MembershipORM.workspace_id == workspace_id,
+                MembershipORM.user_id == target_user_id,
+            )
+        )
+        row = result.one_or_none()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="目标用户不在当前工作空间")
+
+        membership, user = row
+
+        if target_user_id == user_id:
+            raise HTTPException(status_code=400, detail="不能修改自己的账号状态")
+
+        if membership.role == "owner":
+            raise HTTPException(status_code=400, detail="不能修改拥有者的账号状态")
+
+        user.status = body.status.value
+
+        if body.status == UserStatus.SUSPENDED:
+            auth_service = AuthService(session)
+            await auth_service.revoke_all_user_tokens(user.id)
+        else:
+            await session.commit()
+
+        await log_audit(
+            session=session,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            action=AuditAction.USER_UPDATE,
+            target_type="user",
+            target_id=user.id,
+            detail={"status": body.status.value},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("User-Agent"),
+        )
+        await session.commit()
+
+        return {
+            "message": "账号状态已更新",
+            "user_id": user.id,
+            "status": user.status,
         }
 
 
@@ -200,13 +275,13 @@ async def list_model_providers(request: Request):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         # 检查权限
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "model_provider", "read")
-        
+
         # 获取列表
         result = await session.execute(
             select(ModelProviderORM).where(
@@ -214,7 +289,7 @@ async def list_model_providers(request: Request):
             )
         )
         providers = result.scalars().all()
-        
+
         # 脱敏返回
         return {
             "providers": [
@@ -226,7 +301,7 @@ async def list_model_providers(request: Request):
                     "enabled": p.enabled,
                     "created_at": p.created_at,
                     # config 中的敏感信息需要脱敏
-                    "config": {k: "***" if "key" in k.lower() or "secret" in k.lower() else v 
+                    "config": {k: "***" if "key" in k.lower() or "secret" in k.lower() else v
                               for k, v in (p.config or {}).items()},
                 }
                 for p in providers
@@ -242,13 +317,13 @@ async def create_model_provider(request: Request, body: ModelProviderCreate):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         # 检查权限
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "model_provider", "create")
-        
+
         # 创建
         provider = ModelProviderORM(
             id=str(uuid.uuid4()),
@@ -261,7 +336,7 @@ async def create_model_provider(request: Request, body: ModelProviderCreate):
             created_by=user_id,
         )
         session.add(provider)
-        
+
         # 记录审计日志
         await log_audit(
             session, workspace_id, user_id,
@@ -269,9 +344,9 @@ async def create_model_provider(request: Request, body: ModelProviderCreate):
             "model_provider", provider.id,
             {"name": body.name, "provider": body.provider.value}
         )
-        
+
         await session.commit()
-        
+
         return {"id": provider.id, "message": "模型供应商配置已创建"}
 
 
@@ -283,13 +358,13 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         # 检查权限
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "model_provider", "update")
-        
+
         # 获取并更新
         result = await session.execute(
             select(ModelProviderORM).where(
@@ -300,10 +375,10 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
             )
         )
         provider = result.scalar_one_or_none()
-        
+
         if not provider:
             raise HTTPException(status_code=404, detail="模型供应商配置不存在")
-        
+
         if body.name is not None:
             provider.name = body.name
         if body.description is not None:
@@ -312,15 +387,15 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
             provider.enabled = body.enabled
         if body.config is not None:
             provider.config = body.config
-        
+
         await log_audit(
             session, workspace_id, user_id,
             AuditAction.MODEL_PROVIDER_UPDATE,
             "model_provider", provider_id
         )
-        
+
         await session.commit()
-        
+
         return {"message": "模型供应商配置已更新"}
 
 
@@ -332,13 +407,13 @@ async def delete_model_provider(request: Request, provider_id: str):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         # 检查权限
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "model_provider", "delete")
-        
+
         result = await session.execute(
             select(ModelProviderORM).where(
                 and_(
@@ -348,20 +423,20 @@ async def delete_model_provider(request: Request, provider_id: str):
             )
         )
         provider = result.scalar_one_or_none()
-        
+
         if not provider:
             raise HTTPException(status_code=404, detail="模型供应商配置不存在")
-        
+
         await log_audit(
             session, workspace_id, user_id,
             AuditAction.MODEL_PROVIDER_DELETE,
             "model_provider", provider_id,
             {"name": provider.name}
         )
-        
+
         await session.delete(provider)
         await session.commit()
-        
+
         return {"message": "模型供应商配置已删除"}
 
 
@@ -375,17 +450,17 @@ async def list_secrets(request: Request):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "secret", "read")
-        
+
         result = await session.execute(
             select(SecretORM).where(SecretORM.workspace_id == workspace_id)
         )
         secrets_list = result.scalars().all()
-        
+
         return {
             "secrets": [
                 {
@@ -408,16 +483,16 @@ async def create_secret(request: Request, body: SecretCreate):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "secret", "create")
-        
+
         # 加密存储
         ciphertext = encrypt_secret(body.value)
         last4 = body.value[-4:] if len(body.value) >= 4 else body.value
-        
+
         secret = SecretORM(
             id=str(uuid.uuid4()),
             workspace_id=workspace_id,
@@ -428,16 +503,16 @@ async def create_secret(request: Request, body: SecretCreate):
             created_by=user_id,
         )
         session.add(secret)
-        
+
         await log_audit(
             session, workspace_id, user_id,
             AuditAction.SECRET_CREATE,
             "secret", secret.id,
             {"name": body.name}
         )
-        
+
         await session.commit()
-        
+
         return {"id": secret.id, "message": "密钥已创建"}
 
 
@@ -449,12 +524,12 @@ async def delete_secret(request: Request, secret_id: str):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "secret", "delete")
-        
+
         result = await session.execute(
             select(SecretORM).where(
                 and_(
@@ -464,20 +539,20 @@ async def delete_secret(request: Request, secret_id: str):
             )
         )
         secret = result.scalar_one_or_none()
-        
+
         if not secret:
             raise HTTPException(status_code=404, detail="密钥不存在")
-        
+
         await log_audit(
             session, workspace_id, user_id,
             AuditAction.SECRET_DELETE,
             "secret", secret_id,
             {"name": secret.name}
         )
-        
+
         await session.delete(secret)
         await session.commit()
-        
+
         return {"message": "密钥已删除"}
 
 
@@ -491,17 +566,17 @@ async def list_api_keys(request: Request):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "api_key", "read")
-        
+
         result = await session.execute(
             select(ApiKeyORM).where(ApiKeyORM.workspace_id == workspace_id)
         )
         keys = result.scalars().all()
-        
+
         return {
             "api_keys": [
                 {
@@ -524,27 +599,27 @@ async def list_api_keys(request: Request):
 async def create_api_key(request: Request, body: ApiKeyCreate):
     """
     创建 API Key
-    
+
     返回完整的 Key，仅此一次显示
     """
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "api_key", "create")
-        
+
         # 生成 API Key
         key_raw = f"pc_{secrets.token_urlsafe(32)}"
         key_hash = hashlib.sha256(key_raw.encode()).hexdigest()
         key_prefix = key_raw[:8] + "..." + key_raw[-4:]
-        
+
         expires_at = None
         if body.expires_in_days:
             expires_at = datetime.utcnow() + timedelta(days=body.expires_in_days)
-        
+
         api_key = ApiKeyORM(
             id=str(uuid.uuid4()),
             workspace_id=workspace_id,
@@ -557,16 +632,16 @@ async def create_api_key(request: Request, body: ApiKeyCreate):
             created_by=user_id,
         )
         session.add(api_key)
-        
+
         await log_audit(
             session, workspace_id, user_id,
             AuditAction.API_KEY_CREATE,
             "api_key", api_key.id,
             {"name": body.name}
         )
-        
+
         await session.commit()
-        
+
         return {
             "id": api_key.id,
             "name": body.name,
@@ -587,12 +662,12 @@ async def revoke_api_key(request: Request, key_id: str):
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "api_key", "delete")
-        
+
         result = await session.execute(
             select(ApiKeyORM).where(
                 and_(
@@ -602,21 +677,21 @@ async def revoke_api_key(request: Request, key_id: str):
             )
         )
         api_key = result.scalar_one_or_none()
-        
+
         if not api_key:
             raise HTTPException(status_code=404, detail="API Key 不存在")
-        
+
         api_key.revoked_at = datetime.utcnow()
-        
+
         await log_audit(
             session, workspace_id, user_id,
             AuditAction.API_KEY_REVOKE,
             "api_key", key_id,
             {"name": api_key.name}
         )
-        
+
         await session.commit()
-        
+
         return {"message": "API Key 已撤销"}
 
 
@@ -636,28 +711,28 @@ async def list_audit_logs(
     payload = await get_current_user(request)
     user_id = payload["sub"]
     workspace_id = await get_workspace_id_from_request(request)
-    
+
     store = get_postgres_store()
     async with store.async_session() as session:
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "audit_log", "read")
-        
+
         # 构建查询
         query = select(AuditLogORM).where(
             AuditLogORM.workspace_id == workspace_id
         )
-        
+
         if action:
             query = query.where(AuditLogORM.action == action)
         if user_id_filter:
             query = query.where(AuditLogORM.user_id == user_id_filter)
-        
+
         query = query.order_by(desc(AuditLogORM.created_at))
         query = query.offset((page - 1) * page_size).limit(page_size)
-        
+
         result = await session.execute(query)
         logs = result.scalars().all()
-        
+
         # 获取总数
         count_query = select(func.count(AuditLogORM.id)).where(
             AuditLogORM.workspace_id == workspace_id
@@ -666,10 +741,10 @@ async def list_audit_logs(
             count_query = count_query.where(AuditLogORM.action == action)
         if user_id_filter:
             count_query = count_query.where(AuditLogORM.user_id == user_id_filter)
-        
+
         result = await session.execute(count_query)
         total = result.scalar() or 0
-        
+
         return {
             "logs": [
                 {
