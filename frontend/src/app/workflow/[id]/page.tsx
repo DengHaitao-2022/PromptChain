@@ -364,24 +364,46 @@ export default function WorkflowDetailPage() {
 
         const state = workflow.state;
         const currentStatus = workflow.status;
+        const isStepComplete = (stepName: string) => {
+            switch (stepName) {
+                case 'parse_intent':
+                    return Boolean(state.intent_card);
+                case 'generate_outline':
+                    return Boolean(state.outline);
+                case 'generate_content':
+                    return Boolean(state.generated_content);
+                case 'self_refine':
+                    return Boolean(state.final_content);
+                case 'check_facts':
+                    return Boolean(state.fact_check_report);
+                case 'finalize':
+                    return currentStatus === 'completed';
+                default:
+                    return false;
+            }
+        };
 
-        return stepNames.map((name, index) => {
+        const runningStepId =
+            currentStatus === 'running'
+                ? stepNames.find((stepName) => !isStepComplete(stepName))
+                : undefined;
+        const failedStepId =
+            currentStatus === 'failed'
+                ? stepNames.find((stepName) => !isStepComplete(stepName)) ?? 'finalize'
+                : undefined;
+
+        return stepNames.map((name) => {
             let status: WorkflowStep['status'] = 'pending';
 
-            if (name === 'parse_intent' && state.intent_card) {
+            if (isStepComplete(name)) {
                 status = 'completed';
             }
+
             if (name === 'generate_outline' && state.outline) {
                 status =
                     currentStatus === 'awaiting_outline_approval'
                         ? 'interrupted'
                         : 'completed';
-            }
-            if (name === 'generate_content' && state.generated_content) {
-                status = 'completed';
-            }
-            if (name === 'self_refine' && state.final_content) {
-                status = 'completed';
             }
             if (name === 'check_facts' && state.fact_check_report) {
                 status =
@@ -389,49 +411,13 @@ export default function WorkflowDetailPage() {
                         ? 'interrupted'
                         : 'completed';
             }
-            if (name === 'finalize' && currentStatus === 'completed') {
-                status = 'completed';
+
+            if (currentStatus === 'running' && name === runningStepId) {
+                status = 'running';
             }
 
-            if (currentStatus === 'running') {
-                const completedIndex = stepNames.findIndex((stepName) => {
-                    if (stepName === 'parse_intent') {
-                        return !state.intent_card;
-                    }
-                    if (stepName === 'generate_outline') {
-                        return !state.outline;
-                    }
-                    return false;
-                });
-
-                if (completedIndex === index || (completedIndex === -1 && status === 'pending')) {
-                    status = 'running';
-                }
-            }
-
-            if (currentStatus === 'failed' && status === 'pending') {
-                const firstPendingIndex = stepNames.findIndex((stepName) => {
-                    if (stepName === 'parse_intent') {
-                        return !state.intent_card;
-                    }
-                    if (stepName === 'generate_outline') {
-                        return !state.outline;
-                    }
-                    if (stepName === 'generate_content') {
-                        return !state.generated_content;
-                    }
-                    if (stepName === 'self_refine') {
-                        return !state.final_content;
-                    }
-                    if (stepName === 'check_facts') {
-                        return !state.fact_check_report;
-                    }
-                    return stepName === 'finalize';
-                });
-
-                if (index === firstPendingIndex || firstPendingIndex === -1) {
-                    status = 'failed';
-                }
+            if (currentStatus === 'failed' && name === failedStepId) {
+                status = 'failed';
             }
 
             return {
