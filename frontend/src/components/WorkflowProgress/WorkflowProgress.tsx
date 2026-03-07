@@ -1,6 +1,14 @@
 'use client';
 
 import React from 'react';
+import {
+    AlertTriangle,
+    CheckCheck,
+    CircleDot,
+    LoaderCircle,
+    PauseCircle,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import styles from './WorkflowProgress.module.css';
 
 export interface WorkflowStep {
@@ -20,7 +28,6 @@ interface WorkflowProgressProps {
     onStepClick?: (stepId: string) => void;
 }
 
-// 工作流步骤定义
 const DEFAULT_STEPS: WorkflowStep[] = [
     { id: 'parse_intent', name: 'parse_intent', label: '意图解析', status: 'pending' },
     { id: 'generate_outline', name: 'generate_outline', label: '提纲生成', status: 'pending' },
@@ -30,102 +37,135 @@ const DEFAULT_STEPS: WorkflowStep[] = [
     { id: 'finalize', name: 'finalize', label: '最终输出', status: 'pending' },
 ];
 
+function getStatusMeta(status: WorkflowStep['status']): {
+    icon: LucideIcon;
+    text: string;
+} {
+    switch (status) {
+        case 'completed':
+            return { icon: CheckCheck, text: '已完成' };
+        case 'running':
+            return { icon: LoaderCircle, text: '执行中' };
+        case 'interrupted':
+            return { icon: PauseCircle, text: '等待确认' };
+        case 'failed':
+            return { icon: AlertTriangle, text: '执行失败' };
+        default:
+            return { icon: CircleDot, text: '待开始' };
+    }
+}
+
+function formatDuration(ms?: number): string {
+    if (!ms) {
+        return '';
+    }
+
+    if (ms < 1000) {
+        return `${ms}ms`;
+    }
+
+    return `${(ms / 1000).toFixed(1)}s`;
+}
+
 export function WorkflowProgress({
     steps = DEFAULT_STEPS,
     currentStep,
     onStepClick,
 }: WorkflowProgressProps) {
-    // 获取步骤状态图标
-    const getStatusIcon = (status: string) => {
-        switch (status) {
-            case 'completed':
-                return '✓';
-            case 'running':
-                return '●';
-            case 'interrupted':
-                return '⏸';
-            case 'failed':
-                return '✕';
-            default:
-                return '';
-        }
-    };
+    const completedCount = steps.filter((step) => step.status === 'completed').length;
+    const interactive = Boolean(onStepClick);
 
-    // 获取步骤状态类名
-    const getStatusClass = (status: string) => {
-        switch (status) {
-            case 'completed':
-                return styles.completed;
-            case 'running':
-                return styles.running;
-            case 'interrupted':
-                return styles.interrupted;
-            case 'failed':
-                return styles.failed;
-            default:
-                return styles.pending;
+    const handleKeyDown = (
+        event: React.KeyboardEvent<HTMLDivElement>,
+        stepId: string
+    ) => {
+        if (!onStepClick) {
+            return;
         }
-    };
 
-    // 格式化持续时间
-    const formatDuration = (ms?: number) => {
-        if (!ms) return '-';
-        if (ms < 1000) return `${ms}ms`;
-        return `${(ms / 1000).toFixed(1)}s`;
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onStepClick(stepId);
+        }
     };
 
     return (
         <div className={styles.container}>
-            <h3 className={styles.title}>工作流进度</h3>
+            <div className={styles.header}>
+                <div>
+                    <h3 className={styles.title}>工作流轨道</h3>
+                    <p className={styles.subtitle}>当前运行与人工中断都会在这里留下轨迹。</p>
+                </div>
+                <span className={styles.summary}>{completedCount}/{steps.length} 已完成</span>
+            </div>
 
             <div className={styles.timeline}>
-                {steps.map((step, index) => (
-                    <div
-                        key={step.id}
-                        className={`${styles.step} ${getStatusClass(step.status)} ${currentStep === step.id ? styles.current : ''
-                            }`}
-                        onClick={() => onStepClick?.(step.id)}
-                    >
-                        {/* 连接线 */}
-                        {index > 0 && (
-                            <div
-                                className={`${styles.connector} ${step.status !== 'pending' ? styles.connectorActive : ''
+                {steps.map((step, index) => {
+                    const statusMeta = getStatusMeta(step.status);
+                    const StatusIcon = statusMeta.icon;
+                    const isCurrent = currentStep === step.id;
+
+                    return (
+                        <div
+                            key={step.id}
+                            className={`${styles.step} ${styles[step.status]} ${
+                                isCurrent ? styles.current : ''
+                            } ${interactive ? styles.interactive : ''}`}
+                            onClick={() => onStepClick?.(step.id)}
+                            onKeyDown={(event) => handleKeyDown(event, step.id)}
+                            role={interactive ? 'button' : undefined}
+                            tabIndex={interactive ? 0 : undefined}
+                            aria-current={isCurrent ? 'step' : undefined}
+                        >
+                            {index > 0 && (
+                                <div
+                                    className={`${styles.connector} ${
+                                        step.status === 'completed'
+                                            ? styles.connectorCompleted
+                                            : step.status === 'running'
+                                                ? styles.connectorRunning
+                                                : step.status === 'failed'
+                                                    ? styles.connectorFailed
+                                                    : step.status === 'interrupted'
+                                                        ? styles.connectorInterrupted
+                                                        : ''
                                     }`}
-                            />
-                        )}
-
-                        {/* 步骤指示器 */}
-                        <div className={styles.indicator}>
-                            {step.status === 'running' ? (
-                                <div className={styles.spinner} />
-                            ) : (
-                                <span className={styles.indicatorIcon}>
-                                    {getStatusIcon(step.status) || index + 1}
-                                </span>
+                                />
                             )}
-                        </div>
 
-                        {/* 步骤信息 */}
-                        <div className={styles.info}>
-                            <span className={styles.stepLabel}>{step.label}</span>
-                            {step.status !== 'pending' && (
-                                <span className={styles.stepMeta}>
-                                    {step.status === 'running' && '进行中...'}
-                                    {step.status === 'completed' && formatDuration(step.durationMs)}
-                                    {step.status === 'interrupted' && '等待用户确认'}
-                                    {step.status === 'failed' && '执行失败'}
-                                </span>
-                            )}
-                        </div>
-
-                        {/* 产物数量 */}
-                        {step.artifactCount && step.artifactCount > 0 && (
-                            <div className={styles.artifactBadge}>
-                                📦 {step.artifactCount}
+                            <div className={styles.indicator}>
+                                <StatusIcon
+                                    className={`${styles.indicatorIcon} ${
+                                        step.status === 'running' ? styles.spinIcon : ''
+                                    }`}
+                                    aria-hidden="true"
+                                />
                             </div>
-                        )}
-                    </div>
-                ))}
+
+                            <div className={styles.info}>
+                                <div className={styles.labelRow}>
+                                    <span className={styles.stepLabel}>{step.label}</span>
+                                    <span className={styles.stepState}>{statusMeta.text}</span>
+                                </div>
+                                <span className={styles.stepMeta}>
+                                    {step.status === 'completed' && formatDuration(step.durationMs)
+                                        ? `耗时 ${formatDuration(step.durationMs)}`
+                                        : step.status === 'running'
+                                            ? '系统正在推进该节点'
+                                            : step.status === 'interrupted'
+                                                ? '等待你的确认'
+                                                : step.status === 'failed'
+                                                    ? '该节点未能完成'
+                                                    : '尚未开始执行'}
+                                </span>
+                            </div>
+
+                            {typeof step.artifactCount === 'number' && step.artifactCount > 0 && (
+                                <div className={styles.artifactBadge}>{step.artifactCount}</div>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );

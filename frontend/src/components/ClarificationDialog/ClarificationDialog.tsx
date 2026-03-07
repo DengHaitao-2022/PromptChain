@@ -1,6 +1,12 @@
 'use client';
 
 import React from 'react';
+import {
+    AlertTriangle,
+    CheckCircle2,
+    CircleHelp,
+    Sparkles,
+} from 'lucide-react';
 import styles from './ClarificationDialog.module.css';
 import type { ClarificationQuestion } from '@/lib/api';
 
@@ -16,38 +22,31 @@ export function ClarificationDialog({
     isLoading = false,
 }: ClarificationDialogProps) {
     const [answers, setAnswers] = React.useState<Record<string, string>>({});
+    const [focusedField, setFocusedField] = React.useState<string | null>(
+        questions[0]?.field ?? null
+    );
 
-    // 更新答案
+    React.useEffect(() => {
+        if (!questions.some((question) => question.field === focusedField)) {
+            setFocusedField(questions[0]?.field ?? null);
+        }
+    }, [focusedField, questions]);
+
     const updateAnswer = (field: string, value: string) => {
-        setAnswers({ ...answers, [field]: value });
+        setAnswers((current) => ({ ...current, [field]: value }));
     };
 
-    // 检查是否所有必填项都已回答
-    const allAnswered = (questions || [])
-        .filter((q) => q.priority === 'high')
-        .every((q) => answers[q.field]?.trim());
+    const requiredQuestions = questions.filter((question) => question.priority === 'high');
+    const answeredRequiredCount = requiredQuestions.filter((question) =>
+        answers[question.field]?.trim()
+    ).length;
+    const requiredRemaining = requiredQuestions.length - answeredRequiredCount;
+    const answeredCount = questions.filter((question) => answers[question.field]?.trim()).length;
+    const progressPercent =
+        questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0;
+    const allAnswered = requiredRemaining === 0;
 
-    // 提交答案
-    const handleSubmit = () => {
-        if (allAnswered) {
-            onSubmit(answers);
-        }
-    };
-
-    // 优先级颜色
-    const getPriorityColor = (priority: string) => {
-        switch (priority) {
-            case 'high':
-                return 'danger';
-            case 'medium':
-                return 'warning';
-            default:
-                return 'info';
-        }
-    };
-
-    // 优先级文本
-    const getPriorityText = (priority: string) => {
+    const getPriorityText = (priority: ClarificationQuestion['priority']) => {
         switch (priority) {
             case 'high':
                 return '必填';
@@ -58,49 +57,171 @@ export function ClarificationDialog({
         }
     };
 
+    const handleSubmit = () => {
+        if (allAnswered) {
+            onSubmit(answers);
+        }
+    };
+
     return (
         <div className={styles.container}>
-            <div className={styles.header}>
-                <div className={styles.icon}>💬</div>
-                <div>
-                    <h3 className={styles.title}>需要您的确认</h3>
+            <div className={styles.summary}>
+                <div className={styles.summaryCopy}>
+                    <p className={styles.eyebrow}>Clarification Round</p>
+                    <h3 className={styles.title}>补全这轮工作流的关键上下文</h3>
                     <p className={styles.subtitle}>
-                        为了更好地理解您的需求，请回答以下问题
+                        这些问题会直接影响提纲质量和后续事实核查负担。先把关键信息补全，再让工作流继续推进。
                     </p>
+                </div>
+
+                <div className={styles.progressCard}>
+                    <div className={styles.progressHeader}>
+                        <div>
+                            <span className={styles.progressValue}>
+                                {answeredCount}/{questions.length}
+                            </span>
+                            <span className={styles.progressLabel}>已记录回答</span>
+                        </div>
+                        <div className={styles.progressMeta}>
+                            {requiredRemaining > 0 ? (
+                                <>
+                                    <AlertTriangle
+                                        className={styles.progressMetaIcon}
+                                        aria-hidden="true"
+                                    />
+                                    还差 {requiredRemaining} 个必填问题
+                                </>
+                            ) : (
+                                <>
+                                    <CheckCircle2
+                                        className={styles.progressMetaIcon}
+                                        aria-hidden="true"
+                                    />
+                                    已满足继续条件
+                                </>
+                            )}
+                        </div>
+                    </div>
+                    <div
+                        className={styles.progressBar}
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={progressPercent}
+                        aria-label="澄清问题完成进度"
+                    >
+                        <span
+                            className={styles.progressFill}
+                            style={{ width: `${progressPercent}%` }}
+                        />
+                    </div>
                 </div>
             </div>
 
             <div className={styles.questions}>
-                {(questions || []).map((q, index) => (
-                    <div key={q.field} className={styles.question}>
-                        <div className={styles.questionHeader}>
-                            <span className={styles.questionNumber}>{index + 1}</span>
-                            <span className={styles.questionText}>{q.question}</span>
-                            <span className={`badge badge-${getPriorityColor(q.priority)}`}>
-                                {getPriorityText(q.priority)}
-                            </span>
-                        </div>
-                        <textarea
-                            className={`${styles.answerInput} input textarea`}
-                            value={answers[q.field] || ''}
-                            onChange={(e) => updateAnswer(q.field, e.target.value)}
-                            placeholder="请输入您的回答..."
-                            disabled={isLoading}
-                        />
-                    </div>
-                ))}
+                {questions.map((question, index) => {
+                    const isFocused = focusedField === question.field;
+                    const hasAnswer = Boolean(answers[question.field]?.trim());
+                    const inputId = `clarification-${question.field}`;
+                    const hintId = `${inputId}-hint`;
+
+                    return (
+                        <section
+                            key={question.field}
+                            className={`${styles.question} ${
+                                question.priority === 'high'
+                                    ? styles.questionHigh
+                                    : question.priority === 'medium'
+                                        ? styles.questionMedium
+                                        : styles.questionLow
+                            } ${isFocused ? styles.questionFocused : ''}`}
+                        >
+                            <div className={styles.questionHeader}>
+                                <div className={styles.questionIndex}>{index + 1}</div>
+
+                                <div className={styles.questionMeta}>
+                                    <div className={styles.questionTopRow}>
+                                        <label
+                                            htmlFor={inputId}
+                                            className={styles.questionText}
+                                        >
+                                            {question.question}
+                                        </label>
+                                        <span className={styles.priorityBadge}>
+                                            {getPriorityText(question.priority)}
+                                        </span>
+                                    </div>
+
+                                    <div className={styles.questionHintRow} id={hintId}>
+                                        <span className={styles.questionHint}>
+                                            <CircleHelp
+                                                className={styles.inlineIcon}
+                                                aria-hidden="true"
+                                            />
+                                            {question.priority === 'high'
+                                                ? '继续生成前必须回答'
+                                                : '补充越具体，后续输出越稳定'}
+                                        </span>
+                                        {question.default_assumption && (
+                                            <span className={styles.defaultAssumption}>
+                                                默认假设：{question.default_assumption}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <textarea
+                                id={inputId}
+                                className={`${styles.answerInput} input textarea`}
+                                value={answers[question.field] || ''}
+                                onChange={(event) =>
+                                    updateAnswer(question.field, event.target.value)
+                                }
+                                onFocus={() => setFocusedField(question.field)}
+                                placeholder="在这里补充你的上下文、偏好或限制条件..."
+                                aria-describedby={hintId}
+                                disabled={isLoading}
+                            />
+
+                            <div className={styles.answerFooter}>
+                                <span className={styles.answerStatus}>
+                                    {hasAnswer ? (
+                                        <>
+                                            <CheckCircle2
+                                                className={styles.inlineIcon}
+                                                aria-hidden="true"
+                                            />
+                                            已记录本题回答
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Sparkles
+                                                className={styles.inlineIcon}
+                                                aria-hidden="true"
+                                            />
+                                            当前为空，可继续编辑
+                                        </>
+                                    )}
+                                </span>
+                            </div>
+                        </section>
+                    );
+                })}
             </div>
 
             <div className={styles.actions}>
-                <p className={styles.hint}>
-                    带有 <span className="badge badge-danger">必填</span> 标签的问题需要回答后才能继续
+                <p className={styles.hint} aria-live="polite">
+                    {requiredRemaining > 0
+                        ? `还有 ${requiredRemaining} 个必填问题未完成。`
+                        : '关键问题已完成，可以继续生成。'}
                 </p>
                 <button
                     className="btn btn-primary"
                     onClick={handleSubmit}
                     disabled={!allAnswered || isLoading}
                 >
-                    {isLoading ? '处理中...' : '确认并继续'}
+                    {isLoading ? '正在提交...' : '确认并继续'}
                 </button>
             </div>
         </div>

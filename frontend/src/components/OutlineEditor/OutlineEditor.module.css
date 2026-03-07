@@ -1,7 +1,9 @@
 .container {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 22%),
+        rgba(22, 27, 34, 0.86);
+    border: 1px solid rgba(240, 246, 252, 0.08);
+    border-radius: 18px;
     padding: var(--spacing-lg);
 }
 
@@ -147,8 +149,12 @@
 .actions {
     display: flex;
     justify-content: space-between;
-    padding-top: var(--spacing-lg);
-    border-top: 1px solid var(--color-border);
+    gap: var(--spacing-sm);
+    padding: 14px 16px;
+    margin-top: var(--spacing-lg);
+    border: 1px solid rgba(240, 246, 252, 0.08);
+    border-radius: 16px;
+    background: rgba(13, 17, 23, 0.46);
 }
 
 /* Dialog */
@@ -157,7 +163,7 @@
     inset: 0;
     background: rgba(0, 0, 0, 0.7);
     backdrop-filter: blur(4px);
-    animation: fadeIn 150ms ease;
+    animation: fadeIn 180ms ease;
 }
 
 .dialogContent {
@@ -171,7 +177,7 @@
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     padding: var(--spacing-lg);
-    animation: slideUp 200ms ease;
+    animation: slideUp 220ms ease-out;
 }
 
 .dialogTitle {
@@ -211,11 +217,27 @@
 @keyframes slideUp {
     from {
         opacity: 0;
-        transform: translate(-50%, -45%);
+        transform: translate(-50%, -47%);
     }
 
     to {
         opacity: 1;
         transform: translate(-50%, -50%);
+    }
+}
+
+@media (max-width: 640px) {
+    .actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dialogOverlay,
+    .dialogContent,
+    .actions {
+        animation: none !important;
+        transition-duration: 0.01ms !important;
     }
 }
