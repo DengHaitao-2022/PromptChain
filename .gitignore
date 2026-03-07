@@ -54,6 +54,6 @@ node_modules/
 .next/
 
 # 本地工具
-.cunzhi-memory/
+
 .cache/
 tmp/

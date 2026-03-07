@@ -174,6 +174,8 @@ npm run dev
 - 页面层偏 `app/*`，复杂逻辑放 hooks/lib/components
 - API 访问默认 `credentials: include`（依赖 Cookie）
 - 页面元素的用户可见文本（如标题、按钮、导航、表单标签、占位提示、空状态、错误提示）默认尽量使用中文；仅在专有名词、协议字段、代码标识或必须保留英文的场景下使用英文。
+- 凡涉及前端页面、组件、交互、动画或 UI/UX 优化的开发任务，开始实现前应先启动 Gemini CLI，并在 `gemini` 中使用 `/ui-ux-pro-max` 辅助完成页面交互和动画设计。
+- 凡涉及前端代码落地的开发任务，必须使用 `git worktree` 隔离工作区；优先进入对应已有的 `code/feat-*` 分支 worktree，如不存在则先新建 `code/feat-*` 分支与 worktree 后再开发。
 
 ### 7.3 当前仓库偏好（来自项目记忆）
 - 更偏向产出总结文档
@@ -445,6 +447,8 @@ npm run dev
 - 结构化用户交互：`mcp__cunzhi__zhi`
 - 项目语义搜索：`mcp__cunzhi__sou`
 - 官方/最新文档：`mcp__context7__resolve-library-id` + `mcp__context7__query-docs`
+- 前端交互与动画设计：Gemini CLI 中的 `/ui-ux-pro-max`
+- 前端隔离开发：`git worktree`
 - 本地文件编辑：优先使用补丁式修改，保持变更小而清晰
 
 ### 11.8 代码与文案落地规则
