@@ -9,25 +9,33 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   Role,
   WorkspaceMember,
+  WorkspaceAccessStatus,
   getRoleLabel,
   inviteWorkspaceMember,
   listWorkspaceMembers,
   removeWorkspaceMember,
+  updateWorkspaceMemberAccess,
   updateWorkspaceMemberRole,
-  updateWorkspaceUserStatus,
 } from '@/lib/auth';
 import styles from '../settings.module.css';
 
 const MANAGEABLE_ROLES: Exclude<Role, 'owner'>[] = ['viewer', 'editor', 'admin'];
 
-function getStatusLabel(status: WorkspaceMember['status']) {
+function getWorkspaceAccessLabel(status: WorkspaceMember['workspace_access']) {
+  if (status === 'suspended') {
+    return '访问已暂停';
+  }
+  return '可访问';
+}
+
+function getAccountStatusLabel(status: WorkspaceMember['account_status']) {
   if (status === 'active') {
-    return '正常';
+    return '账号正常';
   }
   if (status === 'suspended') {
-    return '已停用';
+    return '全局账号已停用';
   }
-  return '未激活';
+  return '账号未激活';
 }
 
 export default function MembersPage() {
@@ -79,6 +87,11 @@ export default function MembersPage() {
   const sortedMembers = useMemo(() => {
     const roleOrder: Role[] = ['owner', 'admin', 'editor', 'viewer'];
     return [...members].sort((left, right) => {
+      const accessDelta =
+        Number(left.workspace_access === 'suspended') - Number(right.workspace_access === 'suspended');
+      if (accessDelta !== 0) {
+        return accessDelta;
+      }
       const roleDelta = roleOrder.indexOf(left.role) - roleOrder.indexOf(right.role);
       if (roleDelta !== 0) {
         return roleDelta;
@@ -153,10 +166,14 @@ export default function MembersPage() {
     }
   }
 
-  async function handleToggleStatus(member: WorkspaceMember) {
-    const nextStatus = member.status === 'suspended' ? 'active' : 'suspended';
-    const actionLabel = nextStatus === 'active' ? '启用' : '停用';
-    const confirmed = window.confirm(`确认${actionLabel}${member.display_name || member.email}的账号吗？`);
+  async function handleToggleWorkspaceAccess(member: WorkspaceMember) {
+    const nextStatus: WorkspaceAccessStatus =
+      member.workspace_access === 'suspended' ? 'active' : 'suspended';
+    const confirmed = window.confirm(
+      nextStatus === 'active'
+        ? `确认恢复 ${member.display_name || member.email} 在当前工作空间的访问权限吗？\n\n此操作不会修改其全局账号状态。`
+        : `确认暂停 ${member.display_name || member.email} 在当前工作空间的访问权限吗？\n\n此操作不会修改其全局账号状态，也不会影响其他工作空间。`,
+    );
     if (!confirmed) {
       return;
     }
@@ -166,11 +183,11 @@ export default function MembersPage() {
     setError('');
 
     try {
-      const result = await updateWorkspaceUserStatus(member.user_id, nextStatus);
-      setFeedback(result.message || '账号状态已更新');
+      const result = await updateWorkspaceMemberAccess(member.user_id, nextStatus);
+      setFeedback(result.message || '工作空间访问状态已更新');
       await fetchMembers();
     } catch (statusError) {
-      setError(statusError instanceof Error ? statusError.message : '更新账号状态失败');
+      setError(statusError instanceof Error ? statusError.message : '更新工作空间访问状态失败');
     } finally {
       setPendingUserId(null);
     }
@@ -180,7 +197,14 @@ export default function MembersPage() {
     return (
       <div className={styles.container}>
         <h1 className={styles.title}>成员管理</h1>
-        <p className={styles.subtitle}>您当前没有查看成员列表的权限。</p>
+        <p className={styles.subtitle}>暂无访问权限</p>
+        <div className={styles.empty}>
+          <p>您当前没有查看成员列表的权限。</p>
+          <p style={{ fontSize: 14, marginTop: 8 }}>如需访问，请联系工作空间管理员调整角色。</p>
+          <a href="/console" className={styles.button} style={{ marginTop: 16, display: 'inline-flex' }}>
+            返回控制台首页
+          </a>
+        </div>
       </div>
     );
   }
@@ -188,7 +212,7 @@ export default function MembersPage() {
   return (
     <div className={styles.container}>
       <h1 className={styles.title}>成员管理</h1>
-      <p className={styles.subtitle}>管理工作空间成员角色、邀请状态和账号启停边界。</p>
+      <p className={styles.subtitle}>管理成员角色与当前工作空间访问边界，不会修改用户全局账号状态。</p>
 
       {feedback && (
         <div
@@ -264,6 +288,9 @@ export default function MembersPage() {
             <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>
               当前工作空间：{workspace?.name || '未选择'}
             </p>
+            <p style={{ margin: '6px 0 0', color: '#9ca3af', fontSize: 12 }}>
+              “暂停访问”仅阻止该成员进入当前工作空间；“移除成员”会直接移出当前工作空间。
+            </p>
           </div>
           <button className={styles.button} onClick={() => void fetchMembers()} type="button">
             刷新列表
@@ -286,6 +313,8 @@ export default function MembersPage() {
               const roleDraft = roleDrafts[member.id] || 'viewer';
               const isRoleSaving = pendingMembershipId === member.id;
               const isStatusSaving = pendingUserId === member.user_id;
+              const workspaceAccessLabel = getWorkspaceAccessLabel(member.workspace_access);
+              const accountStatusLabel = getAccountStatusLabel(member.account_status);
 
               return (
                 <div
@@ -316,12 +345,27 @@ export default function MembersPage() {
                             borderRadius: 20,
                             fontSize: 12,
                             fontWeight: 500,
-                            background: member.status === 'active' ? '#ecfdf5' : '#fef2f2',
-                            color: member.status === 'active' ? '#166534' : '#b91c1c',
+                            background: member.workspace_access === 'active' ? '#ecfdf5' : '#fef2f2',
+                            color: member.workspace_access === 'active' ? '#166534' : '#b91c1c',
                           }}
                         >
-                          {getStatusLabel(member.status)}
+                          {workspaceAccessLabel}
                         </span>
+                        {member.account_status !== 'active' && (
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              padding: '4px 12px',
+                              borderRadius: 20,
+                              fontSize: 12,
+                              fontWeight: 500,
+                              background: '#eef2ff',
+                              color: '#4338ca',
+                            }}
+                          >
+                            {accountStatusLabel}
+                          </span>
+                        )}
                         {!member.email_verified && (
                           <span
                             style={{
@@ -361,7 +405,7 @@ export default function MembersPage() {
                             }))
                           }
                           className={styles.select}
-                          disabled={isOwner || isCurrentUser || isRoleSaving}
+                          disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving}
                           style={{ flex: 1 }}
                         >
                           {MANAGEABLE_ROLES.map((role) => (
@@ -372,7 +416,7 @@ export default function MembersPage() {
                         </select>
                         <button
                           className={styles.button}
-                          disabled={isOwner || isCurrentUser || isRoleSaving || roleDraft === member.role}
+                          disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving || roleDraft === member.role}
                           onClick={() => void handleRoleUpdate(member)}
                           type="button"
                         >
@@ -384,18 +428,18 @@ export default function MembersPage() {
                         <button
                           className={styles.button}
                           disabled={isOwner || isCurrentUser || isStatusSaving}
-                          onClick={() => void handleToggleStatus(member)}
+                          onClick={() => void handleToggleWorkspaceAccess(member)}
                           type="button"
                           style={{
                             flex: 1,
-                            background: member.status === 'suspended' ? '#059669' : '#b91c1c',
+                            background: member.workspace_access === 'suspended' ? '#059669' : '#b91c1c',
                           }}
                         >
-                          {isStatusSaving ? '处理中...' : member.status === 'suspended' ? '启用账号' : '停用账号'}
+                          {isStatusSaving ? '处理中...' : member.workspace_access === 'suspended' ? '恢复访问' : '暂停访问'}
                         </button>
                         <button
                           className={styles.button}
-                          disabled={isOwner || isCurrentUser || isRoleSaving}
+                          disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving}
                           onClick={() => void handleRemoveMember(member)}
                           type="button"
                           style={{ flex: 1, background: '#374151' }}

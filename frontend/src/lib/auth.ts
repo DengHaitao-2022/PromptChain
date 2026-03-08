@@ -9,6 +9,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 const PREFERRED_WORKSPACE_STORAGE_KEY = 'promptchain:workspace_id';
 
 export type UserStatus = 'active' | 'inactive' | 'suspended';
+export type WorkspaceAccessStatus = 'active' | 'suspended';
 export type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 export type Action = 'read' | 'create' | 'update' | 'delete' | 'execute' | 'export' | 'manage';
 export type Resource =
@@ -51,7 +52,8 @@ export interface WorkspaceMember {
   display_name: string | null;
   avatar_url: string | null;
   role: Role;
-  status: UserStatus;
+  workspace_access: WorkspaceAccessStatus;
+  account_status: UserStatus;
   email_verified: boolean;
   joined_at: string;
 }
@@ -427,12 +429,12 @@ export async function removeWorkspaceMember(membershipId: string): Promise<{ mes
 }
 
 /**
- * 启用或停用成员账号
+ * 更新成员在当前工作空间中的访问状态
  */
-export async function updateWorkspaceUserStatus(
+export async function updateWorkspaceMemberAccess(
   userId: string,
-  status: Extract<UserStatus, 'active' | 'suspended'>,
-): Promise<{ message: string }> {
+  status: WorkspaceAccessStatus,
+): Promise<{ message: string; workspace_access?: WorkspaceAccessStatus }> {
   const response = await fetch(`${API_BASE}/admin/users/${userId}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -441,10 +443,20 @@ export async function updateWorkspaceUserStatus(
   });
 
   if (!response.ok) {
-    throw new Error(await parseErrorMessage(response, '更新账号状态失败'));
+    throw new Error(await parseErrorMessage(response, '更新工作空间访问状态失败'));
   }
 
   return response.json();
+}
+
+/**
+ * 兼容旧命名，实际语义已经收口为当前工作空间访问控制。
+ */
+export async function updateWorkspaceUserStatus(
+  userId: string,
+  status: WorkspaceAccessStatus,
+): Promise<{ message: string; workspace_access?: WorkspaceAccessStatus }> {
+  return updateWorkspaceMemberAccess(userId, status);
 }
 
 /**
@@ -482,7 +494,9 @@ export function getRoleLabel(role: Role | null | undefined): string {
 }
 
 export function canAccessConsolePath(role: Role | null | undefined, pathname: string): boolean {
-  if (!role) return false;
+  if (!role) {
+    return pathname === '/console';
+  }
 
   const guard = CONSOLE_ROUTE_GUARDS.find((item) => pathname.startsWith(item.prefix));
   if (!guard || !guard.resource || !guard.action) {
@@ -493,7 +507,7 @@ export function canAccessConsolePath(role: Role | null | undefined, pathname: st
 }
 
 export function getAccessibleConsoleFallback(role: Role | null | undefined): string {
-  if (!role) return '/login';
+  if (!role) return '/console';
 
   if (hasPermission(role, 'workflow_run', 'read')) {
     return '/console';

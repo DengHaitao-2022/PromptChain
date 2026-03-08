@@ -17,6 +17,7 @@ from services.auth_service import (
     verify_access_token,
 )
 from services.email_service import EmailService
+from services.permission_service import resolve_membership_role
 from models.auth_models import UserStatus
 
 
@@ -167,7 +168,7 @@ async def get_current_user(request: Request) -> dict:
     return payload
 
 
-def serialize_workspace(membership, workspace) -> dict[str, Any]:
+def serialize_workspace(membership, workspace, role: str) -> dict[str, Any]:
     """统一工作空间上下文输出结构。"""
     return {
         "id": workspace.id,
@@ -175,7 +176,7 @@ def serialize_workspace(membership, workspace) -> dict[str, Any]:
         "description": workspace.description,
         "logo_url": workspace.logo_url,
         "owner_id": workspace.owner_id,
-        "role": membership.role,
+        "role": role,
         "joined_at": membership.joined_at,
         "created_at": workspace.created_at,
     }
@@ -192,7 +193,12 @@ async def build_auth_context(user_id: str, preferred_workspace_id: Optional[str]
             raise HTTPException(status_code=404, detail="用户不存在")
 
         workspaces = await auth_service.get_user_workspaces(user_id)
-        workspace_list = [serialize_workspace(membership, workspace) for membership, workspace in workspaces]
+        workspace_list = []
+        for membership, workspace in workspaces:
+            role, is_suspended = resolve_membership_role(membership.role)
+            if not role or is_suspended:
+                continue
+            workspace_list.append(serialize_workspace(membership, workspace, role.value))
 
         current_workspace = None
         if preferred_workspace_id:
@@ -474,7 +480,7 @@ async def reset_password(body: ResetPasswordRequest):
 
 
 @router.get("/me")
-async def get_me(request: Request):
+async def get_me(request: Request, response: Response):
     """
     获取当前用户信息
 
@@ -482,5 +488,20 @@ async def get_me(request: Request):
     """
     payload = await get_current_user(request)
     user_id = payload["sub"]
+    auth_context = await build_auth_context(user_id, preferred_workspace_id=payload.get("workspace_id"))
+    workspace = auth_context["workspace"]
+    workspace_id = workspace["id"] if workspace else None
 
-    return await build_auth_context(user_id, preferred_workspace_id=payload.get("workspace_id"))
+    # 如果当前 token 中的 workspace 已经失效或被移除，刷新为新的可访问上下文。
+    if workspace_id != payload.get("workspace_id"):
+        access_token = create_access_token(user_id=user_id, workspace_id=workspace_id)
+        response.set_cookie(
+            key=ACCESS_TOKEN_COOKIE,
+            value=access_token,
+            httponly=COOKIE_HTTPONLY,
+            secure=COOKIE_SECURE,
+            samesite=COOKIE_SAMESITE,
+            max_age=15 * 60,
+        )
+
+    return auth_context

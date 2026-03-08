@@ -13,8 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from db.postgres_store import get_postgres_store
-from services.auth_service import AuthService
-from services.permission_service import PermissionService
+from services.permission_service import PermissionService, resolve_membership_role, serialize_membership_role
 from models.auth_models import UserStatus
 from models.admin_models import (
     ModelProvider, ModelProviderCreate, ModelProviderUpdate, ModelProviderType,
@@ -35,7 +34,7 @@ router = APIRouter()
 
 
 class UpdateUserStatusRequest(BaseModel):
-    """更新账号状态请求"""
+    """更新当前工作空间访问状态请求"""
 
     status: UserStatus
 
@@ -112,11 +111,15 @@ async def get_dashboard(request: Request):
         from db.postgres_store import WorkflowRunORM
 
         today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        workspace_filter = WorkflowRunORM.metadata_json["workspace_id"].as_string() == workspace_id
 
         # 今日运行次数
         result = await session.execute(
             select(func.count(WorkflowRunORM.id)).where(
-                WorkflowRunORM.started_at >= today
+                and_(
+                    WorkflowRunORM.started_at >= today,
+                    workspace_filter,
+                )
             )
         )
         today_runs = result.scalar() or 0
@@ -126,7 +129,8 @@ async def get_dashboard(request: Request):
             select(func.count(WorkflowRunORM.id)).where(
                 and_(
                     WorkflowRunORM.started_at >= today,
-                    WorkflowRunORM.status == WorkflowRunStatus.COMPLETED.value
+                    WorkflowRunORM.status == WorkflowRunStatus.COMPLETED.value,
+                    workspace_filter,
                 )
             )
         )
@@ -137,7 +141,8 @@ async def get_dashboard(request: Request):
             select(func.count(WorkflowRunORM.id)).where(
                 and_(
                     WorkflowRunORM.started_at >= today,
-                    WorkflowRunORM.status == WorkflowRunStatus.FAILED.value
+                    WorkflowRunORM.status == WorkflowRunStatus.FAILED.value,
+                    workspace_filter,
                 )
             )
         )
@@ -148,7 +153,8 @@ async def get_dashboard(request: Request):
             select(func.avg(WorkflowRunORM.total_duration_ms)).where(
                 and_(
                     WorkflowRunORM.started_at >= today,
-                    WorkflowRunORM.total_duration_ms.isnot(None)
+                    WorkflowRunORM.total_duration_ms.isnot(None),
+                    workspace_filter,
                 )
             )
         )
@@ -156,7 +162,7 @@ async def get_dashboard(request: Request):
 
         # 总运行次数
         result = await session.execute(
-            select(func.count(WorkflowRunORM.id))
+            select(func.count(WorkflowRunORM.id)).where(workspace_filter)
         )
         total_runs = result.scalar() or 0
 
@@ -171,6 +177,7 @@ async def get_dashboard(request: Request):
         # 最近运行
         result = await session.execute(
             select(WorkflowRunORM)
+            .where(workspace_filter)
             .order_by(desc(WorkflowRunORM.started_at))
             .limit(10)
         )
@@ -200,12 +207,12 @@ async def get_dashboard(request: Request):
 @router.patch("/admin/users/{target_user_id}/status")
 async def update_user_status(request: Request, target_user_id: str, body: UpdateUserStatusRequest):
     """
-    更新账号状态。
+    更新当前工作空间中的访问状态。
 
-    当前仅支持在成员管理场景下启用或停用当前工作空间成员账号。
+    这里的“停用”只影响当前工作空间，不会修改全局用户账号状态。
     """
     if body.status not in {UserStatus.ACTIVE, UserStatus.SUSPENDED}:
-        raise HTTPException(status_code=400, detail="仅支持启用或停用账号")
+        raise HTTPException(status_code=400, detail="仅支持启用或暂停当前工作空间访问")
 
     payload = await get_current_user(request)
     user_id = payload["sub"]
@@ -232,36 +239,55 @@ async def update_user_status(request: Request, target_user_id: str, body: Update
         membership, user = row
 
         if target_user_id == user_id:
-            raise HTTPException(status_code=400, detail="不能修改自己的账号状态")
+            raise HTTPException(status_code=400, detail="不能修改自己的工作空间访问状态")
 
-        if membership.role == "owner":
-            raise HTTPException(status_code=400, detail="不能修改拥有者的账号状态")
+        current_role, is_suspended = resolve_membership_role(membership.role)
+        if not current_role:
+            raise HTTPException(status_code=400, detail="成员角色状态无效")
 
-        user.status = body.status.value
+        if current_role.value == "owner":
+            raise HTTPException(status_code=400, detail="不能修改拥有者的工作空间访问状态")
 
-        if body.status == UserStatus.SUSPENDED:
-            auth_service = AuthService(session)
-            await auth_service.revoke_all_user_tokens(user.id)
-        else:
-            await session.commit()
+        if body.status == UserStatus.SUSPENDED and is_suspended:
+            return {
+                "message": "该成员当前已暂停访问此工作空间",
+                "user_id": user.id,
+                "workspace_access": "suspended",
+            }
+
+        if body.status == UserStatus.ACTIVE and not is_suspended:
+            return {
+                "message": "该成员当前可正常访问此工作空间",
+                "user_id": user.id,
+                "workspace_access": "active",
+            }
+
+        membership.role = serialize_membership_role(
+            current_role,
+            suspended=body.status == UserStatus.SUSPENDED,
+        )
 
         await log_audit(
             session=session,
             workspace_id=workspace_id,
             user_id=user_id,
             action=AuditAction.USER_UPDATE,
-            target_type="user",
-            target_id=user.id,
-            detail={"status": body.status.value},
+            target_type="membership",
+            target_id=membership.id,
+            detail={
+                "workspace_access": "suspended" if body.status == UserStatus.SUSPENDED else "active",
+                "account_status_unchanged": user.status,
+                "role": current_role.value,
+            },
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("User-Agent"),
         )
         await session.commit()
 
         return {
-            "message": "账号状态已更新",
+            "message": "工作空间访问状态已更新",
             "user_id": user.id,
-            "status": user.status,
+            "workspace_access": "suspended" if body.status == UserStatus.SUSPENDED else "active",
         }
 
 

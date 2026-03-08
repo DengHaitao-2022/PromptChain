@@ -94,6 +94,7 @@ ROLE_ORDER: tuple[MemberRole, ...] = (
     MemberRole.ADMIN,
     MemberRole.OWNER,
 )
+SUSPENDED_MEMBERSHIP_PREFIX = "suspended:"
 
 PermissionResource = Literal[
     "workflow",
@@ -152,6 +153,33 @@ def is_admin_role(role: Optional[MemberRole]) -> bool:
     return role in {MemberRole.ADMIN, MemberRole.OWNER}
 
 
+def resolve_membership_role(raw_role: Optional[str]) -> tuple[Optional[MemberRole], bool]:
+    """解析成员关系中的原始角色字符串，并识别工作空间级暂停状态。"""
+    if not raw_role:
+        return None, False
+
+    is_suspended = raw_role.startswith(SUSPENDED_MEMBERSHIP_PREFIX)
+    normalized_role = raw_role[len(SUSPENDED_MEMBERSHIP_PREFIX):] if is_suspended else raw_role
+
+    try:
+        return MemberRole(normalized_role), is_suspended
+    except ValueError:
+        return None, is_suspended
+
+
+def serialize_membership_role(role: MemberRole | str, suspended: bool = False) -> str:
+    """将成员角色编码为数据库中的字符串格式。"""
+    normalized_role = role.value if isinstance(role, MemberRole) else role
+    if suspended:
+        return f"{SUSPENDED_MEMBERSHIP_PREFIX}{normalized_role}"
+    return normalized_role
+
+
+def is_membership_suspended(raw_role: Optional[str]) -> bool:
+    """判断成员关系是否处于当前工作空间访问暂停状态。"""
+    return bool(raw_role and raw_role.startswith(SUSPENDED_MEMBERSHIP_PREFIX))
+
+
 def get_role_permissions(role: MemberRole) -> dict[str, list[str]]:
     """获取角色的所有权限"""
     return ROLE_PERMISSIONS.get(role, {})
@@ -196,7 +224,11 @@ class PermissionService:
         if not membership:
             return None
 
-        return MemberRole(membership.role)
+        role, is_suspended = resolve_membership_role(membership.role)
+        if is_suspended:
+            return None
+
+        return role
 
     async def check_user_permission(
         self,
@@ -285,7 +317,9 @@ class PermissionService:
 
         workspace_ids = []
         for membership in memberships:
-            role = MemberRole(membership.role)
+            role, is_suspended = resolve_membership_role(membership.role)
+            if not role or is_suspended:
+                continue
             if check_permission(role, resource, action):
                 workspace_ids.append(membership.workspace_id)
 

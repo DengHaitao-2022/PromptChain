@@ -41,6 +41,7 @@ const EMPTY_AUTH_STATE: AuthState = {
 };
 
 interface AuthContextType extends AuthState {
+  hasWorkspaceAccess: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -134,6 +135,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const value: AuthContextType = {
     ...state,
+    hasWorkspaceAccess: Boolean(state.workspace && state.role),
     login,
     logout,
     refreshUser,

@@ -14,7 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from db.postgres_store import get_postgres_store
 from services.auth_service import create_access_token
-from services.permission_service import PermissionService
+from services.permission_service import PermissionService, resolve_membership_role, serialize_membership_role
 from services.email_service import EmailService
 from models.auth_models import MemberRole
 from models.auth_orm import WorkspaceORM, MembershipORM, WorkspaceInviteORM, UserORM
@@ -84,7 +84,8 @@ class MemberResponse(BaseModel):
     display_name: Optional[str]
     avatar_url: Optional[str]
     role: str
-    status: str
+    workspace_access: str
+    account_status: str
     email_verified: bool
     joined_at: datetime
 
@@ -119,13 +120,16 @@ async def list_workspaces(request: Request):
 
         workspaces = []
         for membership, workspace in rows:
+            role, is_suspended = resolve_membership_role(membership.role)
+            if not role or is_suspended:
+                continue
             workspaces.append({
                 "id": workspace.id,
                 "name": workspace.name,
                 "description": workspace.description,
                 "logo_url": workspace.logo_url,
                 "owner_id": workspace.owner_id,
-                "role": membership.role,
+                "role": role.value,
                 "joined_at": membership.joined_at,
                 "created_at": workspace.created_at,
             })
@@ -271,14 +275,18 @@ async def list_members(request: Request, workspace_id: str):
 
         members = []
         for membership, user in rows:
+            role, is_suspended = resolve_membership_role(membership.role)
+            if not role:
+                continue
             members.append({
                 "id": membership.id,
                 "user_id": user.id,
                 "email": user.email,
                 "display_name": user.display_name,
                 "avatar_url": user.avatar_url,
-                "role": membership.role,
-                "status": user.status,
+                "role": role.value,
+                "workspace_access": "suspended" if is_suspended else "active",
+                "account_status": user.status,
                 "email_verified": user.email_verified,
                 "joined_at": membership.joined_at,
             })
@@ -461,8 +469,12 @@ async def update_member_role(request: Request, membership_id: str, body: UpdateM
             user_id, membership.workspace_id, "member", "manage"
         )
 
+        current_role, is_suspended = resolve_membership_role(membership.role)
+        if not current_role:
+            raise HTTPException(status_code=400, detail="成员角色状态无效")
+
         # 不能修改 Owner 的角色
-        if membership.role == MemberRole.OWNER.value:
+        if current_role == MemberRole.OWNER:
             raise HTTPException(status_code=400, detail="不能修改 Owner 的角色")
 
         if membership.user_id == user_id:
@@ -473,10 +485,10 @@ async def update_member_role(request: Request, membership_id: str, body: UpdateM
             raise HTTPException(status_code=400, detail="不能直接设置 Owner 角色，请使用转让功能")
 
         # 更新角色
-        membership.role = body.role.value
+        membership.role = serialize_membership_role(body.role, suspended=is_suspended)
         await session.commit()
 
-        return {"message": "成员角色已更新", "membership_id": membership.id, "role": membership.role}
+        return {"message": "成员角色已更新", "membership_id": membership.id, "role": body.role.value}
 
 
 @router.delete("/memberships/{membership_id}")
@@ -500,8 +512,10 @@ async def remove_member(request: Request, membership_id: str):
         if not membership:
             raise HTTPException(status_code=404, detail="成员关系不存在")
 
+        membership_role, _ = resolve_membership_role(membership.role)
+
         # 不能移除 Owner
-        if membership.role == MemberRole.OWNER.value:
+        if membership_role == MemberRole.OWNER:
             raise HTTPException(status_code=400, detail="不能移除 Owner")
 
         # 检查权限（自己可以离开，或者有管理权限）

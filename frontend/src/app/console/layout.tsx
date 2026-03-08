@@ -232,7 +232,7 @@ function TopBar() {
 function ConsoleContent({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { isLoading, isAuthenticated, role, canAccessConsolePath } = useAuth();
+  const { isLoading, isAuthenticated, role, workspace, hasWorkspaceAccess, canAccessConsolePath } = useAuth();
   const hasPageAccess = canAccessConsolePath(pathname);
 
   useEffect(() => {
@@ -245,10 +245,17 @@ function ConsoleContent({ children }: { children: ReactNode }) {
       return;
     }
 
+    if (!hasWorkspaceAccess) {
+      if (pathname !== '/console') {
+        router.replace('/console');
+      }
+      return;
+    }
+
     if (!hasPageAccess) {
       router.replace(getAccessibleConsoleFallback(role));
     }
-  }, [hasPageAccess, isAuthenticated, isLoading, role, router]);
+  }, [hasPageAccess, hasWorkspaceAccess, isAuthenticated, isLoading, pathname, role, router]);
 
   if (isLoading) {
     return (
@@ -259,7 +266,7 @@ function ConsoleContent({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!isAuthenticated || !hasPageAccess) {
+  if (!isAuthenticated || (hasWorkspaceAccess && !hasPageAccess)) {
     return (
       <div className={styles.loading}>
         <div className={styles.spinner} />
@@ -273,7 +280,16 @@ function ConsoleContent({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className={styles.main}>
         <TopBar />
-        <main className={styles.content}>{children}</main>
+        <main className={styles.content}>
+          {!hasWorkspaceAccess && pathname === '/console' ? (
+            <div className={styles.loading}>
+              <div className={styles.spinner} />
+              <p>{workspace ? '正在同步工作空间权限...' : '当前暂无可访问的工作空间'}</p>
+            </div>
+          ) : (
+            children
+          )}
+        </main>
       </div>
     </div>
   );
