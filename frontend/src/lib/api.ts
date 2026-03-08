@@ -7,20 +7,31 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // 类型定义
+export type WorkflowStatus =
+  | 'running'
+  | 'paused'
+  | 'needs_clarification'
+  | 'awaiting_outline_approval'
+  | 'awaiting_fact_check_approval'
+  | 'completed'
+  | 'failed';
+
+export type ClarificationPriority = 'high' | 'medium' | 'low';
+export type FactCheckDecision = 'confirm' | 'use_suggestion' | 'manual';
+export type WorkflowGateType = 'clarification' | 'outline_approval' | 'fact_check';
+
 export interface WorkflowResponse {
   workflow_run_id: string;
-  status:
-    | 'running'
-    | 'needs_clarification'
-    | 'awaiting_outline_approval'
-    | 'awaiting_fact_check_approval'
-    | 'completed'
-    | 'failed';
+  status: WorkflowStatus;
   state: {
     clarification_questions?: ClarificationQuestion[];
     outline?: Outline;
     fact_check_report?: FactCheckReport;
     final_content?: Record<string, { preview: string; word_count: number }>;
+    current_node?: string;
+    error?: string;
+    pause?: WorkflowPauseState;
+    gate?: WorkflowGateState;
     [key: string]: unknown;
   };
 }
@@ -28,8 +39,29 @@ export interface WorkflowResponse {
 export interface ClarificationQuestion {
   field: string;
   question: string;
-  priority: 'high' | 'medium' | 'low';
+  priority: ClarificationPriority;
   default_assumption?: string;
+}
+
+export interface WorkflowPauseState {
+  reason?: string | null;
+  paused_at?: string | null;
+  resumed_at?: string | null;
+  source?: 'user' | string;
+}
+
+export interface WorkflowGateQuestion extends Record<string, unknown> {
+  question?: string;
+}
+
+export interface WorkflowGateState {
+  gate_type: WorkflowGateType;
+  trigger_reason?: string | null;
+  questions: WorkflowGateQuestion[];
+  answers?: Record<string, unknown> | null;
+  opened_at?: string | null;
+  handled_at?: string | null;
+  resolution?: string | null;
 }
 
 export interface IntentCard {
@@ -102,6 +134,41 @@ export interface TimelineEvent {
   tokens?: number;
 }
 
+export interface WorkflowConnectedEvent {
+  type: 'connected';
+  workflow_run_id: string;
+  message: string;
+}
+
+export interface WorkflowNodeEvent {
+  type: 'node_started' | 'node_completed' | 'node_failed';
+  workflow_run_id: string;
+  node_id: string;
+  data?: Record<string, unknown>;
+}
+
+export interface WorkflowLifecycleEvent {
+  type: 'workflow_paused' | 'workflow_completed' | 'workflow_failed' | 'workflow_resumed';
+  workflow_run_id: string;
+  data?: Record<string, unknown>;
+}
+
+export interface WorkflowGateWaitingEvent {
+  type: 'workflow_gate_waiting';
+  workflow_run_id: string;
+  data: {
+    gate_type: WorkflowGateType;
+    questions: WorkflowGateQuestion[];
+    [key: string]: unknown;
+  };
+}
+
+export type WorkflowRealtimeEvent =
+  | WorkflowConnectedEvent
+  | WorkflowNodeEvent
+  | WorkflowLifecycleEvent
+  | WorkflowGateWaitingEvent;
+
 // API 请求函数
 async function request<T>(
   endpoint: string,
@@ -114,6 +181,7 @@ async function request<T>(
       'Content-Type': 'application/json',
       ...options.headers,
     },
+    credentials: 'include',
     ...options,
   });
 
@@ -164,7 +232,7 @@ export const workflowApi = {
   // 审批事实核查
   approveFactCheck: (
     workflowRunId: string,
-    decisions: Record<string, 'confirm' | 'use_suggestion' | 'manual'>,
+    decisions: Record<string, FactCheckDecision>,
     manualCorrections: Record<string, string> = {}
   ) =>
     request<WorkflowResponse>(`/api/workflow/${workflowRunId}/approve-fact-check`, {
@@ -173,6 +241,20 @@ export const workflowApi = {
         decisions,
         manual_corrections: manualCorrections,
       }),
+    }),
+
+  // 手动暂停
+  pause: (workflowRunId: string, reason?: string) =>
+    request<WorkflowResponse>(`/api/workflow/${workflowRunId}/pause`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  // 恢复手动暂停
+  resume: (workflowRunId: string) =>
+    request<WorkflowResponse>(`/api/workflow/${workflowRunId}/resume`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     }),
 
   // 获取重跑选项
