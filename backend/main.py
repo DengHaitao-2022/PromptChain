@@ -90,7 +90,7 @@ class WorkflowResponse(BaseModel):
     state: Dict[str, Any]
 
 
-async def require_workspace_permission(user: dict, resource: str, action: str) -> str:
+async def require_workspace_permission(user: dict, resource: str, action: str) -> tuple[str, str, Any]:
     """按当前 access_token 中的工作空间上下文校验权限。"""
     from db.postgres_store import get_postgres_store
     from services.permission_service import PermissionService
@@ -107,9 +107,85 @@ async def require_workspace_permission(user: dict, resource: str, action: str) -
     store = get_postgres_store()
     async with store.async_session() as session:
         permission_service = PermissionService(session)
-        await permission_service.require_permission(user_id, workspace_id, resource, action)
+        role = await permission_service.require_permission(user_id, workspace_id, resource, action)
 
-    return workspace_id
+    return user_id, workspace_id, role
+
+
+async def annotate_workflow_run_ownership(workflow_run_id: str, user_id: str, workspace_id: str):
+    """为新建运行记录补充最小归属元数据。"""
+    from services import get_artifact_store
+
+    store = get_artifact_store()
+    workflow_run = await store.get_workflow_run(workflow_run_id)
+    if not workflow_run:
+        return None
+
+    metadata = dict(workflow_run.metadata or {})
+    metadata["workspace_id"] = workspace_id
+    metadata["user_id"] = user_id
+    workflow_run.metadata = metadata
+    await store.update_workflow_run(workflow_run)
+    return workflow_run
+
+
+async def require_workflow_run_access(
+    user: dict,
+    workflow_run_id: str,
+    resource: str = "workflow_run",
+    action: str = "read",
+):
+    """校验工作流运行记录的工作空间和用户归属。"""
+    from services import get_artifact_store
+    from services.permission_service import is_admin_role
+
+    user_id, workspace_id, role = await require_workspace_permission(user, resource, action)
+    store = get_artifact_store()
+    workflow_run = await store.get_workflow_run(workflow_run_id)
+
+    if not workflow_run:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    metadata = workflow_run.metadata or {}
+    run_workspace_id = metadata.get("workspace_id")
+    run_user_id = metadata.get("user_id")
+
+    if not run_workspace_id or not run_user_id:
+        raise HTTPException(status_code=403, detail="该任务缺少归属信息，暂不允许访问")
+
+    if run_workspace_id != workspace_id:
+        raise HTTPException(status_code=403, detail="您无权访问该工作空间中的任务")
+
+    if not is_admin_role(role) and run_user_id != user_id:
+        raise HTTPException(status_code=403, detail="您只能访问自己的任务")
+
+    return workflow_run
+
+
+async def require_node_run_access(user: dict, node_run_id: str):
+    """通过节点记录反查工作流归属后再校验。"""
+    from services import get_artifact_store
+
+    store = get_artifact_store()
+    node_run = await store.get_node_run(node_run_id)
+    if not node_run:
+        raise HTTPException(status_code=404, detail="NodeRun not found")
+
+    await require_workflow_run_access(user, node_run.workflow_run_id)
+    return node_run
+
+
+async def require_artifact_access(user: dict, artifact_id: str):
+    """通过产物反查工作流归属后再校验。"""
+    from services import get_artifact_store
+
+    store = get_artifact_store()
+    artifact = await store.get_artifact(artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    await require_workflow_run_access(user, artifact.workflow_run_id)
+    return artifact
 
 
 # ==================== API 路由 ====================
@@ -136,9 +212,10 @@ async def start_workflow(request: StartWorkflowRequest, user: dict = Depends(get
     from graph import get_workflow
 
     try:
-        await require_workspace_permission(user, "workflow", "execute")
+        user_id, workspace_id, _ = await require_workspace_permission(user, "workflow", "execute")
         workflow = get_workflow()
         result = await workflow.start(request.user_input)
+        await annotate_workflow_run_ownership(result["workflow_run_id"], user_id, workspace_id)
 
         # 简化状态返回（移除大型对象的详细内容）
         simplified_state = _simplify_state(result["state"])
@@ -171,7 +248,7 @@ async def approve_outline(
     from graph import get_workflow
 
     try:
-        await require_workspace_permission(user, "workflow", "execute")
+        await require_workflow_run_access(user, workflow_run_id, resource="workflow", action="execute")
         workflow = get_workflow()
         result = await workflow.approve_outline(
             workflow_run_id=workflow_run_id,
@@ -203,7 +280,7 @@ async def clarify_intent(
     from graph import get_workflow
 
     try:
-        await require_workspace_permission(user, "workflow", "execute")
+        await require_workflow_run_access(user, workflow_run_id, resource="workflow", action="execute")
         workflow = get_workflow()
         result = await workflow.resume(
             workflow_run_id=workflow_run_id,
@@ -233,7 +310,7 @@ async def approve_fact_check(
     from graph import get_workflow
 
     try:
-        await require_workspace_permission(user, "workflow", "execute")
+        await require_workflow_run_access(user, workflow_run_id, resource="workflow", action="execute")
         workflow = get_workflow()
         result = await workflow.resume(
             workflow_run_id=workflow_run_id,
@@ -258,15 +335,9 @@ async def approve_fact_check(
 @app.get("/api/workflow/{workflow_run_id}", response_model=WorkflowResponse)
 async def get_workflow_status(workflow_run_id: str, user: dict = Depends(get_current_user)):
     """获取工作流状态"""
-    from services import get_artifact_store
     from graph import get_workflow
 
-    store = get_artifact_store()
-    await require_workspace_permission(user, "workflow_run", "read")
-    workflow_run = await store.get_workflow_run(workflow_run_id)
-
-    if not workflow_run:
-        raise HTTPException(status_code=404, detail="Workflow not found")
+    workflow_run = await require_workflow_run_access(user, workflow_run_id)
 
     workflow = get_workflow()
     graph_state = await _get_graph_state(workflow, workflow_run_id)
@@ -287,7 +358,7 @@ async def get_workflow_trace(workflow_run_id: str, user: dict = Depends(get_curr
     from services import get_trace_service
 
     try:
-        await require_workspace_permission(user, "workflow_run", "read")
+        await require_workflow_run_access(user, workflow_run_id)
         trace_service = get_trace_service()
         trace = await trace_service.get_workflow_trace(workflow_run_id)
         return trace
@@ -305,7 +376,7 @@ async def get_node_detail(node_run_id: str, user: dict = Depends(get_current_use
     from services import get_trace_service
 
     try:
-        await require_workspace_permission(user, "workflow_run", "read")
+        await require_node_run_access(user, node_run_id)
         trace_service = get_trace_service()
         detail = await trace_service.get_node_detail(node_run_id)
         return detail
@@ -320,14 +391,7 @@ async def get_node_detail(node_run_id: str, user: dict = Depends(get_current_use
 @app.get("/api/artifact/{artifact_id}")
 async def get_artifact(artifact_id: str, user: dict = Depends(get_current_user)):
     """获取 Artifact 详情"""
-    from services import get_artifact_store
-
-    await require_workspace_permission(user, "workflow_run", "read")
-    store = get_artifact_store()
-    artifact = await store.get_artifact(artifact_id)
-
-    if not artifact:
-        raise HTTPException(status_code=404, detail="Artifact not found")
+    artifact = await require_artifact_access(user, artifact_id)
 
     return artifact.model_dump()
 
@@ -338,7 +402,7 @@ async def get_artifact_history(artifact_id: str, user: dict = Depends(get_curren
     from services import get_trace_service
 
     try:
-        await require_workspace_permission(user, "workflow_run", "read")
+        await require_artifact_access(user, artifact_id)
         trace_service = get_trace_service()
         history = await trace_service.get_artifact_history(artifact_id)
         return history
@@ -354,7 +418,7 @@ async def get_rerun_options(workflow_run_id: str, user: dict = Depends(get_curre
     from services import get_rerun_service
 
     try:
-        await require_workspace_permission(user, "workflow_run", "read")
+        await require_workflow_run_access(user, workflow_run_id)
         rerun_service = get_rerun_service()
         options = await rerun_service.get_rerun_options(workflow_run_id)
         return {"options": options}
@@ -386,8 +450,10 @@ async def rerun_workflow(
     from graph import get_workflow
 
     try:
-        await require_workspace_permission(user, "workflow", "execute")
+        await require_workflow_run_access(user, workflow_run_id, resource="workflow", action="execute")
         rerun_service = get_rerun_service()
+        user_id = user.get("sub") or user.get("id")
+        workspace_id = user.get("workspace_id")
 
         # 1. 准备重跑状态
         preserved_state = await rerun_service.prepare_rerun_state(
@@ -402,6 +468,8 @@ async def rerun_workflow(
             request.from_node,
             request.reason or ""
         )
+        if user_id and workspace_id:
+            await annotate_workflow_run_ownership(new_workflow_run.id, user_id, workspace_id)
 
         # 3. 使用新的工作流执行器恢复执行
         workflow = get_workflow()
@@ -433,7 +501,7 @@ async def get_rerun_history(workflow_run_id: str, user: dict = Depends(get_curre
     from services import get_rerun_service
 
     try:
-        await require_workspace_permission(user, "workflow_run", "read")
+        await require_workflow_run_access(user, workflow_run_id)
         rerun_service = get_rerun_service()
         history = await rerun_service.get_rerun_history(workflow_run_id)
         return {"history": history}

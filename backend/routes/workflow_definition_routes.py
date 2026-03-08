@@ -64,6 +64,26 @@ async def require_workflow_write_access(
     return role, workflow
 
 
+async def require_workflow_read_access(
+    session: AsyncSession,
+    service: WorkflowDefinitionService,
+    user_id: str,
+    workspace_id: str,
+    workflow_id: str,
+):
+    """编辑者只能查看自己创建的工作流定义。"""
+    role = await require_workspace_permission(session, user_id, workspace_id, "workflow", "read")
+    workflow = await service.get_by_id(workflow_id, workspace_id)
+
+    if not workflow:
+        return role, None
+
+    if role == MemberRole.EDITOR and workflow.created_by != user_id:
+        raise HTTPException(status_code=403, detail="编辑者只能查看自己创建的工作流")
+
+    return role, workflow
+
+
 @router.get("")
 async def list_workflows(
     request: Request,
@@ -76,9 +96,15 @@ async def list_workflows(
     """获取当前工作空间的工作流列表。"""
     user_id = user.get("sub") or user.get("id")
     workspace_id = await get_workspace_from_request(request, user)
-    await require_workspace_permission(session, user_id, workspace_id, "workflow", "read")
+    role = await require_workspace_permission(session, user_id, workspace_id, "workflow", "read")
 
-    workflows = await service.list_by_workspace(workspace_id, limit, offset)
+    workflows = await service.list_by_workspace(
+        workspace_id,
+        limit,
+        offset,
+        created_by=user_id if role == MemberRole.EDITOR else None,
+    )
+
     return Result.success(
         data={
             "workflows": [workflow.model_dump() for workflow in workflows],
@@ -115,9 +141,7 @@ async def get_workflow(
     """获取工作流定义详情。"""
     user_id = user.get("sub") or user.get("id")
     workspace_id = await get_workspace_from_request(request, user)
-    await require_workspace_permission(session, user_id, workspace_id, "workflow", "read")
-
-    workflow = await service.get_by_id(workflow_id, workspace_id)
+    _, workflow = await require_workflow_read_access(session, service, user_id, workspace_id, workflow_id)
     if not workflow:
         return Result.not_found(message="工作流不存在")
 
