@@ -1,63 +1,176 @@
 from pathlib import Path
 import sys
+from datetime import datetime, UTC
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import main
 from main import app
 
 
+@pytest.fixture(autouse=True)
+def _runtime_auth_bypass(monkeypatch):
+    app.dependency_overrides[main.get_current_user] = lambda: {
+        "sub": "user-1",
+        "workspace_id": "ws-1",
+    }
+
+    async def _allow_workflow_run_access(user, workflow_run_id, resource="workflow_run", action="read"):
+        return None
+
+    monkeypatch.setattr(main, "require_workflow_run_access", _allow_workflow_run_access)
+    yield
+    app.dependency_overrides.clear()
+
+
 class _FakeWorkflowRun:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        status: str = "running",
+        current_node: str | None = None,
+        metadata: dict | None = None,
+    ):
         self.id = "wf-123"
-        self.status = "running"
+        self.status = status
+        self.current_node = current_node
+        self.metadata = metadata or {}
+        self.started_at = datetime(2026, 3, 8, 10, 0, tzinfo=UTC)
 
     def model_dump(self):
-        # 模拟旧接口形状（不符合统一 WorkflowResponse）
         return {
             "id": self.id,
             "status": self.status,
             "workflow_name": "content_generation",
             "user_input": "test",
+            "current_node": self.current_node,
+            "metadata": self.metadata,
         }
 
 
 class _FakeStore:
+    def __init__(self, workflow_run: _FakeWorkflowRun | None = None):
+        self.workflow_run = workflow_run or _FakeWorkflowRun()
+
     async def get_workflow_run(self, workflow_run_id: str):
-        if workflow_run_id == "wf-123":
-            return _FakeWorkflowRun()
+        if workflow_run_id == self.workflow_run.id:
+            return self.workflow_run
         return None
+
+    async def update_workflow_run(self, workflow_run: _FakeWorkflowRun):
+        self.workflow_run = workflow_run
+        return workflow_run
 
 
 class _FakeGraph:
+    def __init__(self, values: dict | None = None):
+        self.values = values or {}
+
     async def aget_state(self, config):
         return SimpleNamespace(
-            values={
-                "needs_clarification": True,
-                "clarification_questions": [
-                    {
-                        "field": "audience",
-                        "question": "目标读者是谁？",
-                        "priority": 1,
-                    }
-                ],
-            }
+            values=self.values
         )
 
 
 class _FakeWorkflow:
-    def __init__(self):
-        self.graph = _FakeGraph()
+    def __init__(self, state: dict | None = None, store: _FakeStore | None = None):
+        self.graph = _FakeGraph(state)
+        self.store = store
 
     def _get_workflow_status(self, state):
-        return "needs_clarification"
+        if state.get("needs_clarification"):
+            return "needs_clarification"
+        if state.get("is_paused"):
+            return "paused"
+        return "running"
+
+    async def pause(self, workflow_run_id: str, reason: str = ""):
+        if self.store:
+            self.store.workflow_run.status = "paused"
+        return {
+            "workflow_run_id": workflow_run_id,
+            "status": "paused",
+            "state": {
+                "current_node": "generate_content",
+                "is_paused": True,
+                "pause": {
+                    "reason": reason,
+                    "paused_at": "2026-03-08T10:02:00Z",
+                    "source": "user",
+                },
+            },
+        }
+
+    async def resume_paused(self, workflow_run_id: str):
+        if self.store:
+            self.store.workflow_run.status = "running"
+        return {
+            "workflow_run_id": workflow_run_id,
+            "status": "running",
+            "state": {
+                "current_node": "generate_content",
+                "is_paused": False,
+                "pause": {
+                    "reason": "等待人工复核",
+                    "paused_at": "2026-03-08T10:02:00Z",
+                    "resumed_at": "2026-03-08T10:03:00Z",
+                    "source": "user",
+                },
+            },
+        }
+
+
+class _FakePausedWorkflowRun:
+    def __init__(self):
+        self.id = "wf-paused"
+        self.status = "paused"
+
+
+class _FakePausedStore:
+    async def get_workflow_run(self, workflow_run_id: str):
+        if workflow_run_id == "wf-paused":
+            return _FakePausedWorkflowRun()
+        return None
+
+
+class _FakeRunningGraph:
+    async def aget_state(self, config):
+        return SimpleNamespace(values={"current_node": "generate_outline"})
+
+
+class _FakeRunningWorkflow:
+    def __init__(self):
+        self.graph = _FakeRunningGraph()
+
+    def _get_workflow_status(self, state):
+        return "running"
 
 
 def test_get_workflow_status_returns_workflow_response_shape(monkeypatch):
-    monkeypatch.setattr("services.get_artifact_store", lambda: _FakeStore())
-    monkeypatch.setattr("graph.get_workflow", lambda: _FakeWorkflow())
+    store = _FakeStore(
+        _FakeWorkflowRun(
+            current_node="parse_intent",
+            metadata={"gate": {"opened_at": "2026-03-08T10:01:00Z"}},
+        )
+    )
+    workflow = _FakeWorkflow(
+        {
+            "needs_clarification": True,
+            "clarification_questions": [
+                {
+                    "field": "audience",
+                    "question": "目标读者是谁？",
+                    "priority": 1,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr("services.get_artifact_store", lambda: store)
+    monkeypatch.setattr("graph.get_workflow", lambda: workflow)
 
     client = TestClient(app)
     res = client.get("/api/workflow/wf-123")
@@ -65,3 +178,85 @@ def test_get_workflow_status_returns_workflow_response_shape(monkeypatch):
     assert res.status_code == 200
     body = res.json()
     assert set(body.keys()) == {"workflow_run_id", "status", "state"}
+    assert body["status"] == "needs_clarification"
+    assert body["state"]["current_node"] == "parse_intent"
+    assert body["state"]["gate"]["gate_type"] == "clarification"
+    assert body["state"]["gate"]["opened_at"] == "2026-03-08T10:01:00Z"
+
+
+def test_pause_and_resume_endpoints_round_trip_pause_metadata(monkeypatch):
+    store = _FakeStore(_FakeWorkflowRun(current_node="generate_content"))
+    workflow = _FakeWorkflow({}, store=store)
+    monkeypatch.setattr("services.get_artifact_store", lambda: store)
+    monkeypatch.setattr("graph.get_workflow", lambda: workflow)
+
+    client = TestClient(app)
+
+    pause_res = client.post(
+        "/api/workflow/wf-123/pause",
+        json={"reason": "等待人工复核"},
+    )
+    assert pause_res.status_code == 200
+    pause_body = pause_res.json()
+    assert pause_body["status"] == "paused"
+    assert pause_body["state"]["current_node"] == "generate_content"
+    assert pause_body["state"]["pause"]["reason"] == "等待人工复核"
+    assert pause_body["state"]["pause"]["paused_at"]
+
+    resume_res = client.post("/api/workflow/wf-123/resume", json={})
+    assert resume_res.status_code == 200
+    resume_body = resume_res.json()
+    assert resume_body["status"] == "running"
+    assert resume_body["state"]["pause"]["paused_at"]
+    assert resume_body["state"]["pause"]["resumed_at"]
+
+
+def test_pause_rejects_gate_waiting_workflow(monkeypatch):
+    store = _FakeStore(_FakeWorkflowRun(current_node="parse_intent"))
+    workflow = _FakeWorkflow(
+        {
+            "needs_clarification": True,
+            "clarification_questions": [
+                {
+                    "field": "audience",
+                    "question": "目标读者是谁？",
+                    "priority": 1,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr("services.get_artifact_store", lambda: store)
+    monkeypatch.setattr("graph.get_workflow", lambda: workflow)
+
+    client = TestClient(app)
+    res = client.post("/api/workflow/wf-123/pause", json={"reason": "先暂停"})
+
+    assert res.status_code == 409
+    assert "Gate" in res.json()["detail"]
+
+
+def test_manual_pause_status_beats_running_graph_snapshot(monkeypatch):
+    monkeypatch.setattr("services.get_artifact_store", lambda: _FakePausedStore())
+    monkeypatch.setattr("graph.get_workflow", lambda: _FakeRunningWorkflow())
+
+    client = TestClient(app)
+    res = client.get("/api/workflow/wf-paused")
+
+    assert res.status_code == 200
+    assert res.json()["status"] == "paused"
+
+
+def test_pause_and_resume_routes_are_registered_once():
+    pause_routes = [
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/api/workflow/{workflow_run_id}/pause"
+    ]
+    resume_routes = [
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/api/workflow/{workflow_run_id}/resume"
+    ]
+
+    assert len(pause_routes) == 1
+    assert len(resume_routes) == 1

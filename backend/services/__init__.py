@@ -17,6 +17,12 @@ from .artifact_store import (
     ArtifactStore,
     get_artifact_store,
 )
+from db.postgres_store import (
+    PostgresArtifactStore,
+    PostgresGraphCheckpointSaver,
+    get_postgres_store,
+    get_postgres_checkpoint_saver,
+)
 from .trace_service import (
     TraceService,
     get_trace_service,
@@ -38,6 +44,10 @@ __all__ = [
     # artifact_store
     "ArtifactStore",
     "get_artifact_store",
+    "PostgresArtifactStore",
+    "PostgresGraphCheckpointSaver",
+    "get_postgres_store",
+    "get_postgres_checkpoint_saver",
     # trace_service
     "TraceService",
     "get_trace_service",
@@ -45,4 +55,3 @@ __all__ = [
     "RerunService",
     "get_rerun_service",
 ]
-

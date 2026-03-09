@@ -2,11 +2,28 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import main
 from main import app
+
+
+@pytest.fixture(autouse=True)
+def _runtime_auth_bypass(monkeypatch):
+    app.dependency_overrides[main.get_current_user] = lambda: {
+        "sub": "user-1",
+        "workspace_id": "ws-1",
+    }
+
+    async def _allow_workflow_run_access(user, workflow_run_id, resource="workflow_run", action="read"):
+        return None
+
+    monkeypatch.setattr(main, "require_workflow_run_access", _allow_workflow_run_access)
+    yield
+    app.dependency_overrides.clear()
 
 
 class _FakeWorkflowRun:
@@ -58,3 +75,6 @@ def test_clarification_questions_are_exposed_with_enum_priority(monkeypatch):
     q = res.json()["state"]["clarification_questions"][0]
     assert q["priority"] in {"high", "medium", "low"}
     assert "field" in q and "question" in q
+    gate = res.json()["state"]["gate"]
+    assert gate["gate_type"] == "clarification"
+    assert gate["questions"][0]["default_assumption"] == "轻松活泼"
