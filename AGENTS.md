@@ -27,7 +27,8 @@ PromptChain 是一个以 `Prompt Chain + LangGraph` 为核心的 AI 内容生成
 核心状态模型：`GraphState`（同文件内 `TypedDict`）。
 
 ### 2.2 后端 API 入口
-主入口：`backend/main.py`
+应用入口：`backend/app.py`（应用工厂 + 路由注册）
+统一配置：`backend/core/config.py`
 
 已注册路由组：
 - 认证：`/api/auth/*`（`routes/auth_routes.py`）
@@ -112,7 +113,7 @@ docker compose up -d postgres redis
 ```bash
 cd backend
 uv sync
-uv run uvicorn main:app --reload --port 8000
+uv run uvicorn app:app --reload --port 8000
 ```
 
 环境样例：`backend/.env.example`
@@ -174,8 +175,10 @@ npm run dev
 - 页面层偏 `app/*`，复杂逻辑放 hooks/lib/components
 - API 访问默认 `credentials: include`（依赖 Cookie）
 - 页面元素的用户可见文本（如标题、按钮、导航、表单标签、占位提示、空状态、错误提示）默认尽量使用中文；仅在专有名词、协议字段、代码标识或必须保留英文的场景下使用英文。
-- 凡涉及前端页面、组件、交互、动画或 UI/UX 优化的开发任务，开始实现前应先启动 Gemini CLI，并在 `gemini` 中使用 `/ui-ux-pro-max` 辅助完成页面交互和动画设计。
-- 凡涉及前端代码落地的开发任务，必须使用 `git worktree` 隔离工作区；优先进入对应已有的 `code/feat-*` 分支 worktree，如不存在则先新建 `code/feat-*` 分支与 worktree 后再开发。
+- 凡涉及 `frontend/` 下任何代码文件的新增、修改、重构、样式调整、交互实现、动画实现、页面实现、组件实现、hooks/lib 客户端实现，代码编写必须由 Gemini CLI 执行，并在 `gemini` 中使用 `/ui-ux-pro-max` 完成；这条规则同样适用于 `frontend/src/lib/api.ts`、`frontend/src/lib/auth.ts` 等前端契约与客户端代码。
+- Codex 在前端任务中的职责仅限于统筹分工、定义接口约束、准备任务说明、检查 diff、做 CR、执行验收和控制合并 gate；除非用户明确推翻本规则，否则 Codex 不直接编写前端业务代码。
+- 凡涉及前端代码落地的开发任务，必须使用 `git worktree` 隔离工作区；优先进入对应已有的 `code/feat/*` 分支 worktree，如不存在则先新建 `code/feat/*` 分支与 worktree 后再开发。
+- 每个前端任务在申请评审前，必须在共享日志中记录对应 Gemini worktree、分支和执行说明；没有这条记录，不得进入 `spec-review`、`code-review` 或合并流程。
 
 ### 7.3 当前仓库偏好（来自项目记忆）
 - 更偏向产出总结文档
@@ -207,10 +210,14 @@ npm run dev
 
 ## 9. 快速定位索引
 
-- 后端入口：`backend/main.py`
+- 应用入口：`backend/app.py`
+- 统一配置：`backend/core/config.py`
 - 工作流图：`backend/graph/content_generation_graph.py`
 - 节点实现：`backend/nodes/*.py`
 - 路由层：`backend/routes/*.py`
+  - 内容工作流 API：`routes/workflow_routes.py`
+  - Trace/Artifact API：`routes/trace_routes.py`
+  - 共享模型/工具：`routes/workflow_helpers.py`
 - 服务层：`backend/services/*.py`
 - DB/ORM：`backend/db/postgres_store.py`, `backend/models/*_orm.py`
 - 前端页面：`frontend/src/app/**/*`
@@ -357,6 +364,7 @@ npm run dev
 4. **知识权威性优先**：本地代码上下文优先通过语义搜索和代码检索确认；第三方库、框架、API、标准等不稳定知识优先通过官方文档或 `context7` 获取。
 5. **默认静默执行，但不牺牲闭环**：除非用户明确要求、任务完成必须验证，或上层系统要求，不主动扩展为额外文档、测试、编译、运行；但若缺少验证会导致结果不可信，则应主动补最小必要验证。
 6. **中文优先**：页面元素用户可见文本、必要注释、日志说明、交互文案默认尽量使用中文；仅在专有名词、协议字段、代码标识、第三方 API 约定或必须保留英文的场景使用英文。
+7. **前端执行权归 Gemini**：凡属 `frontend/` 目录下的代码实现任务，默认由 Gemini CLI 负责实际编码；Codex 只负责统筹、审查、验收和合并 gate，不直接代写前端代码。
 
 ### 11.3 记忆协议（长期协作核心）
 
@@ -364,6 +372,7 @@ npm run dev
 
 - 每次进入新任务或新会话时，优先调用 `记忆` MCP：`mcp__cunzhi__ji(action=\"回忆\", project_path=\"/Users/hi/Developer/03-personal/PromptChain\")`。
 - 先读取项目已有规则、偏好、模式和上下文，再开始方案判断，避免多个智能体反复踩同一类坑。
+- **关键规则**：即使当前 agent 在其他 `git worktree` 中工作，也必须统一使用 canonical 项目路径 `/Users/hi/Developer/03-personal/PromptChain` 调用 `记忆` MCP；不得把 worktree 路径当作新的 `project_path`，否则长期记忆会被切裂成多个孤岛。
 
 #### 11.3.2 记忆分类
 
@@ -440,6 +449,17 @@ npm run dev
 - 若执行中发现共享文件已被其他 agent 修改，且会影响当前任务判断，应立即停下并重新对齐，不做覆盖式编辑。
 - 对于跨模块任务，先统一接口契约与共享类型，再分别推进各自子任务。
 - 长任务结束前，优先把高价值结论沉淀进记忆，而不是只留在会话里。
+- 实时协作状态不得依赖各自 worktree 内的相对路径副本；凡属锁表、事件流、Gemini 执行记录、handoff 记录，统一写入根仓库下的 canonical 绝对路径。
+- 当前 canonical 协作文件固定为：
+  - `/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/subagent-events.jsonl`
+  - `/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/subagent-locks.json`
+  - `/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/gemini-executions.jsonl`
+  - `/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/subagent-handoffs.jsonl`
+- 关键点不在于文件名，而在于所有 agent 必须使用同一个绝对路径；禁止在各自 worktree 内用相对路径写出多个副本。
+- 这些协作文件属于 coordinator 维护的运行态工件，不属于业务功能交付物；业务 agent 可以按规则追加，但不得把它们混入功能提交说明中。
+- coordinator 必须把 worktree 同步检查纳入固定例行工作：至少在任务派发前、`dev` 前进后、分支申请评审前检查每个活跃 worktree 的 `base_commit`、相对 `dev` 的 ahead/behind、以及 dirty 状态，并记录到共享协作文件。
+- coordinator 不默认替各分支执行 `merge`、`rebase` 或其他代码同步操作；实际同步由对应分支 owner 负责，除非用户明确授权 coordinator 代为执行。
+- `.cunzhi-memory/*` 若出现在某个 worktree 中，只视为本地缓存或导出结果，不视为多 agent 共享事实源。
 
 ### 11.7 工具优先级约定
 
@@ -447,8 +467,9 @@ npm run dev
 - 结构化用户交互：`mcp__cunzhi__zhi`
 - 项目语义搜索：`mcp__cunzhi__sou`
 - 官方/最新文档：`mcp__context7__resolve-library-id` + `mcp__context7__query-docs`
-- 前端交互与动画设计：Gemini CLI 中的 `/ui-ux-pro-max`
+- 前端代码实现：Gemini CLI 中的 `/ui-ux-pro-max`
 - 前端隔离开发：`git worktree`
+- 共享实时协作文件：根仓库 `specs/002-content-gen-mvp1/` 下的 canonical 绝对路径文件
 - 本地文件编辑：优先使用补丁式修改，保持变更小而清晰
 
 ### 11.8 代码与文案落地规则
