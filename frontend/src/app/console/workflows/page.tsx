@@ -1,102 +1,184 @@
 'use client';
 
-/**
- * 工作流列表页面
- */
-
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+
 import { useAuth } from '@/contexts/AuthContext';
+import {
+    useWorkflowApi,
+    type WorkflowDefinition,
+} from '@/components/WorkflowEditor/hooks/useWorkflowApi';
 import styles from './workflows.module.css';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
-
-interface WorkflowRun {
-    id: string;
-    workflow_name: string;
-    status: string;
-    current_node: string | null;
-    user_input: string;
-    started_at: string;
-    completed_at: string | null;
-    total_duration_ms: number | null;
-}
 
 export default function WorkflowsPage() {
     const { hasPermission } = useAuth();
-    const [workflows, setWorkflows] = useState<WorkflowRun[]>([]);
+    const { listWorkflows } = useWorkflowApi();
+    const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        async function fetchWorkflows() {
-            try {
-                // 这里暂时使用现有的工作流运行 API
-                // 后续可添加专门的工作流定义 API
-                const response = await fetch(`${API_BASE}/trace`, {
-                    credentials: 'include',
-                });
+        let cancelled = false;
 
-                if (response.ok) {
-                    // 模拟数据，实际应该从后端获取
-                    setWorkflows([]);
+        async function fetchWorkflows() {
+            setLoading(true);
+            setError(null);
+
+            try {
+                const data = await listWorkflows();
+                if (!cancelled) {
+                    setWorkflows(data.workflows);
                 }
-            } catch (err) {
-                console.error('加载失败', err);
+            } catch (requestError) {
+                if (!cancelled) {
+                    setError(
+                        requestError instanceof Error
+                            ? requestError.message
+                            : '加载工作流列表失败',
+                    );
+                }
             } finally {
-                setLoading(false);
+                if (!cancelled) {
+                    setLoading(false);
+                }
             }
         }
 
-        fetchWorkflows();
-    }, []);
+        void fetchWorkflows();
+        return () => {
+            cancelled = true;
+        };
+    }, [listWorkflows]);
+
+    const canCreate = hasPermission('workflow', 'create');
+    const canEdit = hasPermission('workflow', 'update');
 
     return (
         <div className={styles.container}>
             <div className={styles.header}>
                 <div>
                     <h1 className={styles.title}>工作流</h1>
-                    <p className={styles.subtitle}>管理您的自动化工作流</p>
+                    <p className={styles.subtitle}>
+                        统一管理草稿、已发布版本和普通用户可运行状态。
+                    </p>
                 </div>
-                {hasPermission('workflow', 'create') && (
-                    <button className={styles.createButton}>
+                {canCreate ? (
+                    <Link href="/console/workflows/edit" className={styles.createButton}>
                         + 创建工作流
-                    </button>
-                )}
+                    </Link>
+                ) : null}
             </div>
+
+            {error ? <div className={styles.errorBanner}>{error}</div> : null}
 
             {loading ? (
                 <div className={styles.loading}>
                     <div className={styles.spinner} />
+                    <span>正在加载工作流列表...</span>
                 </div>
             ) : workflows.length > 0 ? (
                 <div className={styles.workflowGrid}>
                     {workflows.map((workflow) => (
-                        <div key={workflow.id} className={styles.workflowCard}>
-                            <h3>{workflow.workflow_name}</h3>
-                            <p>{workflow.user_input?.slice(0, 100)}...</p>
-                            <div className={styles.cardFooter}>
-                                <span className={`${styles.status} ${styles[workflow.status]}`}>
-                                    {workflow.status}
-                                </span>
-                                <Link href={`/console/runs/${workflow.id}`}>
-                                    查看详情 →
-                                </Link>
+                        <article key={workflow.id} className={styles.workflowCard}>
+                            <div className={styles.cardHeader}>
+                                <div>
+                                    <h3>{workflow.name}</h3>
+                                    <p>{workflow.description || '暂无说明，建议补充工作流用途。'}</p>
+                                </div>
+                                <div className={styles.badges}>
+                                    <span
+                                        className={`${styles.badge} ${
+                                            workflow.is_published ? styles.published : styles.draft
+                                        }`}
+                                    >
+                                        {workflow.is_published ? '已发布' : '草稿'}
+                                    </span>
+                                    <span className={`${styles.badge} ${styles.version}`}>
+                                        当前草稿 v{workflow.version}
+                                    </span>
+                                    {workflow.published_version ? (
+                                        <>
+                                            <span className={`${styles.badge} ${styles.runnable}`}>
+                                                可运行 v{workflow.published_version}
+                                            </span>
+                                            {workflow.version !== workflow.published_version && (
+                                                <span className={`${styles.badge} ${styles.draft}`}>
+                                                    有未发布变更
+                                                </span>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <span className={`${styles.badge} ${styles.pending}`}>
+                                            需发布后运行
+                                        </span>
+                                    )}
+                                </div>
                             </div>
-                        </div>
+
+                            <dl className={styles.metaList}>
+                                <div>
+                                    <dt>最近更新时间</dt>
+                                    <dd>{formatDateTime(workflow.updated_at)}</dd>
+                                </div>
+                                <div>
+                                    <dt>最近发布时间</dt>
+                                    <dd>{workflow.published_at ? formatDateTime(workflow.published_at) : '尚未发布'}</dd>
+                                </div>
+                            </dl>
+
+                            <div className={styles.cardFooter}>
+                                <span className={styles.runState}>
+                                    {workflow.is_published
+                                        ? '普通用户可见并可运行'
+                                        : '仅设计者可见，普通用户不可运行'}
+                                </span>
+                                {canEdit ? (
+                                    <Link
+                                        href={`/console/workflows/edit?id=${workflow.id}`}
+                                        className={styles.editLink}
+                                    >
+                                        编辑与发布
+                                    </Link>
+                                ) : null}
+                            </div>
+                        </article>
                     ))}
                 </div>
             ) : (
                 <div className={styles.empty}>
-                    <div className={styles.emptyIcon}>⚡</div>
+                    <div className={styles.emptyIcon}>流程</div>
                     <h3>还没有工作流</h3>
-                    <p>创建您的第一个工作流开始自动化</p>
-                    {hasPermission('workflow', 'create') && (
-                        <button className={styles.createButton}>
-                            + 创建工作流
-                        </button>
-                    )}
+                    <p>
+                        {canCreate
+                            ? '从一个草稿开始，先保存、再校验、最后显式发布。'
+                            : '当前工作空间还没有可见的已发布工作流。'}
+                    </p>
+                    {canCreate ? (
+                        <Link href="/console/workflows/edit" className={styles.createButton}>
+                            + 创建第一个工作流
+                        </Link>
+                    ) : null}
                 </div>
             )}
         </div>
     );
+}
+
+function formatDateTime(value?: string): string {
+    if (!value) {
+        return '暂无记录';
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+
+    return new Intl.DateTimeFormat('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    }).format(date);
 }

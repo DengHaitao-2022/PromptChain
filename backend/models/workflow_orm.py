@@ -16,28 +16,31 @@ from db.postgres_store import Base
 class WorkflowDefinitionORM(Base):
     """工作流定义表"""
     __tablename__ = "workflow_definitions"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(255), nullable=False)
     description = Column(Text, default="")
     version = Column(Integer, default=1)
-    
+
     # 节点和边的JSON存储
     nodes = Column(JSON, default=list)
     edges = Column(JSON, default=list)
-    
+
     # 关联
     workspace_id = Column(String(36), ForeignKey("workspaces.id"), nullable=False)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
-    
+
     # 时间戳
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # 状态
     is_published = Column(Integer, default=0)  # 0=草稿, 1=已发布
+    published_version_id = Column(String(36), nullable=True)
+    published_at = Column(DateTime, nullable=True)
+    published_by = Column(String(36), ForeignKey("users.id"), nullable=True)
     is_deleted = Column(Integer, default=0)
-    
+
     def to_dict(self):
         """转换为字典"""
         return {
@@ -52,22 +55,30 @@ class WorkflowDefinitionORM(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "is_published": self.is_published,
+            "published_version_id": self.published_version_id,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "published_by": self.published_by,
         }
 
 
 class WorkflowVersionORM(Base):
     """工作流版本历史表"""
     __tablename__ = "workflow_versions"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     workflow_id = Column(String(36), ForeignKey("workflow_definitions.id"), nullable=False)
     version = Column(Integer, nullable=False)
-    
+
     # 版本快照
+    name = Column(String(255), default="")
+    description = Column(Text, default="")
     nodes = Column(JSON, default=list)
     edges = Column(JSON, default=list)
-    
+
     # 元数据
     change_log = Column(Text, default="")
+    snapshot_type = Column(String(32), default="draft")
+    source_version_id = Column(String(36), nullable=True)
+    metadata_json = Column(JSON, default=dict)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

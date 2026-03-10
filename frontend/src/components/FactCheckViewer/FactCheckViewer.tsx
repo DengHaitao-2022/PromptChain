@@ -167,7 +167,7 @@ export function FactCheckViewer({
                 <div className={styles.reviewRail}>
                     <div className={styles.railHeader}>
                         <div>
-                            <p className={styles.railEyebrow}>Risk Queue</p>
+                            <p className={styles.railEyebrow}>风险队列</p>
                             <h3 className={styles.railTitle}>优先处理高风险声明</h3>
                         </div>
                         <span className={styles.railMeta}>
@@ -267,7 +267,7 @@ export function FactCheckViewer({
                         <>
                             <div className={styles.detailHeader}>
                                 <div>
-                                    <p className={styles.detailEyebrow}>Claim Review</p>
+                                    <p className={styles.detailEyebrow}>声明审阅</p>
                                     <h3 className={styles.detailTitle}>当前审阅项</h3>
                                 </div>
                                 <div

@@ -118,7 +118,7 @@ docker compose up -d postgres redis
 cd backend
 uv sync
 cp .env.example .env
-uv run uvicorn main:app --reload --port 8000
+uv run uvicorn app:app --reload --port 8000
 ```
 
 `backend/.env` 至少需要配置一个可用模型提供方：
@@ -210,12 +210,13 @@ npm run dev
 ```text
 PromptChain/
 ├── backend/                 # FastAPI + LangGraph 后端
-│   ├── main.py              # API 入口
+│   ├── app.py               # 应用入口（应用工厂 + 路由注册）
+│   ├── core/                # 横切关注点（config 等）
 │   ├── graph/               # 内容生成工作流定义
 │   ├── nodes/               # 意图解析、提纲、写作、自检、核查节点
-│   ├── routes/              # 认证、工作空间、工作流、WebSocket 路由
+│   ├── routes/              # 工作流、Trace、认证、工作空间、WebSocket 路由
 │   ├── services/            # Artifact、Trace、Rerun 等服务
-│   ├── models/              # Pydantic 模型
+│   ├── models/              # Pydantic + ORM 模型
 │   └── db/                  # PostgreSQL 持久化实现
 ├── frontend/                # Next.js 前端
 │   ├── src/app/             # 页面入口

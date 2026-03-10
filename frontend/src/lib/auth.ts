@@ -1,21 +1,35 @@
 /**
- * 认证工具库
+ * 认证与权限工具库
  *
- * 提供登录、登出、用户信息获取等功能
- * Token 由后端通过 HttpOnly Cookie 管理，前端只需调用 API
+ * 前后端共享同一套角色语义，前端只负责菜单守卫与交互层兜底，
+ * 最终授权仍以服务端校验为准。
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+const PREFERRED_WORKSPACE_STORAGE_KEY = 'promptchain:workspace_id';
 
-// ==================== 类型定义 ====================
+export type UserStatus = 'active' | 'inactive' | 'suspended';
+export type WorkspaceAccessStatus = 'active' | 'suspended';
+export type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+export type Action = 'read' | 'create' | 'update' | 'delete' | 'execute' | 'export' | 'manage';
+export type Resource =
+  | 'workflow'
+  | 'workflow_run'
+  | 'template'
+  | 'model_provider'
+  | 'secret'
+  | 'api_key'
+  | 'member'
+  | 'workspace'
+  | 'audit_log';
 
 export interface User {
   id: string;
   email: string;
-  username?: string;
-  display_name?: string;
-  avatar_url?: string;
-  status: 'active' | 'inactive' | 'suspended';
+  username?: string | null;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  status: UserStatus;
   email_verified: boolean;
   created_at: string;
 }
@@ -23,17 +37,32 @@ export interface User {
 export interface Workspace {
   id: string;
   name: string;
-  description?: string;
-  logo_url?: string;
+  description?: string | null;
+  logo_url?: string | null;
   owner_id: string;
-  role: 'owner' | 'admin' | 'editor' | 'viewer';
+  role: Role;
+  joined_at?: string;
   created_at: string;
+}
+
+export interface WorkspaceMember {
+  id: string;
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  role: Role;
+  workspace_access: WorkspaceAccessStatus;
+  account_status: UserStatus;
+  email_verified: boolean;
+  joined_at: string;
 }
 
 export interface AuthState {
   user: User | null;
   workspace: Workspace | null;
   workspaces: Workspace[];
+  role: Role | null;
   isLoading: boolean;
   isAuthenticated: boolean;
 }
@@ -50,25 +79,129 @@ export interface RegisterRequest {
   display_name?: string;
 }
 
-// ==================== API 调用 ====================
+export interface AuthResponse {
+  message?: string;
+  user: User;
+  workspace: Workspace | null;
+  role: Role | null;
+  workspaces: Workspace[];
+}
+
+export interface InviteMemberRequest {
+  email: string;
+  role: Exclude<Role, 'owner'>;
+}
+
+export interface ConsoleRouteGuard {
+  prefix: string;
+  resource?: Resource;
+  action?: Action;
+}
+
+export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>> = {
+  viewer: {
+    workflow: ['read', 'execute'],
+    workflow_run: ['read', 'create'],
+    template: ['read'],
+    workspace: ['read'],
+  },
+  editor: {
+    workflow: ['read', 'create', 'update', 'execute'],
+    workflow_run: ['read', 'create'],
+    template: ['read', 'create', 'update'],
+    workspace: ['read'],
+  },
+  admin: {
+    workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
+    workflow_run: ['read', 'create', 'delete', 'export'],
+    template: ['read', 'create', 'update', 'delete', 'manage'],
+    model_provider: ['read', 'create', 'update', 'delete', 'manage'],
+    secret: ['read', 'create', 'update', 'delete', 'manage'],
+    api_key: ['read', 'create', 'update', 'delete', 'manage'],
+    member: ['read', 'create', 'update', 'delete', 'manage'],
+    workspace: ['read', 'update', 'manage'],
+    audit_log: ['read', 'export'],
+  },
+  owner: {
+    workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
+    workflow_run: ['read', 'create', 'delete', 'export', 'manage'],
+    template: ['read', 'create', 'update', 'delete', 'manage'],
+    model_provider: ['read', 'create', 'update', 'delete', 'manage'],
+    secret: ['read', 'create', 'update', 'delete', 'manage'],
+    api_key: ['read', 'create', 'update', 'delete', 'manage'],
+    member: ['read', 'create', 'update', 'delete', 'manage'],
+    workspace: ['read', 'update', 'delete', 'manage'],
+    audit_log: ['read', 'export'],
+  },
+};
+
+const CONSOLE_ROUTE_GUARDS: ConsoleRouteGuard[] = [
+  { prefix: '/console/workflows/edit', resource: 'workflow', action: 'create' },
+  { prefix: '/console/settings/members', resource: 'member', action: 'read' },
+  { prefix: '/console/settings/models', resource: 'model_provider', action: 'read' },
+  { prefix: '/console/settings/keys', resource: 'secret', action: 'read' },
+  { prefix: '/console/settings/audit', resource: 'audit_log', action: 'read' },
+  { prefix: '/console/runs', resource: 'workflow_run', action: 'read' },
+  { prefix: '/console/workflows', resource: 'workflow', action: 'read' },
+  { prefix: '/console/settings' },
+  { prefix: '/console' },
+];
+
+function normalizeAuthState(data: AuthResponse): AuthState {
+  persistPreferredWorkspace(data.workspace?.id ?? null);
+  return {
+    user: data.user,
+    workspace: data.workspace,
+    workspaces: data.workspaces ?? [],
+    role: data.role ?? data.workspace?.role ?? null,
+    isLoading: false,
+    isAuthenticated: true,
+  };
+}
+
+async function parseErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const error = (await response.json()) as { detail?: string; message?: string };
+    return error.detail || error.message || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getPreferredWorkspace(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  return window.localStorage.getItem(PREFERRED_WORKSPACE_STORAGE_KEY);
+}
+
+function persistPreferredWorkspace(workspaceId: string | null) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (!workspaceId) {
+    window.localStorage.removeItem(PREFERRED_WORKSPACE_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(PREFERRED_WORKSPACE_STORAGE_KEY, workspaceId);
+}
 
 /**
  * 登录
  */
-export async function login(data: LoginRequest): Promise<{
-  user: User;
-  workspace: Workspace | null;
-}> {
+export async function login(data: LoginRequest): Promise<AuthResponse> {
   const response = await fetch(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include', // 重要：包含 Cookie
+    credentials: 'include',
     body: JSON.stringify(data),
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || '登录失败');
+    throw new Error(await parseErrorMessage(response, '登录失败'));
   }
 
   return response.json();
@@ -86,8 +219,7 @@ export async function register(data: RegisterRequest): Promise<{ message: string
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || '注册失败');
+    throw new Error(await parseErrorMessage(response, '注册失败'));
   }
 
   return response.json();
@@ -97,14 +229,11 @@ export async function register(data: RegisterRequest): Promise<{ message: string
  * 登出
  */
 export async function logout(): Promise<void> {
-  const response = await fetch(`${API_BASE}/auth/logout`, {
+  persistPreferredWorkspace(null);
+  await fetch(`${API_BASE}/auth/logout`, {
     method: 'POST',
     credentials: 'include',
   });
-
-  if (!response.ok) {
-    console.error('登出失败');
-  }
 }
 
 /**
@@ -112,9 +241,12 @@ export async function logout(): Promise<void> {
  */
 export async function refreshToken(): Promise<boolean> {
   try {
+    const workspaceId = getPreferredWorkspace();
     const response = await fetch(`${API_BASE}/auth/refresh`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
+      body: JSON.stringify({ workspace_id: workspaceId }),
     });
     return response.ok;
   } catch {
@@ -132,40 +264,44 @@ export async function getCurrentUser(): Promise<AuthState | null> {
     });
 
     if (!response.ok) {
-      // 尝试刷新 Token
       if (response.status === 401) {
         const refreshed = await refreshToken();
         if (refreshed) {
-          // 重试获取用户信息
           const retryResponse = await fetch(`${API_BASE}/me`, {
             credentials: 'include',
           });
+
           if (retryResponse.ok) {
-            const data = await retryResponse.json();
-            return {
-              user: data.user,
-              workspace: data.workspace,
-              workspaces: data.workspaces,
-              isLoading: false,
-              isAuthenticated: true,
-            };
+            return normalizeAuthState((await retryResponse.json()) as AuthResponse);
           }
         }
       }
+
       return null;
     }
 
-    const data = await response.json();
-    return {
-      user: data.user,
-      workspace: data.workspace,
-      workspaces: data.workspaces,
-      isLoading: false,
-      isAuthenticated: true,
-    };
+    return normalizeAuthState((await response.json()) as AuthResponse);
   } catch {
     return null;
   }
+}
+
+/**
+ * 切换工作空间
+ */
+export async function switchWorkspace(workspaceId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/workspace-context/switch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ workspace_id: workspaceId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, '切换工作空间失败'));
+  }
+
+  persistPreferredWorkspace(workspaceId);
 }
 
 /**
@@ -179,8 +315,7 @@ export async function verifyEmail(token: string): Promise<{ message: string }> {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || '验证失败');
+    throw new Error(await parseErrorMessage(response, '验证失败'));
   }
 
   return response.json();
@@ -197,8 +332,7 @@ export async function forgotPassword(email: string): Promise<{ message: string }
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || '操作失败');
+    throw new Error(await parseErrorMessage(response, '操作失败'));
   }
 
   return response.json();
@@ -215,69 +349,177 @@ export async function resetPassword(token: string, password: string): Promise<{ 
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || '重置失败');
+    throw new Error(await parseErrorMessage(response, '重置失败'));
   }
 
   return response.json();
 }
 
-// ==================== 权限检查 ====================
+/**
+ * 获取工作空间成员
+ */
+export async function listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]> {
+  const response = await fetch(`${API_BASE}/workspaces/${workspaceId}/members`, {
+    credentials: 'include',
+  });
 
-type Role = 'owner' | 'admin' | 'editor' | 'viewer';
-type Action = 'read' | 'create' | 'update' | 'delete' | 'execute' | 'manage';
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, '加载成员失败'));
+  }
 
-const ROLE_PERMISSIONS: Record<Role, Record<string, Action[]>> = {
-  viewer: {
-    workflow: ['read'],
-    workflow_run: ['read'],
-    template: ['read'],
-    member: ['read'],
-  },
-  editor: {
-    workflow: ['read', 'create', 'update', 'execute'],
-    workflow_run: ['read', 'create'],
-    template: ['read', 'create', 'update'],
-    member: ['read'],
-  },
-  admin: {
-    workflow: ['read', 'create', 'update', 'delete', 'execute'],
-    workflow_run: ['read', 'create', 'delete'],
-    template: ['read', 'create', 'update', 'delete'],
-    model_provider: ['read', 'create', 'update', 'delete', 'manage'],
-    secret: ['read', 'create', 'delete', 'manage'],
-    api_key: ['read', 'create', 'delete', 'manage'],
-    member: ['read', 'create', 'update', 'delete', 'manage'],
-  },
-  owner: {
-    workflow: ['read', 'create', 'update', 'delete', 'execute', 'manage'],
-    workflow_run: ['read', 'create', 'delete', 'manage'],
-    template: ['read', 'create', 'update', 'delete', 'manage'],
-    model_provider: ['read', 'create', 'update', 'delete', 'manage'],
-    secret: ['read', 'create', 'update', 'delete', 'manage'],
-    api_key: ['read', 'create', 'update', 'delete', 'manage'],
-    member: ['read', 'create', 'update', 'delete', 'manage'],
-    workspace: ['read', 'update', 'delete', 'manage'],
-  },
-};
+  const data = (await response.json()) as { members?: WorkspaceMember[] };
+  return data.members ?? [];
+}
+
+/**
+ * 邀请成员
+ */
+export async function inviteWorkspaceMember(
+  workspaceId: string,
+  payload: InviteMemberRequest,
+): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/workspaces/${workspaceId}/invite`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, '邀请失败'));
+  }
+
+  return response.json();
+}
+
+/**
+ * 修改成员角色
+ */
+export async function updateWorkspaceMemberRole(
+  membershipId: string,
+  role: Exclude<Role, 'owner'>,
+): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/memberships/${membershipId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ role }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, '更新角色失败'));
+  }
+
+  return response.json();
+}
+
+/**
+ * 移除成员
+ */
+export async function removeWorkspaceMember(membershipId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/memberships/${membershipId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, '移除成员失败'));
+  }
+
+  return response.json();
+}
+
+/**
+ * 更新成员在当前工作空间中的访问状态
+ */
+export async function updateWorkspaceMemberAccess(
+  userId: string,
+  status: WorkspaceAccessStatus,
+): Promise<{ message: string; workspace_access?: WorkspaceAccessStatus }> {
+  const response = await fetch(`${API_BASE}/admin/users/${userId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ status }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, '更新工作空间访问状态失败'));
+  }
+
+  return response.json();
+}
+
+/**
+ * 兼容旧命名，实际语义已经收口为当前工作空间访问控制。
+ */
+export async function updateWorkspaceUserStatus(
+  userId: string,
+  status: WorkspaceAccessStatus,
+): Promise<{ message: string; workspace_access?: WorkspaceAccessStatus }> {
+  return updateWorkspaceMemberAccess(userId, status);
+}
 
 /**
  * 检查用户是否有指定权限
  */
-export function hasPermission(role: Role | undefined, resource: string, action: Action): boolean {
+export function hasPermission(role: Role | null | undefined, resource: Resource, action: Action): boolean {
   if (!role) return false;
   const permissions = ROLE_PERMISSIONS[role];
-  if (!permissions) return false;
-  const resourcePermissions = permissions[resource];
-  if (!resourcePermissions) return false;
-  return resourcePermissions.includes(action);
+  const resourcePermissions = permissions?.[resource];
+  return !!resourcePermissions?.includes(action);
 }
 
 /**
  * 检查用户是否至少是指定角色
  */
-export function isAtLeastRole(currentRole: Role | undefined, requiredRole: Role): boolean {
+export function isAtLeastRole(currentRole: Role | null | undefined, requiredRole: Role): boolean {
   if (!currentRole) return false;
   const roleOrder: Role[] = ['viewer', 'editor', 'admin', 'owner'];
   return roleOrder.indexOf(currentRole) >= roleOrder.indexOf(requiredRole);
+}
+
+export function getRoleLabel(role: Role | null | undefined): string {
+  switch (role) {
+    case 'owner':
+      return '拥有者';
+    case 'admin':
+      return '管理员';
+    case 'editor':
+      return '编辑者';
+    case 'viewer':
+      return '查看者';
+    default:
+      return '未分配';
+  }
+}
+
+export function canAccessConsolePath(role: Role | null | undefined, pathname: string): boolean {
+  if (!role) {
+    return pathname === '/console';
+  }
+
+  // 寻找最精确匹配的路由守卫（最长前缀匹配）
+  const guard = CONSOLE_ROUTE_GUARDS
+    .filter((item) => pathname.startsWith(item.prefix))
+    .reduce<ConsoleRouteGuard | undefined>(
+      (best, current) => (!best || current.prefix.length > best.prefix.length ? current : best),
+      undefined,
+    );
+
+  if (!guard || !guard.resource || !guard.action) {
+    return pathname.startsWith('/console');
+  }
+
+  return hasPermission(role, guard.resource, guard.action);
+}
+
+export function getAccessibleConsoleFallback(role: Role | null | undefined): string {
+  if (!role) return '/console';
+
+  if (hasPermission(role, 'workflow_run', 'read')) {
+    return '/console';
+  }
+
+  return '/login';
 }

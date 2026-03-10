@@ -1,19 +1,26 @@
 'use client';
 
 import React from 'react';
+import {
+    Target,
+    Pin,
+    Users,
+    Tag,
+    Palette,
+    Ruler,
+    CheckCircle,
+    XCircle,
+    AlertTriangle,
+} from 'lucide-react';
 import styles from './IntentCardViewer.module.css';
 import type { IntentCard } from '@/lib/api';
 
 interface IntentCardViewerProps {
     intentCard: IntentCard;
-    onEdit?: (field: string, value: unknown) => void;
-    isEditable?: boolean;
 }
 
 export function IntentCardViewer({
     intentCard,
-    onEdit,
-    isEditable = false,
 }: IntentCardViewerProps) {
     // 获取优先级颜色
     const getPriorityColor = (priority: string) => {
@@ -29,12 +36,12 @@ export function IntentCardViewer({
 
     // 字段配置
     const fields = [
-        { key: 'goal', label: '目标', icon: '🎯' },
-        { key: 'topic', label: '主题', icon: '📌' },
-        { key: 'audience', label: '目标读者', icon: '👥' },
-        { key: 'scenario', label: '使用场景', icon: '🏷️' },
-        { key: 'tone', label: '语气风格', icon: '🎨' },
-        { key: 'length', label: '目标字数', icon: '📏', format: (v: number) => `${v.toLocaleString()} 字` },
+        { key: 'goal', label: '目标', icon: <Target className={styles.fieldIconSvg} /> },
+        { key: 'topic', label: '主题', icon: <Pin className={styles.fieldIconSvg} /> },
+        { key: 'audience', label: '目标读者', icon: <Users className={styles.fieldIconSvg} /> },
+        { key: 'scenario', label: '使用场景', icon: <Tag className={styles.fieldIconSvg} /> },
+        { key: 'tone', label: '语气风格', icon: <Palette className={styles.fieldIconSvg} /> },
+        { key: 'length', label: '目标字数', icon: <Ruler className={styles.fieldIconSvg} />, format: (v: number) => `${v.toLocaleString()} 字` },
     ];
 
     return (
@@ -67,7 +74,9 @@ export function IntentCardViewer({
             {/* 必须包含 */}
             {intentCard.must_include.length > 0 && (
                 <div className={styles.tagSection}>
-                    <span className={styles.tagLabel}>✅ 必须包含</span>
+                    <span className={styles.tagLabel}>
+                        <CheckCircle className={styles.tagIcon} /> 必须包含
+                    </span>
                     <div className={styles.tags}>
                         {intentCard.must_include.map((item, index) => (
                             <span key={index} className={`${styles.tag} ${styles.tagInclude}`}>
@@ -81,7 +90,9 @@ export function IntentCardViewer({
             {/* 必须排除 */}
             {intentCard.must_exclude.length > 0 && (
                 <div className={styles.tagSection}>
-                    <span className={styles.tagLabel}>❌ 必须排除</span>
+                    <span className={styles.tagLabel}>
+                        <XCircle className={styles.tagIcon} /> 必须排除
+                    </span>
                     <div className={styles.tags}>
                         {intentCard.must_exclude.map((item, index) => (
                             <span key={index} className={`${styles.tag} ${styles.tagExclude}`}>
@@ -95,7 +106,9 @@ export function IntentCardViewer({
             {/* 待澄清项 */}
             {intentCard.clarification_questions && intentCard.clarification_questions.length > 0 && (
                 <div className={styles.uncertainties}>
-                    <span className={styles.tagLabel}>⚠️ 待澄清事项</span>
+                    <span className={styles.tagLabel}>
+                        <AlertTriangle className={styles.tagIcon} /> 待澄清事项
+                    </span>
                     <div className={styles.uncertaintyList}>
                         {intentCard.clarification_questions.map((q, index) => (
                             <div key={index} className={styles.uncertaintyItem}>

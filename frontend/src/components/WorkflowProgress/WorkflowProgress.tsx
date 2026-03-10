@@ -7,6 +7,7 @@ import {
     CircleDot,
     LoaderCircle,
     PauseCircle,
+    Hourglass,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import styles from './WorkflowProgress.module.css';
@@ -15,7 +16,14 @@ export interface WorkflowStep {
     id: string;
     name: string;
     label: string;
-    status: 'pending' | 'running' | 'completed' | 'interrupted' | 'failed';
+    status:
+        | 'pending'
+        | 'running'
+        | 'completed'
+        | 'interrupted'
+        | 'failed'
+        | 'paused'
+        | 'gate_waiting';
     startedAt?: string;
     completedAt?: string;
     durationMs?: number;
@@ -47,7 +55,11 @@ function getStatusMeta(status: WorkflowStep['status']): {
         case 'running':
             return { icon: LoaderCircle, text: '执行中' };
         case 'interrupted':
-            return { icon: PauseCircle, text: '等待确认' };
+            return { icon: AlertTriangle, text: '异常中断' };
+        case 'paused':
+            return { icon: PauseCircle, text: '已暂停' };
+        case 'gate_waiting':
+            return { icon: Hourglass, text: '等待人工确认' };
         case 'failed':
             return { icon: AlertTriangle, text: '执行失败' };
         default:
@@ -126,7 +138,7 @@ export function WorkflowProgress({
                                                 ? styles.connectorRunning
                                                 : step.status === 'failed'
                                                     ? styles.connectorFailed
-                                                    : step.status === 'interrupted'
+                                                    : step.status === 'interrupted' || step.status === 'gate_waiting' || step.status === 'paused'
                                                         ? styles.connectorInterrupted
                                                         : ''
                                     }`}
@@ -153,10 +165,14 @@ export function WorkflowProgress({
                                         : step.status === 'running'
                                             ? '系统正在推进该节点'
                                             : step.status === 'interrupted'
-                                                ? '等待你的确认'
-                                                : step.status === 'failed'
-                                                    ? '该节点未能完成'
-                                                    : '尚未开始执行'}
+                                                ? '需要人工确认'
+                                                : step.status === 'paused'
+                                                    ? '已暂停，等待恢复'
+                                                    : step.status === 'gate_waiting'
+                                                        ? '等待人工确认以继续'
+                                                        : step.status === 'failed'
+                                                            ? '该节点未能完成'
+                                                            : '尚未开始执行'}
                                 </span>
                             </div>
 

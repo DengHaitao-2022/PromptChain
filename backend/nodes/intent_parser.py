@@ -6,12 +6,20 @@
 2. 识别缺失信息，生成澄清问题
 3. 创建 Artifact 版本
 """
-from typing import Any
+import json
 from datetime import datetime
 from langchain_core.prompts import ChatPromptTemplate
 
-from models import IntentCard, Uncertainty, ArtifactType, NodeRun, NodeRunStatus, LLMCallRecord
-from services import get_llm, get_structured_llm, get_artifact_store, get_current_model_info
+from models import (
+    ArtifactType,
+    HumanDecision,
+    IntentCard,
+    LLMCallRecord,
+    NodeRun,
+    NodeRunStatus,
+    Uncertainty,
+)
+from services import get_artifact_store, get_current_model_info, get_structured_llm
 
 
 INTENT_EXTRACTION_PROMPT = """你是一个专业的内容规划助手。请根据用户的需求描述，提取结构化意图卡。
@@ -38,14 +46,37 @@ INTENT_EXTRACTION_PROMPT = """你是一个专业的内容规划助手。请根�
 - uncertainties: 如果有重要信息不明确，添加澄清问题"""
 
 
+def _now_iso() -> str:
+    return f"{datetime.utcnow().isoformat()}Z"
+
+
+def _serialize_questions(questions: list[Uncertainty]) -> list[dict]:
+    return [question.model_dump() for question in questions]
+
+
+async def _update_gate_metadata(store, workflow_run_id: str, gate_payload: dict | None) -> None:
+    workflow_run = await store.get_workflow_run(workflow_run_id)
+    if workflow_run is None:
+        return
+
+    metadata = dict(workflow_run.metadata or {})
+    if gate_payload is None:
+        metadata.pop("gate", None)
+    else:
+        metadata["gate"] = gate_payload
+
+    workflow_run.metadata = metadata
+    await store.update_workflow_run(workflow_run)
+
+
 async def parse_intent(state: dict) -> dict:
     """
     解析用户意图，生成结构化意图卡
-    
+
     输入 state:
         - user_input: str
         - workflow_run_id: str
-    
+
     输出更新:
         - intent_card: IntentCard
         - needs_clarification: bool
@@ -54,28 +85,28 @@ async def parse_intent(state: dict) -> dict:
     user_input = state["user_input"]
     workflow_run_id = state["workflow_run_id"]
     store = get_artifact_store()
-    
+
     # 创建节点运行记录
     node_run = NodeRun(
         workflow_run_id=workflow_run_id,
         node_name="parse_intent",
-        node_type="llm_call",
+        node_type="process",
         started_at=datetime.utcnow(),
-        status=NodeRunStatus.RUNNING
+        status=NodeRunStatus.RUNNING,
     )
     await store.create_node_run(node_run)
-    
+
     try:
         # 使用结构化输出的 LLM
         llm = get_structured_llm(IntentCard)
         prompt = ChatPromptTemplate.from_template(INTENT_EXTRACTION_PROMPT)
         chain = prompt | llm
-        
+
         # 调用 LLM
         start_time = datetime.utcnow()
         intent_card: IntentCard = await chain.ainvoke({"user_input": user_input})
         end_time = datetime.utcnow()
-        
+
         # 记录 LLM 调用（动态获取模型配置）
         model_info = get_current_model_info()
         llm_call = LLMCallRecord(
@@ -86,32 +117,54 @@ async def parse_intent(state: dict) -> dict:
             response_preview=str(intent_card.model_dump())[:200]
         )
         node_run.llm_calls.append(llm_call)
-        
+
         # 提取高优先级澄清问题
         clarification_questions = intent_card.get_high_priority_uncertainties(max_count=3)
+        serialized_questions = _serialize_questions(clarification_questions)
         needs_clarification = len(clarification_questions) > 0
-        
+
         # 创建 Artifact
         artifact = await store.create_artifact(
             type=ArtifactType.INTENT_CARD,
             content=intent_card.model_dump(),
             workflow_run_id=workflow_run_id,
-            node_run_id=node_run.id
+            node_run_id=node_run.id,
+            metadata={
+                "needs_clarification": needs_clarification,
+                "clarification_questions": serialized_questions,
+            },
         )
-        
+
+        if needs_clarification:
+            await _update_gate_metadata(
+                store,
+                workflow_run_id,
+                {
+                    "gate_type": "clarification",
+                    "trigger_reason": "missing_information",
+                    "questions": serialized_questions,
+                    "answers": None,
+                    "opened_at": _now_iso(),
+                    "handled_at": None,
+                    "resolution": None,
+                },
+            )
+        else:
+            await _update_gate_metadata(store, workflow_run_id, None)
+
         # 更新节点运行记录
         node_run.output_artifact_ids.append(artifact.id)
         node_run.complete(NodeRunStatus.COMPLETED)
         await store.update_node_run(node_run)
-        
+
         return {
             **state,
             "intent_card": intent_card,
             "intent_card_artifact_id": artifact.id,
             "needs_clarification": needs_clarification,
-            "clarification_questions": clarification_questions
+            "clarification_questions": serialized_questions,
         }
-        
+
     except Exception as e:
         # 记录错误
         node_run.complete(NodeRunStatus.FAILED, str(e))
@@ -122,11 +175,11 @@ async def parse_intent(state: dict) -> dict:
 async def clarify_intent(state: dict) -> dict:
     """
     处理用户澄清，更新意图卡
-    
+
     输入 state:
         - intent_card: IntentCard
         - user_clarifications: dict  # {field: answer}
-    
+
     输出更新:
         - intent_card: IntentCard (更新后)
         - needs_clarification: False
@@ -135,33 +188,43 @@ async def clarify_intent(state: dict) -> dict:
     clarifications = state.get("user_clarifications", {})
     workflow_run_id = state["workflow_run_id"]
     store = get_artifact_store()
-    
+
     # 创建节点运行记录
     node_run = NodeRun(
         workflow_run_id=workflow_run_id,
         node_name="clarify_intent",
-        node_type="user_input",
+        node_type="gate",
         started_at=datetime.utcnow(),
         status=NodeRunStatus.RUNNING,
-        input_artifact_ids=[state.get("intent_card_artifact_id", "")]
+        input_artifact_ids=[
+            artifact_id
+            for artifact_id in [state.get("intent_card_artifact_id")]
+            if artifact_id
+        ],
     )
     await store.create_node_run(node_run)
-    
+
     try:
+        node_run.human_decision = HumanDecision(
+            decision_type="modify",
+            user_input=json.dumps(clarifications, ensure_ascii=False),
+            modified_content=clarifications,
+        )
+
         # 应用用户澄清
         updated_data = intent_card.model_dump()
         for field, answer in clarifications.items():
             if field in updated_data:
                 updated_data[field] = answer
-        
+
         # 清除已解答的不确定点
         updated_data["uncertainties"] = [
             u for u in updated_data["uncertainties"]
             if u["field"] not in clarifications
         ]
-        
+
         updated_intent_card = IntentCard.model_validate(updated_data)
-        
+
         # 创建新版本 Artifact
         parent_artifact_id = state.get("intent_card_artifact_id")
         artifact = await store.create_artifact(
@@ -170,14 +233,38 @@ async def clarify_intent(state: dict) -> dict:
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,
             parent_version_id=parent_artifact_id,
-            metadata={"clarifications": clarifications}
+            metadata={
+                "clarifications": clarifications,
+                "remaining_uncertainties": updated_intent_card.model_dump().get("uncertainties", []),
+            },
         )
-        
+
+        workflow_run = await store.get_workflow_run(workflow_run_id)
+        current_gate = {}
+        if workflow_run and isinstance(workflow_run.metadata, dict):
+            gate = workflow_run.metadata.get("gate")
+            if isinstance(gate, dict):
+                current_gate = dict(gate)
+
+        await _update_gate_metadata(
+            store,
+            workflow_run_id,
+            {
+                "gate_type": "clarification",
+                "trigger_reason": current_gate.get("trigger_reason") or "missing_information",
+                "questions": current_gate.get("questions") or state.get("clarification_questions", []),
+                "answers": clarifications,
+                "opened_at": current_gate.get("opened_at") or _now_iso(),
+                "handled_at": _now_iso(),
+                "resolution": "answered",
+            },
+        )
+
         # 更新节点运行记录
         node_run.output_artifact_ids.append(artifact.id)
         node_run.complete(NodeRunStatus.COMPLETED)
         await store.update_node_run(node_run)
-        
+
         return {
             **state,
             "intent_card": updated_intent_card,
@@ -185,7 +272,7 @@ async def clarify_intent(state: dict) -> dict:
             "needs_clarification": False,
             "clarification_questions": []
         }
-        
+
     except Exception as e:
         node_run.complete(NodeRunStatus.FAILED, str(e))
         await store.update_node_run(node_run)
