@@ -11,7 +11,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 
-from models import IntentCard, ArtifactType, NodeRun, NodeRunStatus, LLMCallRecord
+from models import ArtifactType, IntentCard, LLMCallRecord, NodeRun, NodeRunStatus, OutlineSection
 from services import get_llm, get_structured_llm, get_artifact_store, get_current_model_info
 
 
@@ -22,11 +22,6 @@ class RefinementFeedback(BaseModel):
     suggestions: List[str] = Field(default_factory=list, description="改进建议")
     quality_score: float = Field(..., ge=0, le=10, description="质量评分 0-10")
     needs_revision: bool = Field(..., description="是否需要修订")
-
-
-class SectionFeedbackList(BaseModel):
-    """章节反馈列表"""
-    feedbacks: List[RefinementFeedback] = Field(default_factory=list)
 
 
 FEEDBACK_PROMPT = """作为一个严格的编辑，请审阅以下文章段落。
@@ -74,6 +69,44 @@ REFINE_PROMPT = """请根据以下反馈，修订文章内容。
 请输出修订后的完整内容（仅输出修订后的正文，不需要其他说明）："""
 
 
+def _build_section_lookup(state: dict) -> dict[str, OutlineSection]:
+    outline = state["outline"]
+    return {
+        section.id: section
+        for section in outline.get_flat_sections()
+    }
+
+
+def _build_section_artifact_content(section: OutlineSection, content: str) -> dict:
+    return {
+        "section_id": section.id,
+        "section_title": section.title,
+        "section_summary": section.summary,
+        "target_words": section.target_words,
+        "dependencies": list(section.dependencies),
+        "content": content,
+        "word_count": len(content),
+    }
+
+
+def _build_compiled_content(state: dict, sections: Dict[str, str]) -> str:
+    compiled_sections: list[str] = []
+    for section in state["outline"].get_flat_sections():
+        content = sections.get(section.id)
+        if not content:
+            continue
+        compiled_sections.append(f"## {section.title}\n{content}")
+    return "\n\n".join(compiled_sections)
+
+
+def _build_section_order(state: dict, sections: Dict[str, str]) -> list[str]:
+    return [
+        section.id
+        for section in state["outline"].get_flat_sections()
+        if section.id in sections
+    ]
+
+
 async def generate_feedback(
     state: dict,
     section_id: str,
@@ -82,7 +115,7 @@ async def generate_feedback(
     """为单个章节生成反馈"""
     intent_card: IntentCard = state["intent_card"]
     outline = state["outline"]
-    
+
     # 找到对应章节
     section_title = ""
     target_words = 300
@@ -91,11 +124,11 @@ async def generate_feedback(
             section_title = section.title
             target_words = section.target_words
             break
-    
+
     llm = get_structured_llm(RefinementFeedback)
     prompt = ChatPromptTemplate.from_template(FEEDBACK_PROMPT)
     chain = prompt | llm
-    
+
     feedback = await chain.ainvoke({
         "audience": intent_card.audience.value,
         "tone": intent_card.tone.value,
@@ -105,7 +138,7 @@ async def generate_feedback(
         "content": content,
         "current_words": len(content)
     })
-    
+
     return feedback
 
 
@@ -119,7 +152,7 @@ async def refine_section(
     llm = get_llm(temperature=0.5)  # 降低温度以保持一致性
     prompt = ChatPromptTemplate.from_template(REFINE_PROMPT)
     chain = prompt | llm
-    
+
     # 格式化反馈
     feedback_text = f"""
 问题:
@@ -130,24 +163,24 @@ async def refine_section(
 
 质量评分: {feedback.quality_score}/10
 """
-    
+
     result = await chain.ainvoke({
         "original_content": original_content,
         "feedback": feedback_text
     })
-    
+
     return result.content
 
 
 async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
     """
     生成→反馈→精炼循环
-    
+
     输入 state:
         - draft_sections: Dict[str, str]
         - intent_card: IntentCard
         - workflow_run_id: str
-    
+
     输出更新:
         - final_content: Dict[str, str]
         - refinement_history: List[dict]
@@ -155,39 +188,63 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
     draft_sections: Dict[str, str] = state.get("draft_sections", {})
     workflow_run_id = state["workflow_run_id"]
     store = get_artifact_store()
-    
+
     # 创建节点运行记录
     node_run = NodeRun(
         workflow_run_id=workflow_run_id,
         node_name="self_refine",
-        node_type="llm_call",
+        node_type="process",
         started_at=datetime.utcnow(),
         status=NodeRunStatus.RUNNING,
-        input_artifact_ids=list(state.get("section_artifact_ids", {}).values())
+        input_artifact_ids=list(state.get("section_artifact_ids", {}).values()),
     )
     await store.create_node_run(node_run)
-    
+
     try:
         current_content = dict(draft_sections)
         refinement_history = []
-        
+        section_lookup = _build_section_lookup(state)
+        latest_section_artifact_ids = dict(state.get("section_artifact_ids", {}))
+
         for iteration in range(max_iterations):
             iteration_record = {
                 "iteration": iteration + 1,
                 "feedbacks": [],
-                "revised_sections": []
+                "revised_sections": [],
             }
-            
+
             # Step 1: 生成反馈
             feedback_list: List[RefinementFeedback] = []
             for section_id, content in current_content.items():
                 start_time = datetime.utcnow()
                 feedback = await generate_feedback(state, section_id, content)
                 end_time = datetime.utcnow()
-                
+
                 feedback_list.append(feedback)
-                iteration_record["feedbacks"].append(feedback.model_dump())
-                
+                feedback_artifact = await store.create_artifact(
+                    type=ArtifactType.REFINEMENT_FEEDBACK,
+                    content={
+                        "iteration": iteration + 1,
+                        "section_id": section_id,
+                        "feedback": feedback.model_dump(),
+                        "content_snapshot": content,
+                    },
+                    workflow_run_id=workflow_run_id,
+                    node_run_id=node_run.id,
+                    metadata={
+                        "source_section_artifact_id": latest_section_artifact_ids.get(section_id),
+                        "quality_score": feedback.quality_score,
+                        "needs_revision": feedback.needs_revision,
+                    },
+                )
+                node_run.output_artifact_ids.append(feedback_artifact.id)
+                iteration_record["feedbacks"].append(
+                    {
+                        **feedback.model_dump(),
+                        "artifact_id": feedback_artifact.id,
+                    }
+                )
+
                 # 记录 LLM 调用（动态获取模型配置）
                 model_info = get_current_model_info()
                 llm_call = LLMCallRecord(
@@ -198,19 +255,20 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                     response_preview=f"Score: {feedback.quality_score}"
                 )
                 node_run.llm_calls.append(llm_call)
-            
+
             # Step 2: 检查是否需要继续修订
             sections_needing_revision = [
                 f for f in feedback_list if f.needs_revision
             ]
-            
+
             if not sections_needing_revision:
                 # 质量已满足要求，停止循环
                 refinement_history.append(iteration_record)
                 break
-            
+
             # Step 3: 执行修订
             for feedback in sections_needing_revision:
+                section = section_lookup[feedback.section_id]
                 start_time = datetime.utcnow()
                 refined_content = await refine_section(
                     state,
@@ -219,10 +277,29 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                     feedback
                 )
                 end_time = datetime.utcnow()
-                
+
                 current_content[feedback.section_id] = refined_content
-                iteration_record["revised_sections"].append(feedback.section_id)
-                
+                refined_section_artifact = await store.create_artifact(
+                    type=ArtifactType.SECTION_CONTENT,
+                    content=_build_section_artifact_content(section, refined_content),
+                    workflow_run_id=workflow_run_id,
+                    node_run_id=node_run.id,
+                    parent_version_id=latest_section_artifact_ids.get(feedback.section_id),
+                    metadata={
+                        "generation_phase": "refined",
+                        "iteration": iteration + 1,
+                        "quality_score": feedback.quality_score,
+                    },
+                )
+                latest_section_artifact_ids[feedback.section_id] = refined_section_artifact.id
+                node_run.output_artifact_ids.append(refined_section_artifact.id)
+                iteration_record["revised_sections"].append(
+                    {
+                        "section_id": feedback.section_id,
+                        "artifact_id": refined_section_artifact.id,
+                    }
+                )
+
                 # 记录 LLM 调用（动态获取模型配置）
                 model_info = get_current_model_info()
                 llm_call = LLMCallRecord(
@@ -233,33 +310,41 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                     response_preview=refined_content[:100]
                 )
                 node_run.llm_calls.append(llm_call)
-            
+
             refinement_history.append(iteration_record)
-        
+
         # 创建最终内容 Artifact
         artifact = await store.create_artifact(
             type=ArtifactType.FINAL_CONTENT,
             content={
                 "sections": current_content,
+                "section_order": _build_section_order(state, current_content),
+                "compiled_content": _build_compiled_content(state, current_content),
                 "refinement_history": refinement_history,
-                "total_iterations": len(refinement_history)
+                "total_iterations": len(refinement_history),
             },
             workflow_run_id=workflow_run_id,
-            node_run_id=node_run.id
+            node_run_id=node_run.id,
+            parent_version_id=state.get("final_content_artifact_id"),
+            metadata={
+                "section_artifact_ids": latest_section_artifact_ids,
+                "total_iterations": len(refinement_history),
+            },
         )
         node_run.output_artifact_ids.append(artifact.id)
-        
+
         # 完成节点
         node_run.complete(NodeRunStatus.COMPLETED)
         await store.update_node_run(node_run)
-        
+
         return {
             **state,
             "final_content": current_content,
             "final_content_artifact_id": artifact.id,
-            "refinement_history": refinement_history
+            "refinement_history": refinement_history,
+            "section_artifact_ids": latest_section_artifact_ids,
         }
-        
+
     except Exception as e:
         node_run.complete(NodeRunStatus.FAILED, str(e))
         await store.update_node_run(node_run)
