@@ -155,20 +155,46 @@ async def _update_gate_metadata(store, workflow_run_id: str, gate_payload: dict 
 def _apply_corrections_to_sections(
     sections: dict[str, str],
     corrections: dict[str, dict[str, str]],
-) -> dict[str, str]:
+) -> tuple[dict[str, str], dict[str, dict[str, str]], dict[str, dict[str, str]]]:
     updated_sections = dict(sections)
+    applied_corrections: dict[str, dict[str, str]] = {}
+    failed_corrections: dict[str, dict[str, str]] = {}
+
     for correction in corrections.values():
         section_id = correction["section_id"]
         section_text = updated_sections.get(section_id)
         if not section_text:
+            failed_corrections[correction["claim_id"]] = {
+                **correction,
+                "reason": "section_not_found",
+            }
             continue
 
         original = correction["original"]
         replacement = correction["replacement"]
-        if original in section_text:
-            updated_sections[section_id] = section_text.replace(original, replacement, 1)
+        if original not in section_text:
+            failed_corrections[correction["claim_id"]] = {
+                **correction,
+                "reason": "original_text_not_found",
+            }
+            continue
 
-    return updated_sections
+        updated_sections[section_id] = section_text.replace(original, replacement, 1)
+        applied_corrections[correction["claim_id"]] = correction
+
+    return updated_sections, applied_corrections, failed_corrections
+
+
+def _build_failed_correction_message(failed_corrections: dict[str, dict[str, str]]) -> str:
+    parts = []
+    for claim_id, correction in failed_corrections.items():
+        parts.append(f"{claim_id}:{correction['reason']}")
+    return ", ".join(parts)
+
+
+def _mark_result_resolved(result: VerificationResult) -> None:
+    result.is_verified = True
+    result.risk_level = "low"
 
 
 def _build_final_content_payload(
@@ -470,7 +496,8 @@ async def approve_fact_check(state: dict) -> dict:
 
     try:
         # 应用用户决策
-        corrections_to_apply: dict[str, dict[str, str]] = {}
+        requested_corrections: dict[str, dict[str, str]] = {}
+        failed_corrections: dict[str, dict[str, str]] = {}
         handled_at = _now_iso()
 
         for claim_id, decision in decisions.items():
@@ -479,34 +506,74 @@ async def approve_fact_check(state: dict) -> dict:
             claim = next((c for c in report.claims if c.id == claim_id), None)
 
             if not result or not claim:
+                failed_corrections[claim_id] = {
+                    "claim_id": claim_id,
+                    "reason": "claim_or_result_not_found",
+                }
                 continue
 
             if decision == "confirm":
                 # 用户确认无误，标记为已验证
-                result.is_verified = True
-                result.risk_level = "low"
-            elif decision == "use_suggestion" and result.suggested_correction:
+                _mark_result_resolved(result)
+            elif decision == "use_suggestion":
                 # 采用系统建议的修正
-                corrections_to_apply[claim_id] = {
+                if not result.suggested_correction:
+                    failed_corrections[claim_id] = {
+                        "claim_id": claim_id,
+                        "reason": "suggested_correction_missing",
+                    }
+                    continue
+                requested_corrections[claim_id] = {
                     "claim_id": claim_id,
                     "section_id": claim.section_id,
                     "original": claim.text,
                     "replacement": result.suggested_correction,
                     "decision": decision,
                 }
-            elif decision == "manual" and claim_id in manual_corrections:
+            elif decision == "manual":
                 # 使用用户手动提供的修正
-                corrections_to_apply[claim_id] = {
+                replacement = manual_corrections.get(claim_id)
+                if not replacement:
+                    failed_corrections[claim_id] = {
+                        "claim_id": claim_id,
+                        "reason": "manual_correction_missing",
+                    }
+                    continue
+                requested_corrections[claim_id] = {
                     "claim_id": claim_id,
                     "section_id": claim.section_id,
                     "original": claim.text,
-                    "replacement": manual_corrections[claim_id],
+                    "replacement": replacement,
                     "decision": decision,
                 }
+            else:
+                failed_corrections[claim_id] = {
+                    "claim_id": claim_id,
+                    "reason": f"unsupported_decision:{decision}",
+                }
+
+        updated_final_content, applied_corrections, application_failures = (
+            _apply_corrections_to_sections(
+                state.get("final_content") or state.get("draft_sections", {}),
+                requested_corrections,
+            )
+        )
+        failed_corrections.update(application_failures)
+
+        if failed_corrections:
+            raise ValueError(
+                "Fact-check corrections could not be applied: "
+                f"{_build_failed_correction_message(failed_corrections)}"
+            )
+
+        for claim_id in applied_corrections:
+            result = next((item for item in report.results if item.claim_id == claim_id), None)
+            if result is not None:
+                _mark_result_resolved(result)
 
         # 记录人工决策
         node_run.human_decision = HumanDecision(
-            decision_type="modify" if corrections_to_apply else "approve",
+            decision_type="modify" if applied_corrections else "approve",
             user_input=json.dumps(
                 {
                     "decisions": decisions,
@@ -514,16 +581,11 @@ async def approve_fact_check(state: dict) -> dict:
                 },
                 ensure_ascii=False,
             ),
-            modified_content=corrections_to_apply or None,
+            modified_content=applied_corrections or None,
         )
 
         # 更新报告
         report.compute_stats()
-
-        updated_final_content = _apply_corrections_to_sections(
-            state.get("final_content") or state.get("draft_sections", {}),
-            corrections_to_apply,
-        )
 
         # 创建新版本 Artifact
         report_artifact = await store.create_artifact(
@@ -536,7 +598,8 @@ async def approve_fact_check(state: dict) -> dict:
                 "gate_type": "fact_check",
                 "user_decisions": decisions,
                 "manual_corrections": manual_corrections,
-                "corrections_applied": corrections_to_apply,
+                "corrections_requested": requested_corrections,
+                "corrections_applied": applied_corrections,
                 "handled_at": handled_at,
             },
         )
@@ -547,7 +610,7 @@ async def approve_fact_check(state: dict) -> dict:
             content=_build_final_content_payload(
                 state,
                 updated_final_content,
-                corrections_to_apply,
+                applied_corrections,
                 report_artifact.id,
             ),
             workflow_run_id=workflow_run_id,
@@ -555,7 +618,7 @@ async def approve_fact_check(state: dict) -> dict:
             parent_version_id=state.get("final_content_artifact_id"),
             metadata={
                 "gate_type": "fact_check",
-                "resolution": "approved_with_changes" if corrections_to_apply else "approved",
+                "resolution": "approved_with_changes" if applied_corrections else "approved",
                 "fact_check_artifact_id": report_artifact.id,
             },
         )
@@ -581,7 +644,7 @@ async def approve_fact_check(state: dict) -> dict:
                 },
                 "opened_at": current_gate.get("opened_at") or handled_at,
                 "handled_at": handled_at,
-                "resolution": "approved_with_changes" if corrections_to_apply else "approved",
+                "resolution": "approved_with_changes" if applied_corrections else "approved",
             },
         )
 
@@ -593,7 +656,7 @@ async def approve_fact_check(state: dict) -> dict:
             "fact_check_report": report,
             "fact_check_artifact_id": report_artifact.id,
             "awaiting_fact_check_approval": False,
-            "fact_corrections": corrections_to_apply,
+            "fact_corrections": applied_corrections,
             "final_content": updated_final_content,
             "final_content_artifact_id": final_content_artifact.id,
         }
