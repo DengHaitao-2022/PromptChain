@@ -24,7 +24,7 @@ docker compose up -d postgres redis
 ```bash
 cd /Users/hi/Developer/03-personal/PromptChain/backend
 uv sync
-uv run uvicorn main:app --reload --port 8000
+uv run uvicorn app:app --reload --port 8000
 ```
 
 ### 前端
