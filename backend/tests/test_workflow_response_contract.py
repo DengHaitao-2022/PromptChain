@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tests._runtime_auth import authenticated_client, ownership_metadata
 from main import app
 
 
@@ -21,7 +22,7 @@ class _FakeWorkflowRun:
         self.id = "wf-123"
         self.status = status
         self.current_node = current_node
-        self.metadata = metadata or {}
+        self.metadata = ownership_metadata(metadata)
         self.started_at = datetime(2026, 3, 8, 10, 0, tzinfo=UTC)
 
     def model_dump(self):
@@ -111,6 +112,7 @@ class _FakePausedWorkflowRun:
     def __init__(self):
         self.id = "wf-paused"
         self.status = "paused"
+        self.metadata = ownership_metadata()
 
 
 class _FakePausedStore:
@@ -155,7 +157,7 @@ def test_get_workflow_status_returns_workflow_response_shape(monkeypatch):
     monkeypatch.setattr("services.get_artifact_store", lambda: store)
     monkeypatch.setattr("graph.get_workflow", lambda: workflow)
 
-    client = TestClient(app)
+    client = authenticated_client(monkeypatch)
     res = client.get("/api/workflow/wf-123")
 
     assert res.status_code == 200
@@ -173,7 +175,7 @@ def test_pause_and_resume_endpoints_round_trip_pause_metadata(monkeypatch):
     monkeypatch.setattr("services.get_artifact_store", lambda: store)
     monkeypatch.setattr("graph.get_workflow", lambda: workflow)
 
-    client = TestClient(app)
+    client = authenticated_client(monkeypatch)
 
     pause_res = client.post(
         "/api/workflow/wf-123/pause",
@@ -211,7 +213,7 @@ def test_pause_rejects_gate_waiting_workflow(monkeypatch):
     monkeypatch.setattr("services.get_artifact_store", lambda: store)
     monkeypatch.setattr("graph.get_workflow", lambda: workflow)
 
-    client = TestClient(app)
+    client = authenticated_client(monkeypatch)
     res = client.post("/api/workflow/wf-123/pause", json={"reason": "先暂停"})
 
     assert res.status_code == 409
@@ -222,7 +224,7 @@ def test_manual_pause_status_beats_running_graph_snapshot(monkeypatch):
     monkeypatch.setattr("services.get_artifact_store", lambda: _FakePausedStore())
     monkeypatch.setattr("graph.get_workflow", lambda: _FakeRunningWorkflow())
 
-    client = TestClient(app)
+    client = authenticated_client(monkeypatch)
     res = client.get("/api/workflow/wf-paused")
 
     assert res.status_code == 200
