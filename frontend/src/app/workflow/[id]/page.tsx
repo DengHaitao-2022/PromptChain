@@ -16,20 +16,28 @@ import {
     MessageSquareQuote,
     ShieldAlert,
     Sparkles,
+    Pause,
+    Play,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import styles from './page.module.css';
 import {
     workflowApi,
+    traceApi,
     type WorkflowResponse,
     type Outline,
     type FactCheckReport,
+    type WorkflowTrace,
+    type WorkflowStatus,
 } from '@/lib/api';
 import {
     OutlineEditor,
     FactCheckViewer,
     ClarificationDialog,
     WorkflowProgress,
+    IntentCardViewer,
+    ContentViewer,
+    TraceViewer,
     type WorkflowStep,
 } from '@/components';
 
@@ -57,11 +65,11 @@ interface FinalContentEntry {
     raw: unknown;
 }
 
-function getStatusMeta(status?: WorkflowResponse['status']): StatusMeta {
+function getStatusMeta(status?: WorkflowStatus): StatusMeta {
     switch (status) {
         case 'needs_clarification':
             return {
-                eyebrow: 'Need Input',
+                eyebrow: '待补充',
                 label: '等待澄清',
                 title: '补全需求上下文',
                 description: '模型在继续生成前需要你补充关键上下文，以减少误判和无效扩写。',
@@ -70,7 +78,7 @@ function getStatusMeta(status?: WorkflowResponse['status']): StatusMeta {
             };
         case 'awaiting_outline_approval':
             return {
-                eyebrow: 'Review Outline',
+                eyebrow: '提纲审阅',
                 label: '等待提纲审批',
                 title: '审阅生成提纲',
                 description: '检查结构、章节重点和篇幅分配，确认后工作流会继续进入正文生成。',
@@ -79,7 +87,7 @@ function getStatusMeta(status?: WorkflowResponse['status']): StatusMeta {
             };
         case 'awaiting_fact_check_approval':
             return {
-                eyebrow: 'Resolve Risks',
+                eyebrow: '风险处理',
                 label: '等待事实核查审批',
                 title: '处理高风险声明',
                 description: '优先确认高风险 claim 的去留和修正策略，再提交最终审阅决定。',
@@ -88,7 +96,7 @@ function getStatusMeta(status?: WorkflowResponse['status']): StatusMeta {
             };
         case 'completed':
             return {
-                eyebrow: 'Delivery Ready',
+                eyebrow: '交付就绪',
                 label: '生成完成',
                 title: '交付结果已准备好',
                 description: '内容已完成生成与审阅，你可以先阅读结果，再决定是否回看原始数据。',
@@ -97,17 +105,25 @@ function getStatusMeta(status?: WorkflowResponse['status']): StatusMeta {
             };
         case 'failed':
             return {
-                eyebrow: 'Execution Failed',
+                eyebrow: '执行失败',
                 label: '执行失败',
                 title: '工作流未能完成',
                 description: '当前执行已中断。请先检查错误信息，再决定是否重新发起或返回首页。',
                 tone: 'danger',
                 icon: AlertTriangle,
             };
-        case 'running':
-        default:
+        case 'paused':
             return {
-                eyebrow: 'In Progress',
+                eyebrow: '已暂停',
+                label: '已暂停',
+                title: '工作流已手动暂停',
+                description: '工作流当前处于暂停状态。你可以选择恢复执行，或根据需要进行操作。',
+                tone: 'muted',
+                icon: Pause,
+            };
+        default: // running, or any other state
+            return {
+                eyebrow: '推进中',
                 label: '执行中',
                 title: '工作流正在推进',
                 description: '系统会自动推进节点；一旦出现需要人工介入的步骤，页面会切换到对应审阅态。',
@@ -192,6 +208,7 @@ export default function WorkflowDetailPage() {
     const workflowId = params.id as string;
 
     const [workflow, setWorkflow] = React.useState<WorkflowResponse | null>(null);
+    const [trace, setTrace] = React.useState<WorkflowTrace | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
     const [actionLoading, setActionLoading] = React.useState(false);
@@ -213,7 +230,7 @@ export default function WorkflowDetailPage() {
                     .getStatus(workflowId)
                     .then((response) => {
                         setWorkflow(response);
-                        if (response.status !== 'running') {
+                        if (response.status !== 'running' && response.status !== 'paused' && !response.state.gate) {
                             stopPolling();
                         }
                     })
@@ -226,11 +243,22 @@ export default function WorkflowDetailPage() {
 
     const loadWorkflow = React.useCallback(async () => {
         try {
-            const response = await workflowApi.getStatus(workflowId);
-            setWorkflow(response);
+            const [workflowResponse, traceResponse] = await Promise.all([
+                workflowApi.getStatus(workflowId),
+                traceApi.getWorkflowTrace(workflowId),
+            ]);
+
+            setWorkflow(workflowResponse);
+            setTrace(traceResponse);
             setError(null);
 
-            if (response.status === 'running') {
+            const isGateWaiting = Boolean(workflowResponse.state.gate);
+            const shouldPoll =
+                workflowResponse.status === 'running' ||
+                (workflowResponse.status === 'paused' && !isGateWaiting) ||
+                isGateWaiting;
+
+            if (shouldPoll) {
                 startPolling();
             } else {
                 stopPolling();
@@ -363,7 +391,10 @@ export default function WorkflowDetailPage() {
         }
 
         const state = workflow.state;
-        const currentStatus = workflow.status;
+        const currentWorkflowStatus = workflow.status;
+        const isGateWaiting = Boolean(state.gate);
+        const gateType = state.gate?.gate_type;
+
         const isStepComplete = (stepName: string) => {
             switch (stepName) {
                 case 'parse_intent':
@@ -377,18 +408,18 @@ export default function WorkflowDetailPage() {
                 case 'check_facts':
                     return Boolean(state.fact_check_report);
                 case 'finalize':
-                    return currentStatus === 'completed';
+                    return currentWorkflowStatus === 'completed';
                 default:
                     return false;
             }
         };
 
         const runningStepId =
-            currentStatus === 'running'
+            currentWorkflowStatus === 'running'
                 ? stepNames.find((stepName) => !isStepComplete(stepName))
                 : undefined;
         const failedStepId =
-            currentStatus === 'failed'
+            currentWorkflowStatus === 'failed'
                 ? stepNames.find((stepName) => !isStepComplete(stepName)) ?? 'finalize'
                 : undefined;
 
@@ -399,26 +430,53 @@ export default function WorkflowDetailPage() {
                 status = 'completed';
             }
 
-            if (name === 'generate_outline' && state.outline) {
-                status =
-                    currentStatus === 'awaiting_outline_approval'
-                        ? 'interrupted'
-                        : 'completed';
-            }
-            if (name === 'check_facts' && state.fact_check_report) {
-                status =
-                    currentStatus === 'awaiting_fact_check_approval'
-                        ? 'interrupted'
-                        : 'completed';
-            }
-
-            if (currentStatus === 'running' && name === runningStepId) {
+            if (currentWorkflowStatus === 'paused') {
+                // If the entire workflow is paused, all steps that are not completed should be 'paused'
+                if (status !== 'completed') {
+                    status = 'paused';
+                }
+            } else if (isGateWaiting) {
+                // If gate is waiting, specific steps should be marked as 'gate_waiting'
+                if (name === 'parse_intent' && gateType === 'clarification') {
+                    status = 'gate_waiting';
+                }
+                if (name === 'generate_outline' && gateType === 'outline_approval') {
+                    status = 'gate_waiting';
+                }
+                if (name === 'check_facts' && gateType === 'fact_check') {
+                    status = 'gate_waiting';
+                }
+            } else if (currentWorkflowStatus === 'running' && name === runningStepId) {
                 status = 'running';
             }
 
-            if (currentStatus === 'failed' && name === failedStepId) {
+            if (currentWorkflowStatus === 'failed' && name === failedStepId) {
                 status = 'failed';
             }
+
+            // Fallback for states that were previously 'interrupted' but now map to 'gate_waiting'
+            if (
+                currentWorkflowStatus === 'needs_clarification' &&
+                name === 'parse_intent' &&
+                status !== 'completed'
+            ) {
+                status = 'gate_waiting';
+            }
+            if (
+                currentWorkflowStatus === 'awaiting_outline_approval' &&
+                name === 'generate_outline' &&
+                status !== 'completed'
+            ) {
+                status = 'gate_waiting';
+            }
+            if (
+                currentWorkflowStatus === 'awaiting_fact_check_approval' &&
+                name === 'check_facts' &&
+                status !== 'completed'
+            ) {
+                status = 'gate_waiting';
+            }
+
 
             return {
                 id: name,
@@ -431,7 +489,7 @@ export default function WorkflowDetailPage() {
 
     const steps = calculateSteps();
     const currentStep = steps.find(
-        (step) => step.status === 'running' || step.status === 'interrupted'
+        (step) => step.status === 'running' || step.status === 'interrupted' || step.status === 'gate_waiting' || step.status === 'paused'
     )?.id;
     const currentStepLabel = steps.find((step) => step.id === currentStep)?.label;
     const statusMeta = getStatusMeta(workflow?.status);
@@ -492,8 +550,110 @@ export default function WorkflowDetailPage() {
 
     const stageMetrics = buildStageMetrics();
 
+    const renderRunningStage = () => (
+        <div className={styles.runningStage}>
+            <div className={styles.runningIntro}>
+                <div className={styles.runningPulse} aria-hidden="true">
+                    <LoaderCircle className={styles.spinIcon} />
+                </div>
+                <div>
+                    <p className={styles.runningEyebrow}>实时编排</p>
+                    <h3>系统正在推进当前工作流</h3>
+                    <p>
+                        当前焦点：
+                        <strong>{currentStepLabel ?? '正在解析上下文'}</strong>
+                        。一旦出现需要人工介入的步骤，页面会自动切换到对应审阅态。
+                    </p>
+                </div>
+            </div>
+
+            <div className={styles.liveRail}>
+                {steps.map((step) => (
+                    <div
+                        key={step.id}
+                        className={`${styles.liveItem} ${
+                            step.id === currentStep ? styles.liveItemActive : ''
+                        }`}
+                    >
+                        <span className={styles.liveLabel}>{step.label}</span>
+                        <span className={styles.liveMeta}>
+                            {step.status === 'paused' ? '已暂停' : formatStepStatus(step)}
+                        </span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+
+    const renderPausedStage = () => {
+        const pauseInfo = workflow?.state?.pause;
+        const pauseReason = pauseInfo?.reason || '手动暂停';
+        const pauseTime = pauseInfo?.paused_at ? new Date(pauseInfo.paused_at).toLocaleString() : '未知时间';
+
+        return (
+            <div className={styles.failedStage}>
+                <div className={styles.failedIconWrap}>
+                    <Pause className={styles.failedIcon} aria-hidden="true" />
+                </div>
+                <div>
+                    <h3>工作流已暂停</h3>
+                    <p>
+                        最近一次暂停原因：{pauseReason}<br />
+                        暂停时间：{pauseTime}
+                    </p>
+                </div>
+                <div className={styles.failedActions}>
+                    <button type="button" className="btn btn-secondary" onClick={() => void loadWorkflow()}>
+                        刷新状态
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={async () => {
+                            setActionLoading(true);
+                            try {
+                                await workflowApi.resume(workflowId);
+                                await loadWorkflow();
+                            } catch (err) {
+                                setError(err instanceof Error ? err.message : '恢复失败');
+                            } finally {
+                                setActionLoading(false);
+                            }
+                        }}
+                        disabled={actionLoading}
+                    >
+                        {actionLoading ? '恢复中...' : '恢复执行'}
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+    const renderFailedStage = () => (
+        <div className={styles.failedStage}>
+            <div className={styles.failedIconWrap}>
+                <AlertTriangle className={styles.failedIcon} aria-hidden="true" />
+            </div>
+            <div>
+                <h3>执行失败</h3>
+                <p>
+                    当前执行已中断。请先检查错误信息，再决定是否重新发起或返回首页。
+                </p>
+                {error && <p className={styles.errorText}>{error}</p>}
+            </div>
+            <div className={styles.failedActions}>
+                <button type="button" className="btn btn-secondary" onClick={() => void loadWorkflow()}>
+                    重新加载
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => router.push('/')}>
+                    返回首页
+                </button>
+            </div>
+        </div>
+    );
+
     const renderCompletedStage = () => {
-        const rawFinalContent = workflow?.state.final_content as Record<string, unknown> | undefined;
+            const rawFinalContent = workflow?.state.final_content as Record<string, unknown> | undefined;
         const finalEntries = normalizeFinalContentEntries(rawFinalContent);
 
         return (
@@ -503,10 +663,10 @@ export default function WorkflowDetailPage() {
                         <CheckCheck className={styles.completedBadgeIcon} aria-hidden="true" />
                     </div>
                     <div className={styles.completedCopy}>
-                        <p className={styles.completedEyebrow}>Delivery Ready</p>
+                        <p className={styles.completedEyebrow}>交付就绪</p>
                         <h3>内容产物已完成生成与审阅</h3>
                         <p>
-                            先阅读可交付预览，再决定是否回看原始 JSON。这个阶段强调结果，而不是调试信息。
+                            内容已完成生成与审阅，你可以先阅读结果，再决定是否回看原始数据。
                         </p>
                     </div>
                     <div className={styles.completedActions}>
@@ -518,7 +678,7 @@ export default function WorkflowDetailPage() {
                             onClick={() => setCompletedView('preview')}
                         >
                             <FileText className={styles.toggleIcon} aria-hidden="true" />
-                            结果预览
+                            预览结果
                         </button>
                         <button
                             type="button"
@@ -583,67 +743,13 @@ export default function WorkflowDetailPage() {
         );
     };
 
-    const renderRunningStage = () => (
-        <div className={styles.runningStage}>
-            <div className={styles.runningIntro}>
-                <div className={styles.runningPulse} aria-hidden="true">
-                    <LoaderCircle className={styles.spinIcon} />
-                </div>
-                <div>
-                    <p className={styles.runningEyebrow}>Live Orchestration</p>
-                    <h3>系统正在推进当前工作流</h3>
-                    <p>
-                        当前焦点：
-                        <strong>{currentStepLabel ?? '正在解析上下文'}</strong>
-                        。如果模型需要澄清或审批，本页会自动切换到对应审阅态。
-                    </p>
-                </div>
-            </div>
-
-            <div className={styles.liveRail}>
-                {steps.map((step) => (
-                    <div
-                        key={step.id}
-                        className={`${styles.liveItem} ${
-                            step.id === currentStep ? styles.liveItemActive : ''
-                        }`}
-                    >
-                        <span className={styles.liveLabel}>{step.label}</span>
-                        <span className={styles.liveMeta}>{formatStepStatus(step)}</span>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-
-    const renderFailedStage = () => (
-        <div className={styles.failedStage}>
-            <div className={styles.failedIconWrap}>
-                <AlertTriangle className={styles.failedIcon} aria-hidden="true" />
-            </div>
-            <div>
-                <h3>工作流执行失败</h3>
-                <p>
-                    当前工作流没有顺利走到最终交付。你可以先重新加载状态，确认是否是临时问题，再返回首页重新发起。
-                </p>
-            </div>
-            <div className={styles.failedActions}>
-                <button type="button" className="btn btn-secondary" onClick={() => void loadWorkflow()}>
-                    重新加载
-                </button>
-                <button type="button" className="btn btn-ghost" onClick={() => router.push('/')}>
-                    返回首页
-                </button>
-            </div>
-        </div>
-    );
-
     const renderCurrentStage = () => {
         if (!workflow) {
             return null;
         }
 
         const { status, state } = workflow;
+        const isOutlineGate = state.gate?.gate_type === 'outline_approval';
 
         if (status === 'needs_clarification' && state.clarification_questions) {
             return (
@@ -663,6 +769,7 @@ export default function WorkflowDetailPage() {
                     onModify={handleOutlineModify}
                     onRegenerate={handleOutlineRegenerate}
                     isLoading={actionLoading}
+                    isReadOnly={!isOutlineGate}
                 />
             );
         }
@@ -685,6 +792,11 @@ export default function WorkflowDetailPage() {
             return renderFailedStage();
         }
 
+        if (status === 'paused') {
+            return renderPausedStage();
+        }
+
+        // Default to running stage if none of the above
         return renderRunningStage();
     };
 
@@ -721,11 +833,65 @@ export default function WorkflowDetailPage() {
                 </button>
 
                 <div className={styles.headerCopy}>
-                    <p className={styles.headerEyebrow}>Workflow Detail</p>
+                    <p className={styles.headerEyebrow}>工作流详情</p>
                     <h1 className={styles.title}>工作流详情</h1>
                 </div>
 
                 <div className={styles.headerMeta}>
+                    {workflow?.status === 'paused' && workflow?.state.pause && (
+                        <div className={styles.pauseInfo}>
+                            <Pause className={styles.pauseIcon} />
+                            <span>
+                                已暂停{' '}
+                                {workflow.state.pause.reason && `(${workflow.state.pause.reason})`}
+                                {workflow.state.pause.paused_at &&
+                                    ` 于 ${new Date(workflow.state.pause.paused_at).toLocaleString()}`}
+                            </span>
+                            {workflow.state.pause.resumed_at && (
+                                <span>
+                                    ，恢复于{' '}
+                                    {new Date(workflow.state.pause.resumed_at).toLocaleString()}
+                                </span>
+                            )}
+                        </div>
+                    )}
+
+                    {workflow &&
+                        workflow.status !== 'completed' &&
+                        workflow.status !== 'failed' &&
+                        !workflow.state.gate && (
+                            <button
+                                className="btn btn-ghost"
+                                onClick={async () => {
+                                    setActionLoading(true);
+                                    try {
+                                        if (workflow.status === 'paused') {
+                                            await workflowApi.resume(workflowId);
+                                        } else {
+                                            await workflowApi.pause(workflowId);
+                                        }
+                                        await loadWorkflow();
+                                    } catch (err) {
+                                        setError(
+                                            err instanceof Error ? err.message : '操作失败'
+                                        );
+                                    } finally {
+                                        setActionLoading(false);
+                                    }
+                                }}
+                                disabled={actionLoading}
+                            >
+                                {actionLoading ? (
+                                    <LoaderCircle className={styles.spinIcon} />
+                                ) : workflow.status === 'paused' ? (
+                                    <Play />
+                                ) : (
+                                    <Pause />
+                                )}{' '}
+                                {workflow.status === 'paused' ? '恢复' : '暂停'}
+                            </button>
+                        )}
+
                     <span className={`${styles.headerStatus} ${styles[`tone${statusMeta.tone[0].toUpperCase()}${statusMeta.tone.slice(1)}`]}`}>
                         <statusMeta.icon className={styles.headerStatusIcon} aria-hidden="true" />
                         {statusMeta.label}
@@ -792,6 +958,63 @@ export default function WorkflowDetailPage() {
 
                         <div className={styles.stageBody}>{renderCurrentStage()}</div>
                     </section>
+
+                    {(workflow?.state.intent_card || workflow?.state.outline || workflow?.state.generated_content || workflow?.state.final_content || trace) && (
+                        <section className={styles.stageShell} style={{ marginTop: '2rem' }}>
+                            <div className={styles.stageHeader}>
+                                <div className={styles.stageHeaderMain}>
+                                    <h2 className={styles.stageTitle}>过程与产物</h2>
+                                    <p className={styles.stageDescription}>工作流执行过程中的关键分析、提纲、生成内容与执行追踪</p>
+                                </div>
+                            </div>
+                            <div className={styles.stageBody}>
+                                {workflow?.state.intent_card && (
+                                    <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
+                                        <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>意图分析</h3>
+                                        <IntentCardViewer intentCard={workflow.state.intent_card} />
+                                    </div>
+                                )}
+                                {workflow?.state.outline && workflow.status !== 'awaiting_outline_approval' && (
+                                    <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
+                                        <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成提纲</h3>
+                                        <OutlineEditor
+                                            outline={workflow.state.outline as Outline}
+                                            onApprove={handleOutlineApprove}
+                                            onModify={handleOutlineModify}
+                                            onRegenerate={handleOutlineRegenerate}
+                                            isLoading={false}
+                                            isReadOnly={true}
+                                        />
+                                    </div>
+                                )}
+                                {(workflow?.state.generated_content || workflow?.state.final_content) && (
+                                    <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
+                                        <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成内容</h3>
+                                        <ContentViewer
+                                            title={workflow.state.outline?.title || '生成内容'}
+                                            abstract={workflow.state.outline?.abstract || ''}
+                                            sections={
+                                                workflow.state.final_content
+                                                    ? normalizeFinalContentEntries(workflow.state.final_content as Record<string, unknown>).map(entry => ({
+                                                        id: entry.key,
+                                                        title: formatEntryLabel(entry.key),
+                                                        content: entry.preview,
+                                                        wordCount: entry.wordCount || 0,
+                                                    }))
+                                                    : ((workflow.state.generated_content as { sections: Array<{ id: string; title: string; content: string; wordCount?: number }> })?.sections || [])
+                                            }
+                                        />
+                                    </div>
+                                )}
+                                {trace && (
+                                    <div className={styles.contentBlock}>
+                                        <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>执行追踪</h3>
+                                        <TraceViewer trace={trace} />
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+                    )}
                 </main>
             </div>
         </div>

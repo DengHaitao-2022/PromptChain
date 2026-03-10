@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { FileText, BarChart2, Pencil } from 'lucide-react';
 import styles from './ContentViewer.module.css';
 
 interface ContentSection {
@@ -60,10 +61,10 @@ export function ContentViewer({
                     <h1 className={styles.title}>{title}</h1>
                     <div className={styles.stats}>
                         <span className={styles.stat}>
-                            📝 {sections.length} 个章节
+                            <FileText className={styles.statIcon} /> {sections.length} 个章节
                         </span>
                         <span className={styles.stat}>
-                            📊 {totalWords.toLocaleString()} 字
+                            <BarChart2 className={styles.statIcon} /> {totalWords.toLocaleString()} 字
                         </span>
                     </div>
                 </div>
@@ -125,7 +126,7 @@ export function ContentViewer({
                                     className="btn btn-ghost"
                                     onClick={() => startEdit(section)}
                                 >
-                                    ✏️ 编辑
+                                    <Pencil className={styles.editIcon} /> 编辑
                                 </button>
                             )}
                         </div>
