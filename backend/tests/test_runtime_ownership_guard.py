@@ -3,10 +3,12 @@ import sys
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main
+from main import app
 
 
 class _FakeWorkflowRun:
@@ -73,3 +75,43 @@ async def test_require_workflow_run_access_rejects_foreign_user(monkeypatch):
 
     assert exc_info.value.status_code == 403
     assert "只能访问自己的任务" in exc_info.value.detail
+
+
+def test_rerun_options_propagates_403_from_access_guard(monkeypatch):
+    app.dependency_overrides[main.get_current_user] = lambda: {
+        "sub": "user-1",
+        "workspace_id": "ws-1",
+    }
+
+    async def _forbid_access(user, workflow_run_id, resource="workflow_run", action="read"):
+        raise HTTPException(status_code=403, detail="您无权访问该工作空间中的任务")
+
+    monkeypatch.setattr(main, "require_workflow_run_access", _forbid_access)
+
+    client = TestClient(app)
+    response = client.get("/api/workflow/wf-123/rerun-options")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "您无权访问该工作空间中的任务"
+
+
+def test_node_detail_propagates_404_from_access_guard(monkeypatch):
+    app.dependency_overrides[main.get_current_user] = lambda: {
+        "sub": "user-1",
+        "workspace_id": "ws-1",
+    }
+
+    async def _missing_node_run(user, node_run_id):
+        raise HTTPException(status_code=404, detail="NodeRun not found")
+
+    monkeypatch.setattr(main, "require_node_run_access", _missing_node_run)
+
+    client = TestClient(app)
+    response = client.get("/api/trace/node/node-404")
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "NodeRun not found"

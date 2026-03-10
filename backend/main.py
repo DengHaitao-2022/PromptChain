@@ -548,6 +548,8 @@ async def get_node_detail(node_run_id: str, user: dict = Depends(get_current_use
         return detail
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -569,6 +571,8 @@ async def get_artifact_history(artifact_id: str, user: dict = Depends(get_curren
         trace_service = get_trace_service()
         history = await trace_service.get_artifact_history(artifact_id)
         return history
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -586,6 +590,8 @@ async def get_rerun_options(
         rerun_service = get_rerun_service()
         options = await rerun_service.get_rerun_options(workflow_run_id)
         return {"options": options}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -649,6 +655,8 @@ async def rerun_workflow(
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -666,6 +674,8 @@ async def get_rerun_history(
         rerun_service = get_rerun_service()
         history = await rerun_service.get_rerun_history(workflow_run_id)
         return {"history": history}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
