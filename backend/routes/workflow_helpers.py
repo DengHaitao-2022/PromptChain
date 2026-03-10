@@ -6,7 +6,10 @@
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
+
+from models.auth_models import MemberRole
 
 # ==================== 类型定义 ====================
 
@@ -127,6 +130,112 @@ async def _get_workflow_run_if_exists(workflow_run_id: str) -> Any | None:
 
     store = get_artifact_store()
     return await store.get_workflow_run(workflow_run_id)
+
+
+async def require_workspace_permission(request: Request, resource: str, action: str) -> tuple[str, str, MemberRole]:
+    """基于当前 access token 和工作空间上下文校验权限。"""
+    from db.postgres_store import get_postgres_store
+    from routes.auth_routes import get_current_user
+    from services.permission_service import PermissionService
+
+    user = await get_current_user(request)
+    user_id = user.get("sub") or user.get("id")
+    workspace_id = request.state.workspace_id if hasattr(request.state, "workspace_id") else None
+    if not workspace_id:
+        workspace_id = user.get("default_workspace_id") or user.get("workspace_id")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="请先选择工作空间")
+
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        permission_service = PermissionService(session)
+        role = await permission_service.require_permission(user_id, workspace_id, resource, action)
+
+    return user_id, workspace_id, role
+
+
+async def annotate_workflow_run_ownership(workflow_run_id: str, user_id: str, workspace_id: str) -> Any | None:
+    """为运行记录补充最小归属信息。"""
+    from services import get_artifact_store
+
+    store = get_artifact_store()
+    workflow_run = await store.get_workflow_run(workflow_run_id)
+    if not workflow_run:
+        return None
+
+    metadata = _ensure_workflow_metadata(workflow_run)
+    metadata["workspace_id"] = workspace_id
+    metadata["user_id"] = user_id
+    await store.update_workflow_run(workflow_run)
+    return workflow_run
+
+
+def _is_admin_role(role: Any) -> bool:
+    """判断角色是否拥有跨用户访问能力。"""
+    if isinstance(role, MemberRole):
+        return role in {MemberRole.ADMIN, MemberRole.OWNER}
+
+    role_value = str(role)
+    return role_value in {MemberRole.ADMIN.value, MemberRole.OWNER.value}
+
+
+async def require_workflow_run_access(
+    request: Request,
+    workflow_run_id: str,
+    resource: str = "workflow_run",
+    action: str = "read",
+) -> Any:
+    """校验当前用户对 WorkflowRun 的工作空间与用户归属访问。"""
+    from services import get_artifact_store
+
+    user_id, workspace_id, role = await require_workspace_permission(request, resource, action)
+    store = get_artifact_store()
+    workflow_run = await store.get_workflow_run(workflow_run_id)
+
+    if not workflow_run:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    metadata = _ensure_workflow_metadata(workflow_run)
+    run_workspace_id = metadata.get("workspace_id")
+    run_user_id = metadata.get("user_id")
+
+    if not run_workspace_id or not run_user_id:
+        raise HTTPException(status_code=403, detail="该任务缺少归属信息，暂不允许访问")
+    if run_workspace_id != workspace_id:
+        raise HTTPException(status_code=403, detail="您无权访问该工作空间中的任务")
+    if not _is_admin_role(role) and run_user_id != user_id:
+        raise HTTPException(status_code=403, detail="您只能访问自己的任务")
+
+    return workflow_run
+
+
+async def require_node_run_access(request: Request, node_run_id: str) -> Any:
+    """通过 NodeRun 反查 WorkflowRun 后校验访问。"""
+    from services import get_artifact_store
+
+    store = get_artifact_store()
+    node_run = await store.get_node_run(node_run_id)
+    if not node_run:
+        raise HTTPException(status_code=404, detail="NodeRun not found")
+
+    await require_workflow_run_access(request, node_run.workflow_run_id)
+    return node_run
+
+
+async def require_artifact_access(request: Request, artifact_id: str) -> Any:
+    """通过 Artifact 反查 WorkflowRun 后校验访问。"""
+    from services import get_artifact_store
+
+    store = get_artifact_store()
+    artifact = await store.get_artifact(artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    await require_workflow_run_access(request, artifact.workflow_run_id)
+    return artifact
 
 
 async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, dict, WorkflowStatus]:

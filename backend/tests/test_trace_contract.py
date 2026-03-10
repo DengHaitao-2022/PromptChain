@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tests._runtime_auth import authenticated_client, ownership_metadata
 from main import app
 
 
@@ -16,7 +17,7 @@ class _FakeWorkflowRun:
         self.status = "running"
         self.current_node = "check_facts"
         self.started_at = datetime(2026, 3, 8, 11, 0, tzinfo=UTC)
-        self.metadata = {"gate": {"opened_at": "2026-03-08T11:02:00Z"}}
+        self.metadata = ownership_metadata({"gate": {"opened_at": "2026-03-08T11:02:00Z"}})
 
 
 class _FakeStore:
@@ -80,7 +81,7 @@ def test_trace_payload_includes_public_status_and_gate_timeline(monkeypatch):
     monkeypatch.setattr("services.get_artifact_store", lambda: _FakeStore())
     monkeypatch.setattr("graph.get_workflow", lambda: _FakeWorkflow())
 
-    client = TestClient(app)
+    client = authenticated_client(monkeypatch)
     res = client.get("/api/trace/wf-trace")
 
     assert res.status_code == 200

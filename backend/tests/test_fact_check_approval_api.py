@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from graph.content_generation_graph import ContentGenerationWorkflow
+from tests._runtime_auth import authenticated_client, ownership_metadata
 from main import app
 
 
@@ -15,7 +16,7 @@ class _FakeWorkflowRun:
         self.id = "wf-123"
         self.status = "running"
         self.current_node = "check_facts"
-        self.metadata = {}
+        self.metadata = ownership_metadata()
 
 
 class _FakeStore:
@@ -58,7 +59,7 @@ def test_approve_fact_check_endpoint_exists_and_resumes_workflow(monkeypatch):
     monkeypatch.setattr("services.get_artifact_store", lambda: _FakeStore())
     monkeypatch.setattr("graph.get_workflow", lambda: _FakeWorkflow())
 
-    client = TestClient(app)
+    client = authenticated_client(monkeypatch)
     payload = {
         "decisions": {"c1": "confirm"},
         "manual_corrections": {},

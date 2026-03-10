@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tests._runtime_auth import authenticated_client, ownership_metadata
 from main import app
 
 
@@ -13,6 +14,7 @@ class _FakeWorkflowRun:
     def __init__(self):
         self.id = "wf-clarify"
         self.status = "running"
+        self.metadata = ownership_metadata()
 
 
 class _FakeStore:
@@ -51,7 +53,7 @@ def test_clarification_questions_are_exposed_with_enum_priority(monkeypatch):
     monkeypatch.setattr("services.get_artifact_store", lambda: _FakeStore())
     monkeypatch.setattr("graph.get_workflow", lambda: _FakeWorkflow())
 
-    client = TestClient(app)
+    client = authenticated_client(monkeypatch)
     res = client.get("/api/workflow/wf-clarify")
 
     assert res.status_code == 200
