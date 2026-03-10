@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
     ReactFlow,
     Background,
@@ -97,7 +97,15 @@ interface WorkflowEditorProps {
     actionState?: WorkflowEditorActionState;
 }
 
-export default function WorkflowEditor({
+export default function WorkflowEditor(props: WorkflowEditorProps) {
+    // 当 workflowId 变化，或者 initialNodes 从无到有（异步加载完成）时，
+    // 通过 key 强制重置内部组件，实现无副作用的状态重置。
+    const autoResetKey = `${props.workflowId ?? 'new'}-${!!props.initialNodes}`;
+
+    return <WorkflowEditorContent key={autoResetKey} {...props} />;
+}
+
+function WorkflowEditorContent({
     workflowId,
     readOnly = false,
     initialNodes,
@@ -114,18 +122,9 @@ export default function WorkflowEditor({
     onPublish,
     actionState,
 }: WorkflowEditorProps) {
-    const startingNodes = useMemo(() => initialNodes ?? defaultNodes, [initialNodes]);
-    const startingEdges = useMemo(() => initialEdges ?? defaultEdges, [initialEdges]);
-
-    const [nodes, setNodes, onNodesChange] = useNodesState(startingNodes);
-    const [edges, setEdges, onEdgesChange] = useEdgesState(startingEdges);
+    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes ?? defaultNodes);
+    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges ?? defaultEdges);
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-
-    useEffect(() => {
-        setNodes(initialNodes ?? defaultNodes);
-        setEdges(initialEdges ?? defaultEdges);
-        setSelectedNode(null);
-    }, [initialEdges, initialNodes, setEdges, setNodes]);
 
     const busy = Boolean(
         actionState?.isSaving || actionState?.isValidating || actionState?.isPublishing,

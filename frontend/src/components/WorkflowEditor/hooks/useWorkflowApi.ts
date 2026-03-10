@@ -95,7 +95,11 @@ export function useWorkflowApi() {
 
       const result = await response.json();
       if (result.code !== undefined && result.code !== 200 && result.code !== 0) {
-          const error: any = new Error(result.message || '请求失败');
+          interface ApiError extends Error {
+              code?: number;
+              data?: unknown;
+          }
+          const error = new Error(result.message || '请求失败') as ApiError;
           error.code = result.code;
           error.data = result.data;
           throw error;
