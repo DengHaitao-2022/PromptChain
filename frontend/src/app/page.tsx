@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
@@ -53,7 +53,6 @@ const examplePrompts = [
   '生成一份面向投资人的智能客服 SaaS 商业计划书，突出市场和护城河',
   '输出一篇关于量子计算应用边界的科普稿，要求论证严谨并标注高风险事实',
 ];
-
 
 const workflowChain = [
   '意图解析',
@@ -143,6 +142,51 @@ export default function Home() {
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+  const railRef = useRef<HTMLElement | null>(null);
+  const featuresRef = useRef<HTMLElement | null>(null);
+  const trustRef = useRef<HTMLElement | null>(null);
+  const [revealed, setRevealed] = useState({ rail: false, features: false, trust: false });
+
+  // Scroll Reveal Logic
+  useEffect(() => {
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion || !('IntersectionObserver' in window)) {
+      setRevealed({ rail: true, features: true, trust: true });
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const section = entry.target.getAttribute('data-section') as keyof typeof revealed;
+            if (section) {
+              setRevealed((prev) => ({ ...prev, [section]: true }));
+              observer.unobserve(entry.target);
+            }
+          }
+        });
+      },
+      { threshold: 0.1 }
+    );
+
+    const sections = [
+      { ref: railRef, id: 'rail' },
+      { ref: featuresRef, id: 'features' },
+      { ref: trustRef, id: 'trust' },
+    ];
+
+    sections.forEach(({ ref, id }) => {
+      if (ref.current) {
+        ref.current.setAttribute('data-section', id);
+        observer.observe(ref.current);
+      }
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  // Data Fetching
   useEffect(() => {
     const fetchWorkflows = async () => {
       try {
@@ -318,127 +362,127 @@ export default function Home() {
             </div>
 
             <section className={styles.composer} aria-labelledby="launch-composer-title">
-              <div className={styles.composerHeader}>
-                <div>
-                  <p className={styles.composerLabel}>启动编辑器</p>
-                  <h2 id="launch-composer-title" className={styles.composerTitle}>
-                    发起一次新的内容工作流
-                  </h2>
-                </div>
-                <span className={styles.composerPill}>
-                  <Cable size={14} aria-hidden="true" />
-                  实时编排中
-                </span>
-              </div>
-
-              <textarea
-                className={styles.mainTextarea}
-                placeholder="描述你要产出的内容、目标读者、口吻和约束条件。&#10;&#10;例如：写一篇关于 AI Agent 技术架构的深度文章，面向技术开发者，2000 字左右，需要包含工程实践与风险说明。"
-                value={userInput}
-                onChange={(event) => setUserInput(event.target.value)}
-                disabled={isLoading}
-                aria-label="工作流输入"
-              />
-
-              <div className={styles.composerFooter}>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
-                  <div style={{ flex: '1 1 45%' }}>
-                    <label htmlFor="workflow-select" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>工作流:</label>
-                    <select
-                      id="workflow-select"
-                      className={styles.mainTextarea} // Reusing textarea style for consistency
-                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: '#fff', width: '100%' }}
-                      value={selectedWorkflow}
-                      onChange={(e) => setSelectedWorkflow(e.target.value)}
-                      disabled={isLoading || workflows.length === 0}
-                    >
-                      {workflows.length === 0 ? (
-                        <option value="">没有可用工作流</option>
-                      ) : (
-                        workflows.map((workflow) => (
-                          <option key={workflow.id} value={workflow.id}>
-                            {workflow.name}
-                          </option>
-                        ))
-                      )}
-                    </select>
+              <div className={styles.composerInner}>
+                <div className={styles.composerHeader}>
+                  <div>
+                    <p className={styles.composerLabel}>启动编辑器</p>
+                    <h2 id="launch-composer-title" className={styles.composerTitle}>
+                      发起一次新的内容工作流
+                    </h2>
                   </div>
-                  <div style={{ flex: '1 1 45%' }}>
-                    <label htmlFor="version-select" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>版本:</label>
-                    <select
-                      id="version-select"
-                      className={styles.mainTextarea} // Reusing textarea style for consistency
-                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: '#fff', width: '100%' }}
-                      value={selectedVersion}
-                      onChange={(e) => setSelectedVersion(e.target.value)}
-                      disabled={isLoading || versions.length === 0}
-                    >
-                      {versions.length === 0 ? (
-                        <option value="">没有可用版本</option>
-                      ) : (
-                        versions.map((version) => (
-                          <option key={version.id} value={version.id}>
-                            版本 {version.version} ({version.change_log || '无更新说明'})
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </div>
+                  <span className={styles.composerPill}>
+                    <Cable size={14} aria-hidden="true" />
+                    实时编排中
+                  </span>
                 </div>
 
-                {publishedCompatibilityMessage && (
-                  <div style={{ color: '#ffcc00', marginBottom: '10px', fontSize: '0.9em' }}>
-                    {publishedCompatibilityMessage}
-                  </div>
-                )}
+                <textarea
+                  className={styles.mainTextarea}
+                  placeholder="描述你要产出的内容、目标读者、口吻和约束条件。&#10;&#10;例如：写一篇关于 AI Agent 技术架构的深度文章，面向技术开发者，2000 字左右，需要包含工程实践与风险说明。"
+                  value={userInput}
+                  onChange={(event) => setUserInput(event.target.value)}
+                  disabled={isLoading}
+                  aria-label="工作流输入"
+                />
 
-                <div className={styles.inputHints}>
-                  {examplePrompts.map((prompt) => (
+                <div className={styles.composerFooter}>
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                    <div className={styles.selectWrapper} style={{ flex: '1 1 200px' }}>
+                      <label htmlFor="workflow-select" className={styles.selectLabel}>工作流</label>
+                      <select
+                        id="workflow-select"
+                        className={styles.customSelect}
+                        value={selectedWorkflow}
+                        onChange={(e) => setSelectedWorkflow(e.target.value)}
+                        disabled={isLoading || workflows.length === 0}
+                      >
+                        {workflows.length === 0 ? (
+                          <option value="">没有可用工作流</option>
+                        ) : (
+                          workflows.map((workflow) => (
+                            <option key={workflow.id} value={workflow.id}>
+                              {workflow.name}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </div>
+                    <div className={styles.selectWrapper} style={{ flex: '1 1 200px' }}>
+                      <label htmlFor="version-select" className={styles.selectLabel}>版本</label>
+                      <select
+                        id="version-select"
+                        className={styles.customSelect}
+                        value={selectedVersion}
+                        onChange={(e) => setSelectedVersion(e.target.value)}
+                        disabled={isLoading || versions.length === 0}
+                      >
+                        {versions.length === 0 ? (
+                          <option value="">没有可用版本</option>
+                        ) : (
+                          versions.map((version) => (
+                            <option key={version.id} value={version.id}>
+                              版本 {version.version} ({version.change_log || '无更新说明'})
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </div>
+                  </div>
+
+                  {publishedCompatibilityMessage && (
+                    <div style={{ color: '#ffcc00', fontSize: '0.8rem', opacity: 0.9 }}>
+                      {publishedCompatibilityMessage}
+                    </div>
+                  )}
+
+                  <div className={styles.inputHints}>
+                    {examplePrompts.map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        className={styles.hintTag}
+                        onClick={() => fillExample(prompt)}
+                        disabled={isLoading}
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className={styles.actionArea}>
+                    <p className={styles.launchHint} aria-live="polite">
+                      {currentLaunchHint}
+                    </p>
                     <button
-                      key={prompt}
                       type="button"
-                      className={styles.hintTag}
-                      onClick={() => fillExample(prompt)}
-                      disabled={isLoading}
+                      className={`btn btn-primary ${styles.launchButton}`}
+                      onClick={handleSubmit}
+                      disabled={isLaunchDisabled}
                     >
-                      {prompt}
+                      {isLoading ? (
+                        <>
+                          <span className={styles.buttonProgress} aria-hidden="true" />
+                          <Bot size={16} aria-hidden="true" />
+                          正在编排
+                        </>
+                      ) : (
+                        <>
+                          <Play size={16} aria-hidden="true" />
+                          启动工作流
+                          <ArrowRight size={16} aria-hidden="true" />
+                        </>
+                      )}
                     </button>
-                  ))}
+                  </div>
                 </div>
 
-                <div className={styles.actionArea}>
-                  <p className={styles.launchHint} aria-live="polite">
-                    {currentLaunchHint}
-                  </p>
-                  <button
-                    type="button"
-                    className={`btn btn-primary ${styles.launchButton}`}
-                    onClick={handleSubmit}
-                    disabled={isLaunchDisabled}
-                  >
-                    {isLoading ? (
-                      <>
-                        <span className={styles.buttonProgress} aria-hidden="true" />
-                        <Bot size={16} aria-hidden="true" />
-                        正在编排
-                      </>
-                    ) : (
-                      <>
-                        <Play size={16} aria-hidden="true" />
-                        启动工作流
-                        <ArrowRight size={16} aria-hidden="true" />
-                      </>
-                    )}
-                  </button>
-                </div>
+                {error ? (
+                  <div className={styles.errorCard} role="alert">
+                    <strong>启动失败</strong>
+                    <span>{error}</span>
+                  </div>
+                ) : null}
               </div>
-
-              {error ? (
-                <div className={styles.errorCard} role="alert">
-                  <strong>启动失败</strong>
-                  <span>{error}</span>
-                </div>
-              ) : null}
             </section>
           </div>
 
@@ -447,7 +491,11 @@ export default function Home() {
           </div>
         </section>
 
-        <section className={styles.capabilityRail} aria-label="工作流链路">
+        <section
+          ref={railRef}
+          className={`${styles.capabilityRail} ${revealed.rail ? styles.revealed : styles.revealSection}`}
+          aria-label="工作流链路"
+        >
           {workflowChain.map((item) => (
             <div key={item} className={styles.capabilityChip}>
               {item}
@@ -455,7 +503,10 @@ export default function Home() {
           ))}
         </section>
 
-        <section className={styles.featuresSection}>
+        <section
+          ref={featuresRef}
+          className={`${styles.featuresSection} ${revealed.features ? styles.revealed : styles.revealSection}`}
+        >
           <div className={styles.sectionHeading}>
             <span className={styles.sectionEyebrow}>工作流界面</span>
             <h2>围绕审批、追踪与重跑构建，而不是一次性输出</h2>
@@ -481,7 +532,10 @@ export default function Home() {
           </div>
         </section>
 
-        <section className={styles.trustSection}>
+        <section
+          ref={trustRef}
+          className={`${styles.trustSection} ${revealed.trust ? styles.revealed : styles.revealSection}`}
+        >
           <div className={styles.sectionHeading}>
             <span className={styles.sectionEyebrow}>工程化信任</span>
             <h2>从首页启动的那一刻起，就进入可观测的工程链路</h2>
