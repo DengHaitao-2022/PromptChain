@@ -67,7 +67,7 @@ export function ClarificationDialog({
         <div className={styles.container}>
             <div className={styles.summary}>
                 <div className={styles.summaryCopy}>
-                    <p className={styles.eyebrow}>Clarification Round</p>
+                    <p className={styles.eyebrow}>需求澄清</p>
                     <h3 className={styles.title}>补全这轮工作流的关键上下文</h3>
                     <p className={styles.subtitle}>
                         这些问题会直接影响提纲质量和后续事实核查负担。先把关键信息补全，再让工作流继续推进。
