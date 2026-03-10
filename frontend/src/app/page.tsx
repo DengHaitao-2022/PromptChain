@@ -45,7 +45,7 @@ interface WorkflowDefinition {
 interface WorkflowVersion {
   id: string;
   version: number;
-  description: string;
+  change_log: string;
 }
 
 const examplePrompts = [
@@ -378,7 +378,7 @@ export default function Home() {
                       ) : (
                         versions.map((version) => (
                           <option key={version.id} value={version.id}>
-                            版本 {version.version} ({version.description || '无描述'})
+                            版本 {version.version} ({version.change_log || '无更新说明'})
                           </option>
                         ))
                       )}
