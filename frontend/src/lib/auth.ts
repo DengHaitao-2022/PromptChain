@@ -136,6 +136,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
 };
 
 const CONSOLE_ROUTE_GUARDS: ConsoleRouteGuard[] = [
+  { prefix: '/console/workflows/edit', resource: 'workflow', action: 'create' },
   { prefix: '/console/settings/members', resource: 'member', action: 'read' },
   { prefix: '/console/settings/models', resource: 'model_provider', action: 'read' },
   { prefix: '/console/settings/keys', resource: 'secret', action: 'read' },
@@ -498,7 +499,14 @@ export function canAccessConsolePath(role: Role | null | undefined, pathname: st
     return pathname === '/console';
   }
 
-  const guard = CONSOLE_ROUTE_GUARDS.find((item) => pathname.startsWith(item.prefix));
+  // 寻找最精确匹配的路由守卫（最长前缀匹配）
+  const guard = CONSOLE_ROUTE_GUARDS
+    .filter((item) => pathname.startsWith(item.prefix))
+    .reduce<ConsoleRouteGuard | undefined>(
+      (best, current) => (!best || current.prefix.length > best.prefix.length ? current : best),
+      undefined,
+    );
+
   if (!guard || !guard.resource || !guard.action) {
     return pathname.startsWith('/console');
   }

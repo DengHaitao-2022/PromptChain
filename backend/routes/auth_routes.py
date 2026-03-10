@@ -182,6 +182,34 @@ def serialize_workspace(membership, workspace, role: str) -> dict[str, Any]:
     }
 
 
+def get_workspace_sort_key(workspace: dict[str, Any]) -> tuple[datetime, datetime, str]:
+    """为工作空间上下文提供稳定排序键，避免 fallback 选择漂移。"""
+    joined_at = workspace.get("joined_at") or workspace.get("created_at") or datetime.max
+    created_at = workspace.get("created_at") or joined_at or datetime.max
+    return joined_at, created_at, workspace["id"]
+
+
+def select_current_workspace(
+    workspace_list: list[dict[str, Any]],
+    preferred_workspace_id: Optional[str] = None,
+) -> tuple[Optional[dict[str, Any]], list[dict[str, Any]]]:
+    """按稳定顺序选择当前工作空间。"""
+    ordered_workspaces = sorted(workspace_list, key=get_workspace_sort_key)
+
+    if preferred_workspace_id:
+        current_workspace = next(
+            (workspace for workspace in ordered_workspaces if workspace["id"] == preferred_workspace_id),
+            None,
+        )
+        if current_workspace:
+            return current_workspace, ordered_workspaces
+
+    if not ordered_workspaces:
+        return None, ordered_workspaces
+
+    return ordered_workspaces[0], ordered_workspaces
+
+
 async def build_auth_context(user_id: str, preferred_workspace_id: Optional[str] = None) -> dict[str, Any]:
     """构建登录态上下文，供登录、刷新和 `/api/me` 复用。"""
     store = get_postgres_store()
@@ -200,16 +228,10 @@ async def build_auth_context(user_id: str, preferred_workspace_id: Optional[str]
                 continue
             workspace_list.append(serialize_workspace(membership, workspace, role.value))
 
-        current_workspace = None
-        if preferred_workspace_id:
-            current_workspace = next(
-                (workspace for workspace in workspace_list if workspace["id"] == preferred_workspace_id),
-                None,
-            )
-
-        if not current_workspace and workspace_list:
-            current_workspace = workspace_list[0]
-
+        current_workspace, workspace_list = select_current_workspace(
+            workspace_list,
+            preferred_workspace_id=preferred_workspace_id,
+        )
         current_role = current_workspace["role"] if current_workspace else None
 
         return {
