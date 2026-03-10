@@ -2,6 +2,7 @@
 
 import React from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import { RefreshCcw } from 'lucide-react';
 import styles from './OutlineEditor.module.css';
 import type { Outline, OutlineSection } from '@/lib/api';
 
@@ -11,6 +12,7 @@ interface OutlineEditorProps {
     onModify: (modifiedOutline: Outline) => void;
     onRegenerate: (feedback: string) => void;
     isLoading?: boolean;
+    isReadOnly?: boolean;
 }
 
 export function OutlineEditor({
@@ -19,11 +21,16 @@ export function OutlineEditor({
     onModify,
     onRegenerate,
     isLoading = false,
+    isReadOnly = false,
 }: OutlineEditorProps) {
     const [editedOutline, setEditedOutline] = React.useState<Outline>(outline);
     const [showFeedbackDialog, setShowFeedbackDialog] = React.useState(false);
     const [feedback, setFeedback] = React.useState('');
     const [isEditing, setIsEditing] = React.useState(false);
+
+    React.useEffect(() => {
+        setEditedOutline(outline);
+    }, [outline]);
 
     // 更新章节标题
     const updateSectionTitle = (sectionId: string, newTitle: string) => {
@@ -80,7 +87,7 @@ export function OutlineEditor({
                     className={styles.sectionTitle}
                     value={section.title}
                     onChange={(e) => updateSectionTitle(section.id, e.target.value)}
-                    disabled={isLoading}
+                    disabled={isLoading || isReadOnly}
                 />
                 <span className={styles.wordCount}>{section.target_words} 字</span>
             </div>
@@ -89,7 +96,7 @@ export function OutlineEditor({
                 value={section.summary}
                 onChange={(e) => updateSectionSummary(section.id, e.target.value)}
                 placeholder="章节摘要..."
-                disabled={isLoading}
+                disabled={isLoading || isReadOnly}
             />
             {section.subsections.map((sub) => renderSection(sub, depth + 1))}
         </div>
@@ -109,7 +116,7 @@ export function OutlineEditor({
                             setIsEditing(true);
                         }}
                         placeholder="文章标题"
-                        disabled={isLoading}
+                        disabled={isLoading || isReadOnly}
                     />
                     <span className={`badge badge-info`}>v{editedOutline.version}</span>
                 </div>
@@ -129,7 +136,7 @@ export function OutlineEditor({
                         setIsEditing(true);
                     }}
                     placeholder="文章概述..."
-                    disabled={isLoading}
+                    disabled={isLoading || isReadOnly}
                 />
             </div>
 
@@ -140,33 +147,35 @@ export function OutlineEditor({
             </div>
 
             {/* 操作按钮 */}
-            <div className={styles.actions}>
-                <button
-                    className="btn btn-ghost"
-                    onClick={() => setShowFeedbackDialog(true)}
-                    disabled={isLoading}
-                >
-                    🔄 重新生成
-                </button>
+            {!isReadOnly && (
+                <div className={styles.actions}>
+                    <button
+                        className="btn btn-ghost"
+                        onClick={() => setShowFeedbackDialog(true)}
+                        disabled={isLoading}
+                    >
+                        <RefreshCcw size={16} /> 重新生成
+                    </button>
 
-                {isEditing ? (
-                    <button
-                        className="btn btn-primary"
-                        onClick={() => onModify(editedOutline)}
-                        disabled={isLoading}
-                    >
-                        {isLoading ? '保存中...' : '保存修改'}
-                    </button>
-                ) : (
-                    <button
-                        className="btn btn-primary"
-                        onClick={onApprove}
-                        disabled={isLoading}
-                    >
-                        {isLoading ? '处理中...' : '✓ 确认提纲'}
-                    </button>
-                )}
-            </div>
+                    {isEditing ? (
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => onModify(editedOutline)}
+                            disabled={isLoading}
+                        >
+                            {isLoading ? '保存中...' : '保存修改'}
+                        </button>
+                    ) : (
+                        <button
+                            className="btn btn-primary"
+                            onClick={onApprove}
+                            disabled={isLoading}
+                        >
+                            {isLoading ? '处理中...' : '✓ 确认提纲'}
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* 重新生成对话框 */}
             <Dialog.Root open={showFeedbackDialog} onOpenChange={setShowFeedbackDialog}>

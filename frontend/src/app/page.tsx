@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import styles from './page.module.css';
 import { HomeWorkflowPreview } from '@/components/HomeWorkflowPreview/HomeWorkflowPreview';
-import { workflowApi } from '@/lib/api';
 
 type LaunchState = 'idle' | 'launching' | 'handoff';
 
@@ -36,20 +35,34 @@ interface TrustSignal {
   description: string;
 }
 
+interface WorkflowDefinition {
+  id: string;
+  name: string;
+  description: string;
+  is_published?: boolean;
+}
+
+interface WorkflowVersion {
+  id: string;
+  version: number;
+  change_log: string;
+}
+
 const examplePrompts = [
   '写一篇关于 AI Agent 技术架构的深度文章，面向技术开发者，2000 字左右',
   '生成一份面向投资人的智能客服 SaaS 商业计划书，突出市场和护城河',
   '输出一篇关于量子计算应用边界的科普稿，要求论证严谨并标注高风险事实',
 ];
 
+
 const workflowChain = [
-  'Parse Intent',
-  'Clarify',
-  'Outline',
-  'Generate',
-  'Refine',
-  'Fact Check',
-  'Finalize',
+  '意图解析',
+  '需求澄清',
+  '提纲生成',
+  '内容生成',
+  '自检优化',
+  '事实核查',
+  '最终交付',
 ];
 
 const features: FeatureCard[] = [
@@ -57,53 +70,53 @@ const features: FeatureCard[] = [
     icon: ScanSearch,
     title: '智能意图解析',
     description: '自动抽取目标、读者、限制条件和缺失信息，先把需求结构化再进入生成链路。',
-    tag: 'Intent Parser',
+    tag: '意图解析',
   },
   {
     icon: ScrollText,
     title: '交互式提纲生成',
     description: '先生成可审批提纲，再把结构确认变成正式的工作流节点，而不是一次性输出。',
-    tag: 'Outline Gate',
+    tag: '提纲门控',
   },
   {
     icon: ShieldCheck,
     title: '高风险事实门控',
     description: '把事实核查结果显式暴露给用户，支持确认、采纳建议或人工修正。',
-    tag: 'Fact Approval',
+    tag: '事实审批',
   },
   {
     icon: Sparkles,
-    title: 'Self-Refine 优化',
+    title: '自我精炼 (Self-Refine) 优化',
     description: '生成、反馈、精炼形成闭环，让内容质量提升成为可重复的流程步骤。',
-    tag: 'Refinement Loop',
+    tag: '优化闭环',
   },
   {
     icon: GitBranch,
     title: '版本化重跑',
     description: '每一次产物都保持可追溯版本，并允许从指定节点重跑，而不是整体重来。',
-    tag: 'Rerun Ready',
+    tag: '支持重跑',
   },
   {
     icon: Radar,
     title: 'Trace 可视化',
     description: '完整记录节点输入、输出、耗时与决策，让 AI 工作流具备工程化可观测性。',
-    tag: 'Execution Trace',
+    tag: '执行追踪',
   },
 ];
 
 const trustSignals: TrustSignal[] = [
   {
-    eyebrow: '[APPROVAL_GATES]',
+    eyebrow: '[审批门控]',
     title: '关键节点留给人确认',
     description: '提纲审批和高风险事实确认都被建模为门控节点，不把不确定决策藏进黑盒。',
   },
   {
-    eyebrow: '[ARTIFACT_HISTORY]',
+    eyebrow: '[产物历史]',
     title: '产物版本写一次，永久可追',
     description: '生成内容、核查报告和节点输出都按版本保留，支持回看与重跑。',
   },
   {
-    eyebrow: '[TRACE_VISIBILITY]',
+    eyebrow: '[追踪可见]',
     title: '从 API 到节点执行都能定位',
     description: '首页启动后即进入可追踪的运行态，便于后续查看时间线与状态转移。',
   },
@@ -119,25 +132,113 @@ export default function Home() {
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
-  const [workflowId, setWorkflowId] = useState<string | null>(null);
+  const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
+  const [versions, setVersions] = useState<WorkflowVersion[]>([]);
+  const [selectedWorkflow, setSelectedWorkflow] = useState<string>('');
+  const [selectedVersion, setSelectedVersion] = useState<string>('');
+  const [publishedCompatibilityMessage, setPublishedCompatibilityMessage] = useState<string | null>(null);
+
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  useEffect(() => {
+    const fetchWorkflows = async () => {
+      try {
+        setError(null);
+        const response = await fetch(`${API_BASE}/api/workflows`, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error('获取工作流列表失败');
+        }
+        const data = await response.json();
+        const workflowData = data.data.workflows || [];
+
+        const hasPublished = workflowData.some((w: WorkflowDefinition) => 'is_published' in w);
+        const displayableWorkflows = hasPublished
+          ? workflowData.filter((w: WorkflowDefinition) => w.is_published)
+          : workflowData;
+
+        if (!hasPublished) {
+          setPublishedCompatibilityMessage('当前接口未显式暴露发布态，因此展示版本候选，需手动选择版本。');
+        } else {
+          setPublishedCompatibilityMessage(null);
+        }
+
+        setWorkflows(displayableWorkflows);
+        if (displayableWorkflows.length > 0) {
+          setSelectedWorkflow(displayableWorkflows[0].id);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '加载工作流失败');
+      }
+    };
+    fetchWorkflows();
+  }, [API_BASE]);
+
+  useEffect(() => {
+    if (!selectedWorkflow) {
+      setVersions([]);
+      setSelectedVersion('');
+      return;
+    }
+
+    const fetchVersions = async () => {
+      try {
+        setError(null);
+        const response = await fetch(`${API_BASE}/api/workflows/${selectedWorkflow}/versions`, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error('获取版本列表失败');
+        }
+        const data = await response.json();
+        const versionData = data.data.versions || [];
+        setVersions(versionData);
+        if (versionData.length > 0) {
+          setSelectedVersion(versionData[0].id);
+        } else {
+          setSelectedVersion('');
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '加载版本失败');
+      }
+    };
+    fetchVersions();
+  }, [selectedWorkflow, API_BASE]);
+
   const handleSubmit = async () => {
-    if (!userInput.trim() || isLoading) return;
+    if (!userInput.trim() || !selectedWorkflow || !selectedVersion || isLoading) return;
 
     setIsLoading(true);
     setError(null);
     setLaunchState('launching');
 
     try {
-      const [response] = await Promise.all([workflowApi.start(userInput.trim()), sleep(900)]);
-      setWorkflowId(response.workflow_run_id);
+      const response = await fetch(`${API_BASE}/api/workflow/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_input: userInput.trim(),
+          workflow_definition_id: selectedWorkflow,
+          workflow_version_id: selectedVersion,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: '未知错误' }));
+        throw new Error(errorData.detail);
+      }
+
+      const result = await response.json();
+      setWorkflowRunId(result.workflow_run_id);
       setLaunchState('handoff');
       await sleep(280);
-      router.push(`/workflow/${response.workflow_run_id}`);
+      router.push(`/workflow/${result.workflow_run_id}`);
     } catch (err) {
       setLaunchState('idle');
-      setWorkflowId(null);
+      setWorkflowRunId(null);
       setError(err instanceof Error ? err.message : '工作流启动失败');
     } finally {
       setIsLoading(false);
@@ -149,12 +250,19 @@ export default function Home() {
     setError(null);
   };
 
-  const launchHint =
-    launchState === 'launching'
+  const isLaunchDisabled = !userInput.trim() || isLoading || workflows.length === 0 || versions.length === 0;
+
+  let currentLaunchHint = launchState === 'launching'
       ? '正在依次编排意图解析、提纲生成与事实核查节点。'
       : launchState === 'handoff'
-        ? `工作流 ${workflowId?.slice(0, 8) ?? 'pending'} 已建立，准备进入详情页。`
+        ? `工作流 ${workflowRunId?.slice(0, 8) ?? '准备中'} 已建立，准备进入详情页。`
         : '点击后会先完成首页启动反馈，再跳转到工作流详情。';
+
+  if (workflows.length === 0) {
+    currentLaunchHint = '没有可用的工作流，请联系管理员配置。';
+  } else if (versions.length === 0) {
+    currentLaunchHint = '当前工作流没有可用版本，请联系管理员配置。';
+  }
 
   return (
     <div className={styles.page}>
@@ -168,16 +276,16 @@ export default function Home() {
           </Link>
 
           <div className={styles.headerStatus}>
-            <span className={styles.headerBadge}>Traceable AI Workflow</span>
+            <span className={styles.headerBadge}>可追溯 AI 工作流</span>
             <nav className={styles.nav} aria-label="主导航">
               <Link href="/console" className={styles.navLink}>
-                Console
+                控制台
               </Link>
               <Link href="/console/workflows" className={styles.navLink}>
-                Workflows
+                工作流管理
               </Link>
               <Link href="/console/runs" className={styles.navLink}>
-                Runs
+                运行历史
               </Link>
             </nav>
           </div>
@@ -188,7 +296,7 @@ export default function Home() {
         <section className={styles.hero}>
           <div className={styles.heroCopy}>
             <div className={styles.eyebrowRow}>
-              <span className={styles.eyebrow}>[SYSTEM_READY]</span>
+              <span className={styles.eyebrow}>[系统就绪]</span>
               <span className={styles.eyebrowMeta}>Prompt Chain + LangGraph + HITL</span>
             </div>
 
@@ -212,14 +320,14 @@ export default function Home() {
             <section className={styles.composer} aria-labelledby="launch-composer-title">
               <div className={styles.composerHeader}>
                 <div>
-                  <p className={styles.composerLabel}>Launch Composer</p>
+                  <p className={styles.composerLabel}>启动编辑器</p>
                   <h2 id="launch-composer-title" className={styles.composerTitle}>
                     发起一次新的内容工作流
                   </h2>
                 </div>
                 <span className={styles.composerPill}>
                   <Cable size={14} aria-hidden="true" />
-                  live orchestration
+                  实时编排中
                 </span>
               </div>
 
@@ -233,6 +341,57 @@ export default function Home() {
               />
 
               <div className={styles.composerFooter}>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 45%' }}>
+                    <label htmlFor="workflow-select" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>工作流:</label>
+                    <select
+                      id="workflow-select"
+                      className={styles.mainTextarea} // Reusing textarea style for consistency
+                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: '#fff', width: '100%' }}
+                      value={selectedWorkflow}
+                      onChange={(e) => setSelectedWorkflow(e.target.value)}
+                      disabled={isLoading || workflows.length === 0}
+                    >
+                      {workflows.length === 0 ? (
+                        <option value="">没有可用工作流</option>
+                      ) : (
+                        workflows.map((workflow) => (
+                          <option key={workflow.id} value={workflow.id}>
+                            {workflow.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                  <div style={{ flex: '1 1 45%' }}>
+                    <label htmlFor="version-select" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>版本:</label>
+                    <select
+                      id="version-select"
+                      className={styles.mainTextarea} // Reusing textarea style for consistency
+                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1a1a1a', color: '#fff', width: '100%' }}
+                      value={selectedVersion}
+                      onChange={(e) => setSelectedVersion(e.target.value)}
+                      disabled={isLoading || versions.length === 0}
+                    >
+                      {versions.length === 0 ? (
+                        <option value="">没有可用版本</option>
+                      ) : (
+                        versions.map((version) => (
+                          <option key={version.id} value={version.id}>
+                            版本 {version.version} ({version.change_log || '无更新说明'})
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                </div>
+
+                {publishedCompatibilityMessage && (
+                  <div style={{ color: '#ffcc00', marginBottom: '10px', fontSize: '0.9em' }}>
+                    {publishedCompatibilityMessage}
+                  </div>
+                )}
+
                 <div className={styles.inputHints}>
                   {examplePrompts.map((prompt) => (
                     <button
@@ -249,13 +408,13 @@ export default function Home() {
 
                 <div className={styles.actionArea}>
                   <p className={styles.launchHint} aria-live="polite">
-                    {launchHint}
+                    {currentLaunchHint}
                   </p>
                   <button
                     type="button"
                     className={`btn btn-primary ${styles.launchButton}`}
                     onClick={handleSubmit}
-                    disabled={!userInput.trim() || isLoading}
+                    disabled={isLaunchDisabled}
                   >
                     {isLoading ? (
                       <>
@@ -284,7 +443,7 @@ export default function Home() {
           </div>
 
           <div className={styles.heroPreview}>
-            <HomeWorkflowPreview mode={launchState} workflowId={workflowId} />
+            <HomeWorkflowPreview mode={launchState} workflowId={workflowRunId} />
           </div>
         </section>
 
@@ -298,7 +457,7 @@ export default function Home() {
 
         <section className={styles.featuresSection}>
           <div className={styles.sectionHeading}>
-            <span className={styles.sectionEyebrow}>Workflow Surface</span>
+            <span className={styles.sectionEyebrow}>工作流界面</span>
             <h2>围绕审批、追踪与重跑构建，而不是一次性输出</h2>
             <p>
               每个能力都对应工作流中的一个明确阶段，让内容生成从“提问”升级到“编排”。
@@ -324,7 +483,7 @@ export default function Home() {
 
         <section className={styles.trustSection}>
           <div className={styles.sectionHeading}>
-            <span className={styles.sectionEyebrow}>Engineering Trust</span>
+            <span className={styles.sectionEyebrow}>工程化信任</span>
             <h2>从首页启动的那一刻起，就进入可观测的工程链路</h2>
             <p>
               首页不是营销页，而是启动台。用户一点击，就能感知到节点、状态和后续审查路径。

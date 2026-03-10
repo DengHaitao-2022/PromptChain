@@ -44,9 +44,15 @@ export interface WorkflowDefinition {
   created_at?: string;
   updated_at?: string;
   created_by?: string;
+  is_published?: boolean;
+  published_version_id?: string;
+  published_version?: number;
+  published_at?: string;
+  published_by?: string;
 }
 
 export interface ValidationResult {
+  mode?: string;
   is_valid: boolean;
   errors: string[];
   warnings: string[];
@@ -84,10 +90,21 @@ export function useWorkflowApi() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP ${response.status}`);
+        throw new Error(errorData.detail || errorData.message || `HTTP ${response.status}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+      if (result.code !== undefined && result.code !== 200 && result.code !== 0) {
+          interface ApiError extends Error {
+              code?: number;
+              data?: unknown;
+          }
+          const error = new Error(result.message || '请求失败') as ApiError;
+          error.code = result.code;
+          error.data = result.data;
+          throw error;
+      }
+      return result.data !== undefined ? result.data : result;
     } catch (err) {
       const message = err instanceof Error ? err.message : '请求失败';
       setError(message);
@@ -146,12 +163,17 @@ export function useWorkflowApi() {
   // 保存工作流定义（用于编辑器）
   const saveWorkflowDefinition = useCallback(async (
     id: string,
-    nodes: WorkflowNode[],
-    edges: WorkflowEdge[]
+    data: {
+      name?: string;
+      description?: string;
+      nodes?: WorkflowNode[];
+      edges?: WorkflowEdge[];
+      change_log?: string;
+    }
   ) => {
     return request<WorkflowDefinition>(`/workflows/${id}/definition`, {
       method: 'PUT',
-      body: JSON.stringify({ nodes, edges }),
+      body: JSON.stringify(data),
     });
   }, [request]);
 
@@ -163,9 +185,17 @@ export function useWorkflowApi() {
   }, [request]);
 
   // 验证工作流
-  const validateWorkflow = useCallback(async (id: string) => {
-    return request<ValidationResult>(`/workflows/${id}/validate`, {
+  const validateWorkflow = useCallback(async (id: string, mode: 'save' | 'publish' = 'save') => {
+    return request<ValidationResult & { mode: string }>(`/workflows/${id}/validate?mode=${mode}`, {
       method: 'POST',
+    });
+  }, [request]);
+
+  // 发布工作流
+  const publishWorkflow = useCallback(async (id: string, change_log?: string) => {
+    return request<{ workflow: WorkflowDefinition, validation: ValidationResult, published_version_id: string }>(`/workflows/${id}/publish`, {
+      method: 'POST',
+      body: JSON.stringify({ change_log }),
     });
   }, [request]);
 
@@ -187,6 +217,7 @@ export function useWorkflowApi() {
     saveWorkflowDefinition,
     deleteWorkflow,
     validateWorkflow,
+    publishWorkflow,
     compileWorkflow,
   };
 }
