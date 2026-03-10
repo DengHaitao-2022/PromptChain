@@ -25,11 +25,11 @@ cp .env.example .env
 # 编辑 .env 文件，填入 API Keys
 
 # 启动服务
-uv run uvicorn main:app --reload --port 8000
+uv run uvicorn app:app --reload --port 8000
 
 # 或者激活虚拟环境后直接运行
 source .venv/bin/activate  # macOS/Linux
-uvicorn main:app --reload --port 8000
+uvicorn app:app --reload --port 8000
 ```
 
 ### 常用命令
@@ -64,16 +64,53 @@ pre-commit run --all-files
 
 ```
 backend/
-├── main.py                 # FastAPI 入口
-├── pyproject.toml          # 项目配置和依赖
-├── uv.lock                 # 锁定的依赖版本
-├── .python-version         # 固定的 Python 版本
-├── ruff.toml               # Ruff 配置
-├── .pre-commit-config.yaml # Pre-commit hooks
-├── models/                 # Pydantic 数据模型
-├── nodes/                  # LangGraph 节点实现
-├── services/               # 核心服务层
-├── graph/                  # 工作流定义
-├── routes/                 # API 路由
-└── db/                     # 数据库层
+├── app.py                  # FastAPI 应用入口（应用工厂+路由注册）
+├── pyproject.toml           # 项目配置和依赖
+├── ruff.toml                # Ruff 配置
+├── .pre-commit-config.yaml  # Pre-commit hooks
+│
+├── core/                    # 横切关注点
+│   ├── __init__.py
+│   └── config.py            # 统一配置（环境变量集中管理）
+│
+├── graph/                   # LangGraph 工作流定义
+│   └── content_generation_graph.py  # 图定义 + 执行器
+│
+├── nodes/                   # LangGraph 节点实现
+│   ├── intent_parser.py
+│   ├── outline_generator.py
+│   ├── content_generator.py
+│   ├── self_refiner.py
+│   └── fact_checker.py
+│
+├── models/                  # Pydantic 数据模型 + ORM 模型
+│   ├── artifact.py / intent_card.py / outline.py / fact_check.py
+│   ├── auth_models.py / auth_orm.py
+│   ├── admin_models.py / admin_orm.py
+│   ├── workflow_definition.py / workflow_orm.py
+│   └── result.py
+│
+├── routes/                  # API 路由
+│   ├── workflow_routes.py   # 内容工作流 API（启动/审批/暂停/重跑）
+│   ├── workflow_helpers.py  # 工作流共享模型和工具函数
+│   ├── trace_routes.py      # Trace / Artifact API
+│   ├── auth_routes.py       # 认证路由
+│   ├── workspace_routes.py  # 工作空间路由
+│   ├── admin_routes.py      # 后台管理路由
+│   ├── workflow_definition_routes.py  # 工作流定义 CRUD
+│   ├── workflow_version_routes.py     # 版本管理
+│   └── websocket_routes.py  # WebSocket 实时推送
+│
+├── services/                # 核心服务层
+│   ├── auth_service.py / email_service.py / permission_service.py
+│   ├── artifact_store.py / trace_service.py / rerun_service.py
+│   ├── llm_provider.py
+│   └── workflow_definition_service.py
+│
+├── db/                      # 数据库层
+│   ├── postgres_store.py
+│   └── init.sql
+│
+└── tests/                   # 测试
 ```
+
