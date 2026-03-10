@@ -4,7 +4,7 @@
  * 成员管理页面
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Role,
@@ -54,7 +54,7 @@ export default function MembersPage() {
   const canReadMembers = hasPermission('member', 'read');
   const canManageMembers = hasPermission('member', 'manage');
 
-  async function fetchMembers() {
+  const fetchMembers = useCallback(async () => {
     if (!workspace || !canReadMembers) {
       setLoading(false);
       return;
@@ -78,11 +78,11 @@ export default function MembersPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [workspace, canReadMembers]);
 
   useEffect(() => {
     void fetchMembers();
-  }, [workspace?.id, canReadMembers]);
+  }, [fetchMembers]);
 
   const sortedMembers = useMemo(() => {
     const roleOrder: Role[] = ['owner', 'admin', 'editor', 'viewer'];

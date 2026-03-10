@@ -93,11 +93,14 @@ function Sidebar() {
   const visibleSettingsItems = SETTINGS_ITEMS.filter((item) => isVisible(item, hasPermission));
   const [settingsOpen, setSettingsOpen] = useState(pathname.startsWith('/console/settings'));
 
-  useEffect(() => {
+  // Sync state with pathname change without useEffect to avoid lint error and extra render cycle
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (pathname !== prevPathname) {
+    setPrevPathname(pathname);
     if (pathname.startsWith('/console/settings')) {
       setSettingsOpen(true);
     }
-  }, [pathname]);
+  }
 
   function isActive(href: string, exact?: boolean) {
     if (exact) {
