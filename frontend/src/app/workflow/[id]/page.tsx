@@ -179,6 +179,37 @@ function normalizeFinalContentEntries(
     });
 }
 
+function parseGeneratedContent(content: unknown): Array<{ id: string; title: string; content: string; wordCount: number }> {
+    if (typeof content !== 'string') return [];
+
+    // 优先按 markdown 标题 ## 切分
+    const sections = content.split(/\n## |^## /);
+
+    // 如果切不出来（长度为 1 且第一个元素不含标题），就回退成一个 section
+    if (sections.length <= 1) {
+        return [{
+            id: 'generated_body',
+            title: '正文草稿',
+            content: content.trim(),
+            wordCount: content.length,
+        }];
+    }
+
+    return sections
+        .filter(s => s.trim())
+        .map((s, index) => {
+            const lines = s.split('\n');
+            const title = lines[0].trim() || `章节 ${index + 1}`;
+            const body = lines.slice(1).join('\n').trim();
+            return {
+                id: `gen_sec_${index}`,
+                title,
+                content: body,
+                wordCount: body.length,
+            };
+        });
+}
+
 function formatEntryLabel(key: string): string {
     return key
         .split('_')
@@ -226,11 +257,18 @@ export default function WorkflowDetailPage() {
     const startPolling = React.useCallback(() => {
         if (!pollIntervalRef.current) {
             pollIntervalRef.current = setInterval(() => {
-                workflowApi
-                    .getStatus(workflowId)
-                    .then((response) => {
-                        setWorkflow(response);
-                        if (response.status !== 'running' && response.status !== 'paused' && !response.state.gate) {
+                Promise.all([
+                    workflowApi.getStatus(workflowId),
+                    traceApi.getWorkflowTrace(workflowId),
+                ])
+                    .then(([workflowResponse, traceResponse]) => {
+                        setWorkflow(workflowResponse);
+                        setTrace(traceResponse);
+                        if (
+                            workflowResponse.status !== 'running' &&
+                            workflowResponse.status !== 'paused' &&
+                            !workflowResponse.state.gate
+                        ) {
                             stopPolling();
                         }
                     })
@@ -287,6 +325,8 @@ export default function WorkflowDetailPage() {
         try {
             const response = await workflowApi.clarify(workflowId, answers);
             setWorkflow(response);
+            const traceResponse = await traceApi.getWorkflowTrace(workflowId);
+            setTrace(traceResponse);
             startPolling();
         } catch (err) {
             setError(err instanceof Error ? err.message : '提交失败');
@@ -300,6 +340,8 @@ export default function WorkflowDetailPage() {
         try {
             const response = await workflowApi.approveOutline(workflowId, 'approve');
             setWorkflow(response);
+            const traceResponse = await traceApi.getWorkflowTrace(workflowId);
+            setTrace(traceResponse);
             startPolling();
         } catch (err) {
             setError(err instanceof Error ? err.message : '审批失败');
@@ -318,6 +360,8 @@ export default function WorkflowDetailPage() {
                 modifiedOutline
             );
             setWorkflow(response);
+            const traceResponse = await traceApi.getWorkflowTrace(workflowId);
+            setTrace(traceResponse);
             startPolling();
         } catch (err) {
             setError(err instanceof Error ? err.message : '保存失败');
@@ -335,6 +379,8 @@ export default function WorkflowDetailPage() {
                 feedback
             );
             setWorkflow(response);
+            const traceResponse = await traceApi.getWorkflowTrace(workflowId);
+            setTrace(traceResponse);
             startPolling();
         } catch (err) {
             setError(err instanceof Error ? err.message : '重新生成失败');
@@ -355,6 +401,8 @@ export default function WorkflowDetailPage() {
                 corrections
             );
             setWorkflow(response);
+            const traceResponse = await traceApi.getWorkflowTrace(workflowId);
+            setTrace(traceResponse);
             startPolling();
         } catch (err) {
             setError(err instanceof Error ? err.message : '事实核查审批失败');
@@ -613,7 +661,12 @@ export default function WorkflowDetailPage() {
                             setActionLoading(true);
                             try {
                                 await workflowApi.resume(workflowId);
-                                await loadWorkflow();
+                                const [workflowResponse, traceResponse] = await Promise.all([
+                                    workflowApi.getStatus(workflowId),
+                                    traceApi.getWorkflowTrace(workflowId),
+                                ]);
+                                setWorkflow(workflowResponse);
+                                setTrace(traceResponse);
                             } catch (err) {
                                 setError(err instanceof Error ? err.message : '恢复失败');
                             } finally {
@@ -870,7 +923,12 @@ export default function WorkflowDetailPage() {
                                         } else {
                                             await workflowApi.pause(workflowId);
                                         }
-                                        await loadWorkflow();
+                                        const [workflowResponse, traceResponse] = await Promise.all([
+                                            workflowApi.getStatus(workflowId),
+                                            traceApi.getWorkflowTrace(workflowId),
+                                        ]);
+                                        setWorkflow(workflowResponse);
+                                        setTrace(traceResponse);
                                     } catch (err) {
                                         setError(
                                             err instanceof Error ? err.message : '操作失败'
@@ -1001,7 +1059,7 @@ export default function WorkflowDetailPage() {
                                                         content: entry.preview,
                                                         wordCount: entry.wordCount || 0,
                                                     }))
-                                                    : ((workflow.state.generated_content as { sections: Array<{ id: string; title: string; content: string; wordCount?: number }> })?.sections || [])
+                                                    : parseGeneratedContent(workflow.state.generated_content)
                                             }
                                         />
                                     </div>
