@@ -418,6 +418,7 @@
 }
 
 .launchButton {
+  position: relative;
   min-width: 160px;
   padding: 0 24px;
   height: 48px;
@@ -755,9 +756,18 @@
 @media (max-width: 768px) {
   .headerContent {
     padding: 12px 16px;
+    flex-wrap: wrap;
+    gap: 12px;
   }
   .headerStatus {
-    display: none; /* Simplify mobile header */
+    display: flex;
+    gap: 12px;
+  }
+  .headerBadge {
+    display: none; /* Hide badge to save space for nav links */
+  }
+  .nav {
+    gap: 12px;
   }
   .main {
     padding: 32px 16px 64px;
