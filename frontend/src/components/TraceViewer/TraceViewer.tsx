@@ -1,6 +1,17 @@
 'use client';
 
 import React from 'react';
+import {
+    Play,
+    CheckCircle,
+    Bot,
+    Package,
+    User,
+    Pause,
+    RefreshCcw,
+    Hourglass,
+    Info,
+} from 'lucide-react';
 import styles from './TraceViewer.module.css';
 import type { WorkflowTrace, TimelineEvent } from '@/lib/api';
 
@@ -32,17 +43,23 @@ export function TraceViewer({ trace, onNodeClick }: TraceViewerProps) {
     const getEventIcon = (event: string) => {
         switch (event) {
             case 'node_started':
-                return '▶️';
+                return <Play size={16} />;
             case 'node_completed':
-                return '✅';
+                return <CheckCircle size={16} />;
             case 'llm_call':
-                return '🤖';
+                return <Bot size={16} />;
             case 'artifact_created':
-                return '📦';
+                return <Package size={16} />;
             case 'human_decision':
-                return '👤';
+                return <User size={16} />;
+            case 'workflow_paused':
+                return <Pause size={16} />;
+            case 'workflow_resumed':
+                return <RefreshCcw size={16} />;
+            case 'workflow_gate_waiting':
+                return <Hourglass size={16} />;
             default:
-                return '📌';
+                return <Info size={16} />;
         }
     };
 
@@ -59,6 +76,12 @@ export function TraceViewer({ trace, onNodeClick }: TraceViewerProps) {
                 return `创建产物: ${event.artifact_id?.slice(0, 8)}...`;
             case 'human_decision':
                 return `用户决策: ${event.node}`;
+            case 'workflow_paused':
+                return `工作流已暂停`;
+            case 'workflow_resumed':
+                return `工作流已恢复`;
+            case 'workflow_gate_waiting':
+                return `工作流等待人工介入`;
             default:
                 return event.event;
         }
@@ -135,9 +158,9 @@ export function TraceViewer({ trace, onNodeClick }: TraceViewerProps) {
                                     </span>
                                 </div>
                                 <div className={styles.nodeMeta}>
-                                    <span>⏱️ {formatDuration(node.duration_ms as number)}</span>
-                                    <span>🤖 {(node.llm_calls as unknown[]).length} 次调用</span>
-                                    <span>📦 {(node.output_artifact_ids as string[]).length} 个产物</span>
+                                    <span><Hourglass size={12} className={styles.nodeMetaIcon} /> {formatDuration(node.duration_ms as number)}</span>
+                                    <span><Bot size={12} className={styles.nodeMetaIcon} /> {(node.llm_calls as unknown[]).length} 次调用</span>
+                                    <span><Package size={12} className={styles.nodeMetaIcon} /> {(node.output_artifact_ids as string[]).length} 个产物</span>
                                 </div>
                             </div>
                         </div>
