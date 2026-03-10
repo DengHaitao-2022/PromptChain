@@ -1,6 +1,18 @@
 # Quickstart: PromptChain 内容生成系统 MVP1
 
-本文档描述目标功能完成后的最小验收路径。若任一步无法完成，说明该功能还未达到本计划定义的交付标准。
+本文档描述 MVP1 的最小验收路径，并额外标注 `dev@df88a42` 当前已经进入主线的部分与仍待收口的残口。若任一步无法完成，说明该功能还未达到本计划定义的交付标准。
+
+## 0. 当前主线快照（`dev@df88a42`）
+
+- 已可直接按当前 `dev` 验证：
+  - 登录与角色菜单
+  - 工作流列表 / 草稿保存 / 校验 / 显式发布 / 版本恢复
+  - 首页按“已发布工作流 + 版本”启动任务
+  - 详情页 Gate、pause/resume、trace、意图卡/提纲/终稿展示
+- 当前仍需注意：
+  - `frontend/src/app/console/runs/page.tsx` 还是占位页，不要把它当作 US4 的主验收入口
+  - 首页工作流列表/版本/启动当前直接请求后端，尚未完全收敛到共享 `frontend/src/lib/api.ts`
+- 本文档保留最终目标验收标准；若某个 smoke test 下方明确写有“当前残口”，表示该项还不能视为完全收口。
 
 ## 1. 环境前提
 
@@ -68,6 +80,11 @@ npm run dev
 
 验证“草稿”和“已发布版本”的分离，以及普通用户只能看到已发布版本。
 
+### 当前状态
+
+- 该闭环已经在 `dev@df88a42` 有主线实现。
+- 推荐以 `frontend/src/app/console/workflows/page.tsx` 与 `frontend/src/app/console/workflows/edit/page.tsx` 作为入口，而不是依赖历史 worktree。
+
 ### 步骤
 
 1. 使用设计者账号进入工作流列表或编辑器页面
@@ -89,6 +106,11 @@ npm run dev
 ### 目标
 
 验证“意图卡 → 提纲 → 写作 → 自检修订 → 事实核查/终稿”的主链路，以及 Gate 中断后继续执行。
+
+### 当前状态
+
+- 该闭环已经在首页与详情页进入主线。
+- 事实核查审批、提纲审批、手动 pause/resume 都应在详情页完成验证。
 
 ### 步骤
 
@@ -112,6 +134,11 @@ npm run dev
 
 验证与 Gate 无关的用户主动暂停/恢复能力。
 
+### 当前状态
+
+- 该能力已经进入主线，且 pause 与 Gate 状态分离。
+- 由于执行模型仍以单次 HTTP 推进为主，验证时应以“节点完成后进入 paused 读模型”为准，不要期待中断正在执行中的同一请求。
+
 ### 步骤
 
 1. 启动一个长内容任务
@@ -131,6 +158,11 @@ npm run dev
 ### 目标
 
 验证任务可回放、产物可追踪、rerun 有版本链。
+
+### 当前状态
+
+- `trace`、`artifact history` 与 `rerun` 后端接口已经进入主线，详情页中的 `TraceViewer` 也已接通。
+- 当前 `console/runs` 仍未接真实数据，因此本轮应优先通过工作流详情页验证回放与重跑，而不是依赖运行记录总览页。
 
 ### 步骤
 
@@ -164,13 +196,15 @@ curl -b cookies.txt "$API/api/me"
 # 启动工作流
 curl -b cookies.txt -X POST "$API/api/workflow/start" \
   -H "Content-Type: application/json" \
-  -d '{"user_input":"写一篇面向初学者的 Prompt Chain 介绍文章"}'
+  -d '{"user_input":"写一篇面向初学者的 Prompt Chain 介绍文章","workflow_definition_id":"<published_workflow_id>","workflow_version_id":"<published_version_id>"}'
 
 # 查看工作流状态
 curl -b cookies.txt "$API/api/workflow/<workflow_run_id>"
 ```
 
 ## 9. 完成标准
+
+当前 `dev@df88a42` 还没有同时满足以下全部条件；本节保留的是最终收口标准，下一轮验收仍应以此为准。
 
 当以下条件全部满足时，可认为 MVP1 已达到本计划要求：
 

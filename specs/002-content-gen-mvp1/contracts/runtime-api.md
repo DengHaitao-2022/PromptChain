@@ -1,5 +1,12 @@
 # Runtime API Contract
 
+## 0. Current Baseline (`dev@df88a42`)
+
+- 当前后端 canonical 落点是 `backend/routes/workflow_routes.py` 与 `backend/routes/workflow_helpers.py`；`backend/main.py` 只保留兼容入口。
+- `POST /api/workflow/start` 现已支持可选的 `workflow_definition_id` 与 `workflow_version_id`，用于从已发布工作流版本启动任务。
+- pause/resume、clarify、outline approval、fact-check approval、rerun、rerun-history 均已进入主线。
+- 当前残余漂移主要在前端共享 helper：首页仍直接 `fetch` 列表/版本/启动接口，而不是完全复用 `frontend/src/lib/api.ts`。
+
 ## 1. Canonical Envelope
 
 所有工作流运行态接口统一返回 `WorkflowResponse`：
@@ -126,7 +133,7 @@
 
 | Method | Path | Status | Purpose | Request | Response |
 |---|---|---|---|---|---|
-| `POST` | `/api/workflow/start` | Existing | 启动新任务 | `{ "user_input": "..." }` | `WorkflowResponse` |
+| `POST` | `/api/workflow/start` | Existing | 启动新任务 | `{ "user_input": "...", "workflow_definition_id": "optional", "workflow_version_id": "optional" }` | `WorkflowResponse` |
 | `GET` | `/api/workflow/{workflow_run_id}` | Existing | 读取当前任务状态 | None | `WorkflowResponse` |
 | `POST` | `/api/workflow/{workflow_run_id}/clarify` | Existing | 提交澄清回答 | `{ "clarifications": { "field": "answer" } }` | `WorkflowResponse` |
 | `POST` | `/api/workflow/{workflow_run_id}/approve-outline` | Existing | 处理提纲审批 | `ApproveOutlineRequest` | `WorkflowResponse` |
@@ -178,13 +185,15 @@
 4. `clarification_questions.priority` 必须对外保持枚举值，而不是泄漏后端数值优先级。
 5. `state.pause` 与 `state.gate` 只描述最近一次手动暂停和当前 Gate 上下文，不替代节点级 trace。
 6. 任何新增状态或字段都必须同时更新：
-   - `backend/main.py`
-   - `backend/graph/content_generation_graph.py`
+   - `backend/routes/workflow_routes.py`
+   - `backend/routes/workflow_helpers.py`
+   - `backend/graph/executor.py`
    - `frontend/src/lib/api.ts`
    - 契约测试
 
 ## 6. Migration Notes
 
-- 当前代码已经对外暴露 `pause` / `resume` 接口，并在 `WorkflowResponse` 中输出 `paused`、`pause`、`gate` 和 `current_node`。
+- 当前 canonical envelope 已在 `backend/routes/workflow_routes.py` / `backend/routes/workflow_helpers.py` 生效，不再依赖旧的 `main.py` 路由实现。
 - 当前执行模型仍然以单次 HTTP 调用内推进 LangGraph 为主，手动 `pause` 仅对已持久化为 `running` 的任务读模型生效，不能中断一个正在执行中的同一请求。
+- 当前默认运行态存储为 PostgreSQL；仅在显式设置 `RUNTIME_STORE_BACKEND=memory` 时退回内存实现。
 - 当前运行态读模型仍主要依赖轮询接口；WebSocket 仅为补充通道，不替代本契约。

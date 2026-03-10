@@ -1,5 +1,11 @@
 # Auth & Access Contract
 
+## 0. Current Baseline (`dev@df88a42`)
+
+- `viewer` 现在已经具备 `workflow.read` + `workflow.execute`，可运行已发布工作流并处理自己的 Gate。
+- 运行态、trace、artifact 访问现在同时校验 `workspace_id` 与 `user_id` 归属；`admin` / `owner` 才能跨用户查看同工作空间数据。
+- 当前工作空间级“暂停访问”通过 membership role 编码实现，是 workspace-scoped 行为，不再直接依赖全局 `User.status`。
+
 ## 1. Session Transport
 
 认证采用 Cookie 会话：
@@ -68,8 +74,9 @@
 3. 管理员可查看全部工作流与任务，并进行成员和系统级管理。
 4. 未登录用户访问受保护页面时必须被重定向或拒绝。
 5. 越权访问不得返回非授权资源的敏感内容。
+6. `trace` / `artifact` / `rerun` 等运行态相关接口必须继承相同的工作空间和任务归属校验。
 
 ## 6. Compatibility Notes
 
-- 当前权限表中 `viewer` 尚未具备执行权限；这是本计划需要补齐的权限矩阵调整。
-- `GET /api/me` 应继续作为前端初始化身份和角色菜单的权威入口。
+- `viewer` 执行权限、控制台导航守卫、成员管理页与运行态归属校验都已经进入主线。
+- `GET /api/me` 继续作为前端初始化身份、当前工作空间与角色菜单的权威入口。

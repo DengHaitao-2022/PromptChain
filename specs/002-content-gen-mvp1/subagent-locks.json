@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "updated_at": "2026-03-10T15:05:52Z",
+  "locks": {
+    "backend/main.py": {
+      "owner": "agent-0-contract-integration",
+      "status": "active",
+      "reason": "access guard 的 403/404 透传问题已修复，Agent 5 可重新进入 review；backend/main.py 仍由 Agent 0 持锁以防 runtime contract 漂移"
+    },
+    "frontend/src/lib/api.ts": {
+      "owner": "agent-0-contract-integration",
+      "status": "active",
+      "reason": "Shared runtime contract mirror remains single-owner until Agent 0 approves any field delta"
+    },
+    "backend/graph/content_generation_graph.py": {
+      "owner": "agent-1-runtime-persistence",
+      "status": "active",
+      "reason": "Graph/checkpoint/pause-resume semantics remain frozen by persistence owner"
+    },
+    "frontend/src/app/workflow/[id]/page.tsx": {
+      "owner": "agent-3-runtime-frontend",
+      "status": "active",
+      "reason": "Runtime detail page remains single-owner hotspot"
+    },
+    "backend/routes/workflow_routes.py": {
+      "owner": "agent-0-contract-integration",
+      "status": "active",
+      "reason": "已在 dev@64ec71b 上重放验证通过，可作为 US5 后端补丁来源并进入最终复审"
+    },
+    "backend/routes/trace_routes.py": {
+      "owner": "agent-0-contract-integration",
+      "status": "active",
+      "reason": "已在 dev@64ec71b 上重放验证通过，可作为 US5 后端补丁来源并进入最终复审"
+    },
+    "backend/routes/workflow_helpers.py": {
+      "owner": "agent-0-contract-integration",
+      "status": "active",
+      "reason": "共享 ownership guard helper 已在 dev@64ec71b 上验证通过，等待最终复审"
+    },
+    "frontend/src/app/login/page.tsx": {
+      "owner": "agent-auth-flow",
+      "status": "active",
+      "reason": "认证闭环最小前端补丁：收口 login/register/verify-email/forgot-password/reset-password，不改 auth 契约"
+    },
+    "frontend/src/app/register/page.tsx": {
+      "owner": "agent-auth-flow",
+      "status": "active",
+      "reason": "认证闭环最小前端补丁：收口 login/register/verify-email/forgot-password/reset-password，不改 auth 契约"
+    },
+    "frontend/src/app/login/login.module.css": {
+      "owner": "agent-auth-flow",
+      "status": "active",
+      "reason": "认证闭环最小前端补丁：复用现有认证样式承载新增状态与页面"
+    },
+    "frontend/src/app/verify-email/page.tsx": {
+      "owner": "agent-auth-flow",
+      "status": "active",
+      "reason": "认证闭环最小前端补丁：新增邮箱验证页"
+    },
+    "frontend/src/app/forgot-password/page.tsx": {
+      "owner": "agent-auth-flow",
+      "status": "active",
+      "reason": "认证闭环最小前端补丁：新增忘记密码页"
+    },
+    "frontend/src/app/reset-password/page.tsx": {
+      "owner": "agent-auth-flow",
+      "status": "active",
+      "reason": "认证闭环最小前端补丁：新增重置密码页"
+    },
+    "frontend/src/components/AuthShell/AuthShell.tsx": {
+      "owner": "agent-auth-flow",
+      "status": "active",
+      "reason": "认证页共用容器需要最小扩展以承载闭环提示与导航"
+    },
+    "specs/002-content-gen-mvp1/quickstart.md": {
+      "owner": "agent-auth-flow",
+      "status": "active",
+      "reason": "补齐注册验证与忘记密码闭环的最小验收说明"
+    }
+  }
+}

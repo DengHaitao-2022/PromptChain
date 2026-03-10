@@ -1,5 +1,11 @@
 # Realtime Event Contract
 
+## 0. Current Baseline (`dev@df88a42`)
+
+- `backend/graph/executor.py` 已在节点执行、Gate 等待、手动 pause/resume、completed/failed 上调用 `emit_*`。
+- `backend/routes/websocket_routes.py` 已承担 transport 层广播；REST 轮询与 trace timeline 仍是状态对账权威。
+- 当前剩余漂移是 fact-check Gate 的事件命名：执行路径广播值仍是 `fact_check_approval`，而前端共享静态类型与本文档目标值仍以 `fact_check` 为准。
+
 ## 1. Channels
 
 | Channel | Purpose |
@@ -31,11 +37,11 @@
 
 | Event Type | Purpose | Required Fields | Contract State |
 |---|---|---|---|
-| `workflow_paused` | 工作流被用户主动暂停 | `workflow_run_id`, `data.reason?`, `data.paused_at?`, `data.current_node?` | Shipped in transport helper |
-| `workflow_completed` | 工作流完成 | `workflow_run_id`, `data` | Shipped in transport helper |
-| `workflow_failed` | 工作流失败 | `workflow_run_id`, `data` | Shipped in transport helper |
-| `workflow_gate_waiting` | 进入 Gate 等待 | `workflow_run_id`, `data.gate_type`, `data.questions`, `data.current_node?`, `data.opened_at?` | Canonical event, execution-path emitters pending |
-| `workflow_resumed` | 从手动暂停恢复 | `workflow_run_id`, `data.resumed_at?`, `data.current_node?` | Canonical event, execution-path emitters pending |
+| `workflow_paused` | 工作流被用户主动暂停 | `workflow_run_id`, `data.reason?`, `data.paused_at?`, `data.current_node?` | Shipped in dev |
+| `workflow_completed` | 工作流完成 | `workflow_run_id`, `data` | Shipped in dev |
+| `workflow_failed` | 工作流失败 | `workflow_run_id`, `data` | Shipped in dev |
+| `workflow_gate_waiting` | 进入 Gate 等待 | `workflow_run_id`, `data.gate_type`, `data.questions`, `data.current_node?`, `data.opened_at?` | Shipped in dev; fact-check gate naming still needs final normalization |
+| `workflow_resumed` | 从手动暂停恢复 | `workflow_run_id`, `data.resumed_at?`, `data.current_node?` | Shipped in dev |
 
 `workflow_gate_waiting.data.gate_type` allowed values:
 
@@ -69,5 +75,6 @@
 
 ## 6. Migration Notes
 
-- 当前仓库已经有 WebSocket 路由和 `emit_*` 工具；`workflow_gate_waiting` 与 `workflow_resumed` 的执行路径 emit 仍待 `backend/graph/content_generation_graph.py` / `backend/routes/websocket_routes.py` 完整接线。
-- 在这一集成完成前，前端仍需保留轮询或手动刷新作为兜底。
+- 当前仓库已经有 WebSocket 路由和 `emit_*` 工具，节点开始/完成/失败、Gate 等待、pause/resume、completed/failed 的执行路径 emit 已接线到 `backend/graph/executor.py`。
+- 当前剩余工作不是“是否发事件”，而是“是否把 event payload 命名彻底收口到共享契约”，尤其是 fact-check Gate 的 `gate_type`。
+- 前端仍需保留轮询或手动刷新作为兜底；`GET /api/workflow/{workflow_run_id}` 与 `GET /api/trace/{workflow_run_id}` 继续是权威对账入口。
