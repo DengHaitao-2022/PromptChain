@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
 import styles from '../settings.module.css';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
@@ -43,21 +42,14 @@ const actionLabels: Record<string, string> = {
 };
 
 export default function AuditPage() {
-    const { hasPermission } = useAuth();
     const [logs, setLogs] = useState<AuditLog[]>([]);
     const [loading, setLoading] = useState(true);
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
-    const canReadAuditLogs = hasPermission('audit_log', 'read');
 
     useEffect(() => {
-        if (!canReadAuditLogs) {
-            setLoading(false);
-            return;
-        }
-
-        void fetchLogs();
-    }, [page, canReadAuditLogs]);
+        fetchLogs();
+    }, [page]);
 
     async function fetchLogs() {
         try {
@@ -75,24 +67,6 @@ export default function AuditPage() {
         } finally {
             setLoading(false);
         }
-    }
-
-    if (!canReadAuditLogs) {
-        return (
-            <div className={styles.container}>
-                <h1 className={styles.title}>审计日志</h1>
-                <p className={styles.subtitle}>暂无访问权限</p>
-                <div className={styles.empty}>
-                    <p>您当前的账号角色无法查看此页面配置。</p>
-                    <p style={{ fontSize: 14, marginTop: 8 }}>
-                        如需访问，请联系工作空间管理员为您分配权限。
-                    </p>
-                    <a href="/console" className={styles.button} style={{ marginTop: 16, display: 'inline-flex' }}>
-                        返回控制台首页
-                    </a>
-                </div>
-            </div>
-        );
     }
 
     return (

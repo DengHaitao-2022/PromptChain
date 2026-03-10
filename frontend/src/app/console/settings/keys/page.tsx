@@ -33,32 +33,24 @@ export default function KeysPage() {
     const [secrets, setSecrets] = useState<Secret[]>([]);
     const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
     const [loading, setLoading] = useState(true);
-    const canReadSecrets = hasPermission('secret', 'read');
-    const canReadApiKeys = hasPermission('api_key', 'read');
-    const canAccessPage = canReadSecrets || canReadApiKeys;
 
     useEffect(() => {
-        if (!canAccessPage) {
-            setLoading(false);
-            return;
-        }
-
-        void fetchData();
-    }, [canAccessPage]);
+        fetchData();
+    }, []);
 
     async function fetchData() {
         try {
             const [secretsRes, keysRes] = await Promise.all([
-                canReadSecrets ? fetch(`${API_BASE}/admin/secrets`, { credentials: 'include' }) : Promise.resolve(null),
-                canReadApiKeys ? fetch(`${API_BASE}/admin/api-keys`, { credentials: 'include' }) : Promise.resolve(null),
+                fetch(`${API_BASE}/admin/secrets`, { credentials: 'include' }),
+                fetch(`${API_BASE}/admin/api-keys`, { credentials: 'include' }),
             ]);
 
-            if (canReadSecrets && secretsRes?.ok) {
+            if (secretsRes.ok) {
                 const data = await secretsRes.json();
                 setSecrets(data.secrets || []);
             }
 
-            if (canReadApiKeys && keysRes?.ok) {
+            if (keysRes.ok) {
                 const data = await keysRes.json();
                 setApiKeys(data.api_keys || []);
             }
@@ -67,24 +59,6 @@ export default function KeysPage() {
         } finally {
             setLoading(false);
         }
-    }
-
-    if (!canAccessPage) {
-        return (
-            <div className={styles.container}>
-                <h1 className={styles.title}>密钥管理</h1>
-                <p className={styles.subtitle}>暂无访问权限</p>
-                <div className={styles.empty}>
-                    <p>您当前的账号角色无法查看或修改此页面配置。</p>
-                    <p style={{ fontSize: 14, marginTop: 8 }}>
-                        如需访问，请联系工作空间管理员为您分配权限。
-                    </p>
-                    <a href="/console" className={styles.button} style={{ marginTop: 16, display: 'inline-flex' }}>
-                        返回控制台首页
-                    </a>
-                </div>
-            </div>
-        );
     }
 
     return (

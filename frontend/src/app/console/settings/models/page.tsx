@@ -32,16 +32,10 @@ export default function ModelsPage() {
     const { hasPermission } = useAuth();
     const [providers, setProviders] = useState<ModelProvider[]>([]);
     const [loading, setLoading] = useState(true);
-    const canReadProviders = hasPermission('model_provider', 'read');
 
     useEffect(() => {
-        if (!canReadProviders) {
-            setLoading(false);
-            return;
-        }
-
-        void fetchProviders();
-    }, [canReadProviders]);
+        fetchProviders();
+    }, []);
 
     async function fetchProviders() {
         try {
@@ -57,24 +51,6 @@ export default function ModelsPage() {
         } finally {
             setLoading(false);
         }
-    }
-
-    if (!canReadProviders) {
-        return (
-            <div className={styles.container}>
-                <h1 className={styles.title}>模型配置</h1>
-                <p className={styles.subtitle}>暂无访问权限</p>
-                <div className={styles.empty}>
-                    <p>您当前的账号角色无法查看或修改此页面配置。</p>
-                    <p style={{ fontSize: 14, marginTop: 8 }}>
-                        如需访问，请联系工作空间管理员为您分配权限。
-                    </p>
-                    <a href="/console" className={styles.button} style={{ marginTop: 16, display: 'inline-flex' }}>
-                        返回控制台首页
-                    </a>
-                </div>
-            </div>
-        );
     }
 
     return (

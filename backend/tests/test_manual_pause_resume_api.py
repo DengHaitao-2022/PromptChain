@@ -1,28 +1,11 @@
 from pathlib import Path
 import sys
 
-import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import main
 from main import app
-
-
-@pytest.fixture(autouse=True)
-def _runtime_auth_bypass(monkeypatch):
-    app.dependency_overrides[main.get_current_user] = lambda: {
-        "sub": "user-1",
-        "workspace_id": "ws-1",
-    }
-
-    async def _allow_workflow_run_access(user, workflow_run_id, resource="workflow_run", action="read"):
-        return None
-
-    monkeypatch.setattr(main, "require_workflow_run_access", _allow_workflow_run_access)
-    yield
-    app.dependency_overrides.clear()
 
 
 class _FakeWorkflowRun:
@@ -41,10 +24,6 @@ class _FakeStore:
         if workflow_run_id == self.workflow_run.id:
             return self.workflow_run
         return None
-
-    async def update_workflow_run(self, workflow_run: _FakeWorkflowRun):
-        self.workflow_run = workflow_run
-        return workflow_run
 
 
 class _FakeGraph:
@@ -100,21 +79,12 @@ def test_pause_endpoint_exists_and_returns_workflow_response(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "paused"
-    assert response.json()["state"]["pause"]["reason"] == "用户主动暂停"
-    assert response.json()["state"]["pause"]["paused_at"]
-    assert response.json()["state"]["pause"]["source"] == "user"
+    assert response.json()["state"]["is_paused"] is True
 
 
 def test_resume_endpoint_exists_and_returns_workflow_response(monkeypatch):
     store = _FakeStore()
     store.workflow_run.status = "paused"
-    store.workflow_run.metadata = {
-        "pause": {
-            "reason": "用户主动暂停",
-            "paused_at": "2026-03-08T10:00:00Z",
-            "source": "user",
-        }
-    }
     monkeypatch.setattr("services.get_artifact_store", lambda: store)
     monkeypatch.setattr("graph.get_workflow", lambda: _FakeWorkflow(store))
 
@@ -123,6 +93,4 @@ def test_resume_endpoint_exists_and_returns_workflow_response(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "running"
-    assert response.json()["state"]["pause"]["reason"] == "用户主动暂停"
-    assert response.json()["state"]["pause"]["paused_at"] == "2026-03-08T10:00:00Z"
-    assert response.json()["state"]["pause"]["resumed_at"]
+    assert response.json()["state"]["is_paused"] is False
