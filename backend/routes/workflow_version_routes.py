@@ -1,147 +1,92 @@
 """
 工作流版本管理 API
 
-提供工作流版本历史、版本对比和版本回滚功能，使用统一Result响应格式
+提供版本历史、版本对比和版本恢复接口。
 """
-from typing import List, Optional
-from datetime import datetime
-import uuid
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
-from models.workflow_orm import WorkflowDefinitionORM, WorkflowVersionORM
+from db.postgres_store import get_postgres_store
 from models.result import Result
 from routes.auth_routes import get_current_user
-from db.postgres_store import get_session
+from services.permission_service import PermissionService
+from services.workflow_definition_service import WorkflowDefinitionService
 
 router = APIRouter(prefix="/workflows", tags=["workflow-version"])
 
 
-# ==================== 响应数据模型 ====================
+class RestoreVersionRequest(BaseModel):
+    """恢复版本请求。"""
 
-class VersionInfo(BaseModel):
-    """版本信息"""
-    id: str
-    version: int
-    change_log: Optional[str] = ""
-    created_by: Optional[str] = None
-    created_at: Optional[datetime] = None
+    change_log: str = Field(default="", max_length=500)
 
 
-class VersionDiff(BaseModel):
-    """版本差异"""
-    version_a: int
-    version_b: int
-    nodes_added: List[str]
-    nodes_removed: List[str]
-    nodes_modified: List[str]
-    edges_added: List[str]
-    edges_removed: List[str]
+def _get_user_id(user: dict[str, Any]) -> str:
+    user_id = user.get("sub") or user.get("id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未识别用户身份")
+    return user_id
 
 
-# ==================== 辅助函数 ====================
-
-async def get_workspace_from_request(request: Request, user: dict) -> str:
-    """从请求获取工作空间ID"""
-    workspace_id = request.state.workspace_id if hasattr(request.state, 'workspace_id') else None
+async def _get_workspace_from_request(request: Request, user: dict[str, Any]) -> str:
+    workspace_id = request.state.workspace_id if hasattr(request.state, "workspace_id") else None
     if not workspace_id:
         workspace_id = user.get("default_workspace_id") or user.get("workspace_id")
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="未指定工作空间")
     return workspace_id
 
 
-# ==================== API 路由 ====================
+async def _require_workflow_update(
+    request: Request,
+    session,
+) -> tuple[str, str]:
+    user = await get_current_user(request)
+    workspace_id = await _get_workspace_from_request(request, user)
+    user_id = _get_user_id(user)
+
+    permission_service = PermissionService(session)
+    await permission_service.require_permission(
+        user_id=user_id,
+        workspace_id=workspace_id,
+        resource="workflow",
+        action="update",
+    )
+    return user_id, workspace_id
+
 
 @router.get("/{workflow_id}/versions")
 async def list_versions(
     request: Request,
     workflow_id: str,
 ):
-    """
-    获取工作流的版本历史
-    """
-    user = await get_current_user(request)
-    workspace_id = await get_workspace_from_request(request, user)
-    
-    if not workspace_id:
-        return Result.bad_request(message="未指定工作空间")
-    
-    session = await get_session()
-    
-    # 获取当前工作流
-    result = await session.execute(
-        select(WorkflowDefinitionORM).where(
-            WorkflowDefinitionORM.id == workflow_id,
-            WorkflowDefinitionORM.workspace_id == workspace_id,
-            WorkflowDefinitionORM.is_deleted == 0
-        )
-    )
-    workflow = result.scalar_one_or_none()
-    
-    if not workflow:
-        return Result.not_found(message="工作流不存在")
-    
-    # 获取版本历史
-    versions_result = await session.execute(
-        select(WorkflowVersionORM)
-        .where(WorkflowVersionORM.workflow_id == workflow_id)
-        .order_by(WorkflowVersionORM.version.desc())
-    )
-    versions = versions_result.scalars().all()
-    
-    return Result.success(data={
-        "workflow_id": workflow_id,
-        "current_version": workflow.version,
-        "versions": [
-            {
-                "id": v.id,
-                "version": v.version,
-                "change_log": v.change_log,
-                "created_by": v.created_by,
-                "created_at": v.created_at.isoformat() if v.created_at else None
+    """获取工作流的版本历史。"""
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        _, workspace_id = await _require_workflow_update(request, session)
+        service = WorkflowDefinitionService(session)
+        workflow, versions = await service.get_version_history(workflow_id, workspace_id)
+        if workflow is None:
+            return Result.not_found(message="工作流不存在")
+
+        return Result.success(
+            data={
+                "workflow_id": workflow_id,
+                "current_version": workflow.version,
+                "is_published": bool(workflow.is_published),
+                "published_version_id": workflow.published_version_id,
+                "published_at": workflow.published_at.isoformat() if workflow.published_at else None,
+                "versions": [
+                    service.version_to_dict(
+                        version,
+                        published_version_id=workflow.published_version_id,
+                    )
+                    for version in versions
+                ],
             }
-            for v in versions
-        ]
-    })
-
-
-@router.get("/{workflow_id}/versions/{version_id}")
-async def get_version(
-    request: Request,
-    workflow_id: str,
-    version_id: str,
-):
-    """
-    获取特定版本的工作流定义
-    """
-    user = await get_current_user(request)
-    
-    session = await get_session()
-    
-    result = await session.execute(
-        select(WorkflowVersionORM).where(
-            WorkflowVersionORM.id == version_id,
-            WorkflowVersionORM.workflow_id == workflow_id
         )
-    )
-    version = result.scalar_one_or_none()
-    
-    if not version:
-        return Result.not_found(message="版本不存在")
-    
-    return Result.success(data={
-        "id": version.id,
-        "workflow_id": version.workflow_id,
-        "version": version.version,
-        "nodes": version.nodes,
-        "edges": version.edges,
-        "change_log": version.change_log,
-        "created_by": version.created_by,
-        "created_at": version.created_at.isoformat() if version.created_at else None
-    })
 
 
 @router.get("/{workflow_id}/versions/compare")
@@ -151,86 +96,45 @@ async def compare_versions(
     version_a: int,
     version_b: int,
 ):
-    """
-    对比两个版本的差异
-    """
-    user = await get_current_user(request)
-    
-    session = await get_session()
-    
-    # 获取两个版本
-    result_a = await session.execute(
-        select(WorkflowVersionORM).where(
-            WorkflowVersionORM.workflow_id == workflow_id,
-            WorkflowVersionORM.version == version_a
-        )
-    )
-    version_a_data = result_a.scalar_one_or_none()
-    
-    result_b = await session.execute(
-        select(WorkflowVersionORM).where(
-            WorkflowVersionORM.workflow_id == workflow_id,
-            WorkflowVersionORM.version == version_b
-        )
-    )
-    version_b_data = result_b.scalar_one_or_none()
-    
-    # 如果版本B是当前版本，从工作流定义获取
-    if not version_b_data:
-        workflow_result = await session.execute(
-            select(WorkflowDefinitionORM).where(
-                WorkflowDefinitionORM.id == workflow_id
+    """对比两个版本的差异。"""
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        _, workspace_id = await _require_workflow_update(request, session)
+        service = WorkflowDefinitionService(session)
+        workflow = await service.get_by_id(workflow_id=workflow_id, workspace_id=workspace_id)
+        if workflow is None:
+            return Result.not_found(message="工作流不存在")
+
+        diff = await service.compare_versions(workflow_id, workspace_id, version_a, version_b)
+        if diff is None:
+            return Result.not_found(message="待比较的版本不存在")
+
+        return Result.success(data=diff)
+
+
+@router.get("/{workflow_id}/versions/{version_id}")
+async def get_version(
+    request: Request,
+    workflow_id: str,
+    version_id: str,
+):
+    """获取特定版本的工作流快照。"""
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        _, workspace_id = await _require_workflow_update(request, session)
+        service = WorkflowDefinitionService(session)
+        workflow, version = await service.get_version_by_id(workflow_id, workspace_id, version_id)
+        if workflow is None:
+            return Result.not_found(message="工作流不存在")
+        if version is None:
+            return Result.not_found(message="版本不存在")
+
+        return Result.success(
+            data=service.version_to_dict(
+                version,
+                published_version_id=workflow.published_version_id,
             )
         )
-        workflow = workflow_result.scalar_one_or_none()
-        if workflow and workflow.version == version_b:
-            version_b_nodes = workflow.nodes or []
-            version_b_edges = workflow.edges or []
-        else:
-            return Result.not_found(message=f"版本 {version_b} 不存在")
-    else:
-        version_b_nodes = version_b_data.nodes or []
-        version_b_edges = version_b_data.edges or []
-    
-    if not version_a_data:
-        return Result.not_found(message=f"版本 {version_a} 不存在")
-    
-    version_a_nodes = version_a_data.nodes or []
-    version_a_edges = version_a_data.edges or []
-    
-    # 计算节点差异
-    nodes_a_ids = {n.get('id') for n in version_a_nodes}
-    nodes_b_ids = {n.get('id') for n in version_b_nodes}
-    
-    nodes_added = list(nodes_b_ids - nodes_a_ids)
-    nodes_removed = list(nodes_a_ids - nodes_b_ids)
-    
-    # 检查修改的节点
-    nodes_modified = []
-    common_nodes = nodes_a_ids & nodes_b_ids
-    nodes_a_map = {n.get('id'): n for n in version_a_nodes}
-    nodes_b_map = {n.get('id'): n for n in version_b_nodes}
-    
-    for node_id in common_nodes:
-        if nodes_a_map.get(node_id) != nodes_b_map.get(node_id):
-            nodes_modified.append(node_id)
-    
-    # 计算边差异
-    edges_a_ids = {e.get('id') for e in version_a_edges}
-    edges_b_ids = {e.get('id') for e in version_b_edges}
-    
-    edges_added = list(edges_b_ids - edges_a_ids)
-    edges_removed = list(edges_a_ids - edges_b_ids)
-    
-    return Result.success(data={
-        "version_a": version_a,
-        "version_b": version_b,
-        "nodes_added": nodes_added,
-        "nodes_removed": nodes_removed,
-        "nodes_modified": nodes_modified,
-        "edges_added": edges_added,
-        "edges_removed": edges_removed
-    })
 
 
 @router.post("/{workflow_id}/versions/{version_id}/restore")
@@ -238,67 +142,29 @@ async def restore_version(
     request: Request,
     workflow_id: str,
     version_id: str,
+    body: RestoreVersionRequest,
 ):
-    """
-    回滚到指定版本
-    
-    创建新版本，内容为指定历史版本的内容
-    """
-    user = await get_current_user(request)
-    workspace_id = await get_workspace_from_request(request, user)
-    
-    session = await get_session()
-    
-    # 获取要恢复的版本
-    version_result = await session.execute(
-        select(WorkflowVersionORM).where(
-            WorkflowVersionORM.id == version_id,
-            WorkflowVersionORM.workflow_id == workflow_id
+    """恢复指定版本到新的草稿。"""
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        user_id, workspace_id = await _require_workflow_update(request, session)
+        service = WorkflowDefinitionService(session)
+        workflow, version = await service.restore(
+            workflow_id=workflow_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            version_id=version_id,
+            change_log=body.change_log,
         )
-    )
-    version = version_result.scalar_one_or_none()
-    
-    if not version:
-        return Result.not_found(message="版本不存在")
-    
-    # 获取当前工作流
-    workflow_result = await session.execute(
-        select(WorkflowDefinitionORM).where(
-            WorkflowDefinitionORM.id == workflow_id,
-            WorkflowDefinitionORM.workspace_id == workspace_id,
-            WorkflowDefinitionORM.is_deleted == 0
+        if workflow is None or version is None:
+            return Result.not_found(message="工作流或版本不存在")
+
+        return Result.success(
+            data={
+                "workflow": workflow.model_dump(),
+                "restored_from_version_id": version.id,
+                "restored_from_version": version.version,
+                "restore_source_snapshot_type": version.snapshot_type,
+            },
+            message=f"已恢复版本 v{version.version} 到新草稿",
         )
-    )
-    workflow = workflow_result.scalar_one_or_none()
-    
-    if not workflow:
-        return Result.not_found(message="工作流不存在")
-    
-    # 保存当前版本到历史
-    current_version = WorkflowVersionORM(
-        id=str(uuid.uuid4()),
-        workflow_id=workflow.id,
-        version=workflow.version,
-        nodes=workflow.nodes,
-        edges=workflow.edges,
-        change_log=f"回滚前的版本 (v{workflow.version})",
-        created_by=user.get("sub") or user.get("id"),
-    )
-    session.add(current_version)
-    
-    # 恢复到历史版本
-    workflow.nodes = version.nodes
-    workflow.edges = version.edges
-    workflow.version += 1
-    workflow.updated_at = datetime.utcnow()
-    
-    await session.commit()
-    
-    return Result.success(
-        data={
-            "workflow_id": workflow_id,
-            "new_version": workflow.version,
-            "restored_from_version": version.version
-        },
-        message=f"已回滚到版本 {version.version}"
-    )
