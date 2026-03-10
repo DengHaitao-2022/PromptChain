@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import type { Edge, Node } from '@xyflow/react';
 
 import WorkflowEditor from '@/components/WorkflowEditor';
+import { useAuth } from '@/contexts/AuthContext';
 import {
     useWorkflowApi,
     type ValidationResult,
@@ -26,8 +27,13 @@ export default function WorkflowEditPage() {
         validateWorkflow,
         publishWorkflow,
     } = useWorkflowApi();
+    const { isAuthenticated, isLoading, hasPermission } = useAuth();
 
     const loadedIdRef = useRef<string | null>(null);
+
+    const canCreate = hasPermission('workflow', 'create');
+    const canUpdate = hasPermission('workflow', 'update');
+    const canAccessPage = draftId ? canUpdate : canCreate;
 
     const [workflowId, setWorkflowId] = useState<string | undefined>(draftId ?? undefined);
     const [name, setName] = useState('');
@@ -64,6 +70,10 @@ export default function WorkflowEditPage() {
     }, [applyWorkflowMeta]);
 
     useEffect(() => {
+        if (isLoading || !isAuthenticated || !canAccessPage) {
+            return;
+        }
+
         let cancelled = false;
 
         async function loadWorkflow(currentId: string) {
@@ -119,7 +129,7 @@ export default function WorkflowEditPage() {
         return () => {
             cancelled = true;
         };
-    }, [applyWorkflowAll, draftId, getWorkflowDefinition]);
+    }, [applyWorkflowAll, isLoading, draftId, getWorkflowDefinition, canAccessPage, isAuthenticated]);
 
     const ensureWorkflowName = useCallback(() => {
         if (name.trim()) {
@@ -259,6 +269,60 @@ export default function WorkflowEditPage() {
         () => (workflowId ? '编辑工作流' : '新建工作流'),
         [workflowId],
     );
+
+    if (isLoading) {
+        return (
+            <main className={styles.page}>
+                <div className={styles.loadingCard}>正在加载认证信息...</div>
+            </main>
+        );
+    }
+
+    if (!isAuthenticated) {
+        return (
+            <main className={styles.page}>
+                <div className={styles.pageHeader}>
+                    <div>
+                        <Link href="/console/workflows" className={styles.backLink}>
+                            返回工作流列表
+                        </Link>
+                        <h1 className={styles.title}>{headerTitle}</h1>
+                    </div>
+                    <div className={styles.summaryCard}>
+                        <span className={styles.summaryLabel}>认证状态</span>
+                        <strong>未登录</strong>
+                    </div>
+                </div>
+                <div className={styles.errorBanner}>
+                    请先登录后再访问工作流编辑器。
+                </div>
+            </main>
+        );
+    }
+
+    if (!canAccessPage) {
+        return (
+            <main className={styles.page}>
+                <div className={styles.pageHeader}>
+                    <div>
+                        <Link href="/console/workflows" className={styles.backLink}>
+                            返回工作流列表
+                        </Link>
+                        <h1 className={styles.title}>{headerTitle}</h1>
+                    </div>
+                    <div className={styles.summaryCard}>
+                        <span className={styles.summaryLabel}>访问权限</span>
+                        <strong>无权限</strong>
+                    </div>
+                </div>
+                <div className={styles.errorBanner}>
+                    {draftId
+                        ? '您没有权限编辑此工作流。需要 workflow.update 权限。'
+                        : '您没有权限创建新工作流。需要 workflow.create 权限。'}
+                </div>
+            </main>
+        );
+    }
 
     if (pageLoading) {
         return (

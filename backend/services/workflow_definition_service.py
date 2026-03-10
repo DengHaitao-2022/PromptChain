@@ -125,7 +125,7 @@ class WorkflowDefinitionService:
         published_snapshot = await self._get_published_snapshot(workflow) if workflow.is_published else None
         if use_published_snapshot:
             snapshot = published_snapshot
-            if published_only and not snapshot and not workflow.is_published:
+            if not snapshot:
                 return None
 
         return self._orm_to_model(
@@ -166,6 +166,8 @@ class WorkflowDefinitionService:
         for workflow in workflows:
             published_snapshot = await self._get_published_snapshot(workflow) if workflow.is_published else None
             snapshot = published_snapshot if use_published_snapshot else None
+            if use_published_snapshot and snapshot is None:
+                continue
             items.append(
                 self._orm_to_model(
                     workflow,
@@ -189,7 +191,7 @@ class WorkflowDefinitionService:
         if not workflow:
             return None
 
-        await self._ensure_snapshot(
+        current_snapshot = await self._ensure_snapshot(
             workflow,
             user_id=user_id,
             snapshot_type="draft",
@@ -200,6 +202,7 @@ class WorkflowDefinitionService:
                 "saved_version": workflow.version,
             },
         )
+        restore_provenance = self._extract_restore_provenance(current_snapshot.metadata_json)
 
         if data.name is not None:
             workflow.name = data.name
@@ -212,6 +215,26 @@ class WorkflowDefinitionService:
 
         workflow.version += 1
         workflow.updated_at = datetime.utcnow()
+
+        if restore_provenance:
+            # 恢复来源需要沿当前草稿版本继续传递，避免后续发布丢失 lineage。
+            restore_provenance["draft_version"] = workflow.version
+            await self._ensure_snapshot(
+                workflow,
+                user_id=user_id,
+                snapshot_type="draft",
+                change_log=data.change_log or f"保存草稿 v{workflow.version}",
+                metadata={
+                    "event_type": "save",
+                    "saved_by": user_id,
+                    "saved_version": workflow.version,
+                    "restore_provenance": restore_provenance,
+                    "restored_from_version_id": restore_provenance.get("restored_from_version_id"),
+                    "restored_from_version": restore_provenance.get("restored_from_version"),
+                    "restore_source_snapshot_type": restore_provenance.get("restore_source_snapshot_type"),
+                },
+                source_version_id=restore_provenance.get("restored_from_version_id"),
+            )
 
         await self.session.commit()
         await self.session.refresh(workflow)
@@ -242,18 +265,36 @@ class WorkflowDefinitionService:
         if not validation.is_valid:
             return definition, validation, None
 
+        current_snapshot = await self._get_version_snapshot(workflow.id, workflow.version)
+        restore_provenance = self._extract_restore_provenance(
+            current_snapshot.metadata_json if current_snapshot else None
+        )
         published_at = datetime.utcnow()
+        publish_metadata: dict[str, Any] = {
+            "event_type": "publish",
+            "published_at": published_at.isoformat(),
+            "published_by": user_id,
+            "published_version": workflow.version,
+        }
+        publish_source_version_id = None
+        if restore_provenance:
+            restore_provenance["draft_version"] = workflow.version
+            publish_source_version_id = restore_provenance.get("restored_from_version_id")
+            publish_metadata.update(
+                {
+                    "restore_provenance": restore_provenance,
+                    "restored_from_version_id": restore_provenance.get("restored_from_version_id"),
+                    "restored_from_version": restore_provenance.get("restored_from_version"),
+                    "restore_source_snapshot_type": restore_provenance.get("restore_source_snapshot_type"),
+                }
+            )
         snapshot = await self._ensure_snapshot(
             workflow,
             user_id=user_id,
             snapshot_type="publish",
             change_log=change_log or f"发布版本 v{workflow.version}",
-            metadata={
-                "event_type": "publish",
-                "published_at": published_at.isoformat(),
-                "published_by": user_id,
-                "published_version": workflow.version,
-            },
+            metadata=publish_metadata,
+            source_version_id=publish_source_version_id,
             force_refresh=True,
         )
 
@@ -392,8 +433,33 @@ class WorkflowDefinitionService:
         workflow.description = version.description or ""
         workflow.nodes = version.nodes or []
         workflow.edges = version.edges or []
+        restored_at = datetime.utcnow()
+        restore_provenance = {
+            "restored_from_version_id": version.id,
+            "restored_from_version": version.version,
+            "restore_source_snapshot_type": version.snapshot_type,
+            "restored_by": user_id,
+            "restored_at": restored_at.isoformat(),
+            "draft_version": workflow.version + 1,
+        }
         workflow.version += 1
         workflow.updated_at = datetime.utcnow()
+        await self._ensure_snapshot(
+            workflow,
+            user_id=user_id,
+            snapshot_type="draft",
+            change_log=change_log or f"恢复版本 v{version.version} 到草稿",
+            metadata={
+                "event_type": "restore",
+                "restore_provenance": restore_provenance,
+                "restored_from_version_id": version.id,
+                "restored_from_version": version.version,
+                "restore_source_snapshot_type": version.snapshot_type,
+                "restored_by": user_id,
+                "restored_at": restored_at.isoformat(),
+            },
+            source_version_id=version.id,
+        )
 
         await self.session.commit()
         await self.session.refresh(workflow)
@@ -652,7 +718,137 @@ class WorkflowDefinitionService:
             )
             .order_by(WorkflowVersionORM.version.desc(), WorkflowVersionORM.created_at.desc())
         )
+        snapshot = result.scalars().first()
+        if snapshot:
+            return snapshot
+
+        return await self._backfill_published_snapshot(workflow)
+
+    async def _get_version_snapshot(
+        self,
+        workflow_id: str,
+        version_number: int,
+    ) -> Optional[WorkflowVersionORM]:
+        result = await self.session.execute(
+            select(WorkflowVersionORM)
+            .where(
+                WorkflowVersionORM.workflow_id == workflow_id,
+                WorkflowVersionORM.version == version_number,
+            )
+            .order_by(WorkflowVersionORM.created_at.desc())
+        )
         return result.scalars().first()
+
+    def _extract_restore_provenance(
+        self,
+        metadata: Optional[dict[str, Any]],
+    ) -> Optional[dict[str, Any]]:
+        if not metadata:
+            return None
+
+        provenance = metadata.get("restore_provenance")
+        if not isinstance(provenance, dict):
+            return None
+        if not provenance.get("restored_from_version_id"):
+            return None
+        return dict(provenance)
+
+    async def _backfill_published_snapshot(
+        self,
+        workflow: WorkflowDefinitionORM,
+    ) -> Optional[WorkflowVersionORM]:
+        if not workflow.is_published:
+            return None
+
+        candidate = None
+        if workflow.published_at:
+            # 仅回填发布时间之前的快照，避免把后续草稿误判成已发布版本。
+            result = await self.session.execute(
+                select(WorkflowVersionORM)
+                .where(
+                    WorkflowVersionORM.workflow_id == workflow.id,
+                    WorkflowVersionORM.created_at <= workflow.published_at,
+                    WorkflowVersionORM.snapshot_type != "restore_backup",
+                )
+                .order_by(WorkflowVersionORM.version.desc(), WorkflowVersionORM.created_at.desc())
+            )
+            candidate = result.scalars().first()
+
+        backfilled_at = datetime.utcnow().isoformat()
+        if candidate:
+            metadata_payload = dict(candidate.metadata_json or {})
+            events = list(metadata_payload.get("events", []))
+            events.append(
+                {
+                    "type": "publish_backfill",
+                    "at": backfilled_at,
+                    "backfilled_from_snapshot_id": candidate.id,
+                    "backfilled_from_version": candidate.version,
+                }
+            )
+            metadata_payload.update(
+                {
+                    "backfill_reason": "legacy_published_snapshot_missing",
+                    "backfilled_from_snapshot_id": candidate.id,
+                    "backfilled_from_version": candidate.version,
+                    "events": events,
+                }
+            )
+            snapshot = WorkflowVersionORM(
+                id=str(uuid.uuid4()),
+                workflow_id=workflow.id,
+                version=candidate.version,
+                name=candidate.name or workflow.name,
+                description=candidate.description or "",
+                nodes=candidate.nodes or [],
+                edges=candidate.edges or [],
+                change_log=candidate.change_log or f"回填已发布版本 v{candidate.version}",
+                snapshot_type="publish",
+                source_version_id=candidate.id,
+                metadata_json=metadata_payload,
+                created_by=workflow.published_by or candidate.created_by or workflow.created_by,
+                created_at=workflow.published_at or datetime.utcnow(),
+            )
+            self.session.add(snapshot)
+            workflow.published_version_id = snapshot.id
+            await self.session.commit()
+            await self.session.refresh(workflow)
+            return snapshot
+
+        result = await self.session.execute(
+            select(WorkflowVersionORM.id).where(WorkflowVersionORM.workflow_id == workflow.id).limit(1)
+        )
+        if result.scalar_one_or_none() is not None:
+            return None
+
+        snapshot = WorkflowVersionORM(
+            id=str(uuid.uuid4()),
+            workflow_id=workflow.id,
+            version=workflow.version,
+            name=workflow.name,
+            description=workflow.description or "",
+            nodes=workflow.nodes or [],
+            edges=workflow.edges or [],
+            change_log=f"回填已发布版本 v{workflow.version}",
+            snapshot_type="publish",
+            metadata_json={
+                "backfill_reason": "legacy_published_without_versions",
+                "events": [
+                    {
+                        "type": "publish_backfill",
+                        "at": backfilled_at,
+                        "backfilled_from": "workflow_definition_row",
+                    }
+                ],
+            },
+            created_by=workflow.published_by or workflow.created_by,
+            created_at=workflow.published_at or datetime.utcnow(),
+        )
+        self.session.add(snapshot)
+        workflow.published_version_id = snapshot.id
+        await self.session.commit()
+        await self.session.refresh(workflow)
+        return snapshot
 
     async def _load_version_payload(
         self,
