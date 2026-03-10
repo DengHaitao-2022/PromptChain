@@ -1,42 +1,267 @@
-/* 工作流编辑器容器样式 */
-.editorContainer {
+.editorShell {
     display: flex;
-    height: 100vh;
-    width: 100%;
-    background: #f8fafc;
+    flex-direction: column;
+    gap: 16px;
+    min-height: calc(100vh - 140px);
 }
 
-/* 画布区域 */
-.canvas {
+.header {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 20px 24px;
+    border-radius: 24px;
+    background:
+        radial-gradient(circle at top left, rgba(14, 165, 233, 0.15), transparent 32%),
+        linear-gradient(135deg, #ffffff, #f4f8fc);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
+}
+
+.headerInfo {
     flex: 1;
-    height: 100%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
 }
 
-/* 面板样式 */
-.panel {
+.badges {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
-/* 保存按钮 */
-.saveButton {
-    padding: 8px 16px;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
+.statusBadge,
+.versionBadge,
+.metaBadge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.draftBadge {
+    background: rgba(234, 179, 8, 0.16);
+    color: #92400e;
+}
+
+.publishedBadge {
+    background: rgba(5, 150, 105, 0.16);
+    color: #047857;
+}
+
+.versionBadge {
+    background: rgba(37, 99, 235, 0.12);
+    color: #1d4ed8;
+}
+
+.metaBadge {
+    background: rgba(15, 23, 42, 0.08);
+    color: #334155;
+}
+
+.fieldGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.fieldLabel {
+    font-size: 13px;
+    font-weight: 700;
+    color: #334155;
+}
+
+.nameInput,
+.descriptionInput {
+    width: 100%;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.96);
+    color: #0f172a;
+    padding: 12px 14px;
+    font: inherit;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.nameInput:focus,
+.descriptionInput:focus {
+    outline: none;
+    border-color: rgba(37, 99, 235, 0.48);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
+.descriptionInput {
+    min-height: 88px;
+    resize: vertical;
+}
+
+.timestamp {
+    margin: 0;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.actionGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 180px;
+}
+
+.saveButton,
+.secondaryButton,
+.publishButton {
     border: none;
-    border-radius: 6px;
+    border-radius: 14px;
+    padding: 12px 16px;
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
-.saveButton:hover {
+.saveButton:hover,
+.secondaryButton:hover,
+.publishButton:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
 }
 
-.saveButton:active {
-    transform: translateY(0);
+.saveButton:disabled,
+.secondaryButton:disabled,
+.publishButton:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    transform: none;
+}
+
+.secondaryButton {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+
+.saveButton {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: #ffffff;
+    box-shadow: 0 12px 30px rgba(37, 99, 235, 0.22);
+}
+
+.publishButton {
+    background: linear-gradient(135deg, #059669, #047857);
+    color: #ffffff;
+    box-shadow: 0 12px 30px rgba(5, 150, 105, 0.2);
+}
+
+.feedbackPanel {
+    padding: 18px 20px;
+    border-radius: 22px;
+    background: #ffffff;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+}
+
+.statusMessage {
+    margin: 0 0 12px;
+    color: #0f766e;
+    font-weight: 700;
+}
+
+.errorMessage {
+    margin: 0 0 12px;
+    color: #b91c1c;
+    font-weight: 700;
+}
+
+.validationGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.validationColumn {
+    border-radius: 18px;
+    background: #f8fafc;
+    padding: 16px;
+}
+
+.validationColumn h3 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    color: #0f172a;
+}
+
+.validationList {
+    margin: 0;
+    padding-left: 18px;
+    color: #475569;
+}
+
+.validationList li + li {
+    margin-top: 8px;
+}
+
+.emptyValidation {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+}
+
+.editorContainer {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    border-radius: 28px;
+    overflow: hidden;
+    background: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.canvas {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+.canvasHint {
+    border-radius: 999px;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.92);
+    color: #334155;
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
+@media (max-width: 1080px) {
+    .header {
+        flex-direction: column;
+    }
+
+    .actionGroup {
+        width: 100%;
+        min-width: 0;
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .saveButton,
+    .secondaryButton,
+    .publishButton {
+        flex: 1 1 180px;
+    }
+}
+
+@media (max-width: 720px) {
+    .editorShell {
+        min-height: auto;
+    }
+
+    .validationGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .editorContainer {
+        flex-direction: column;
+    }
 }
