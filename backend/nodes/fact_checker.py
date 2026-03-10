@@ -9,18 +9,19 @@
 
 Source: Chain of Verification (CoVe) - Meta AI Research
 """
+import json
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 
 from models import (
-    FactClaim, 
-    VerificationResult, 
+    FactClaim,
+    VerificationResult,
     FactCheckReport,
-    ArtifactType, 
-    NodeRun, 
-    NodeRunStatus, 
+    ArtifactType,
+    NodeRun,
+    NodeRunStatus,
     LLMCallRecord,
     HumanDecision
 )
@@ -116,6 +117,91 @@ class VerificationEvaluation(BaseModel):
     suggested_correction: Optional[str] = None
 
 
+def _now_iso() -> str:
+    return f"{datetime.utcnow().isoformat()}Z"
+
+
+def _build_gate_questions(report: FactCheckReport) -> list[dict]:
+    questions: list[dict] = []
+    for result in report.results:
+        if result.risk_level != "high":
+            continue
+        questions.append(
+            {
+                "claim_id": result.claim_id,
+                "question": result.verification_question,
+                "risk_level": result.risk_level,
+                "suggested_correction": result.suggested_correction,
+            }
+        )
+    return questions
+
+
+async def _update_gate_metadata(store, workflow_run_id: str, gate_payload: dict | None) -> None:
+    workflow_run = await store.get_workflow_run(workflow_run_id)
+    if workflow_run is None:
+        return
+
+    metadata = dict(workflow_run.metadata or {})
+    if gate_payload is None:
+        metadata.pop("gate", None)
+    else:
+        metadata["gate"] = gate_payload
+
+    workflow_run.metadata = metadata
+    await store.update_workflow_run(workflow_run)
+
+
+def _apply_corrections_to_sections(
+    sections: dict[str, str],
+    corrections: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    updated_sections = dict(sections)
+    for correction in corrections.values():
+        section_id = correction["section_id"]
+        section_text = updated_sections.get(section_id)
+        if not section_text:
+            continue
+
+        original = correction["original"]
+        replacement = correction["replacement"]
+        if original in section_text:
+            updated_sections[section_id] = section_text.replace(original, replacement, 1)
+
+    return updated_sections
+
+
+def _build_final_content_payload(
+    state: dict,
+    updated_sections: dict[str, str],
+    corrections: dict[str, dict[str, str]],
+    fact_check_artifact_id: str,
+) -> dict:
+    compiled_sections: list[str] = []
+    section_order: list[str] = []
+    outline = state.get("outline")
+    if outline is not None:
+        for section in outline.get_flat_sections():
+            content = updated_sections.get(section.id)
+            if not content:
+                continue
+            section_order.append(section.id)
+            compiled_sections.append(f"## {section.title}\n{content}")
+    else:
+        for section_id, content in updated_sections.items():
+            section_order.append(section_id)
+            compiled_sections.append(f"## {section_id}\n{content}")
+
+    return {
+        "sections": updated_sections,
+        "section_order": section_order,
+        "compiled_content": "\n\n".join(compiled_sections),
+        "refinement_history": state.get("refinement_history", []),
+        "fact_corrections": corrections,
+        "fact_check_artifact_id": fact_check_artifact_id,
+    }
+
+
 # ==================== CoVe 四步验证链 ====================
 
 async def extract_fact_claims(content: str, section_id: str) -> List[FactClaim]:
@@ -125,13 +211,13 @@ async def extract_fact_claims(content: str, section_id: str) -> List[FactClaim]:
     llm = get_structured_llm(ClaimList)
     prompt = ChatPromptTemplate.from_template(EXTRACT_CLAIMS_PROMPT)
     chain = prompt | llm
-    
+
     result: ClaimList = await chain.ainvoke({"content": content})
-    
+
     # 为每个claim设置section_id
     for claim in result.claims:
         claim.section_id = section_id
-    
+
     return result.claims
 
 
@@ -142,27 +228,27 @@ async def generate_verification_question(claim: FactClaim) -> str:
     llm = get_llm(temperature=0.3)
     prompt = ChatPromptTemplate.from_template(GENERATE_VERIFICATION_QUESTIONS_PROMPT)
     chain = prompt | llm
-    
+
     result = await chain.ainvoke({
         "claim_text": claim.text,
         "claim_category": claim.category
     })
-    
+
     return result.content.strip()
 
 
 async def execute_verification(question: str) -> str:
     """
     步骤3：独立回答验证问题（Factored模式）
-    
+
     关键：不提供原始声明作为上下文，避免确认偏误
     """
     llm = get_llm(temperature=0.2)  # 低温度以获得更确定的答案
     prompt = ChatPromptTemplate.from_template(EXECUTE_VERIFICATION_PROMPT)
     chain = prompt | llm
-    
+
     result = await chain.ainvoke({"question": question})
-    
+
     return result.content.strip()
 
 
@@ -177,13 +263,13 @@ async def evaluate_claim_accuracy(
     llm = get_structured_llm(VerificationEvaluation)
     prompt = ChatPromptTemplate.from_template(EVALUATE_CLAIM_PROMPT)
     chain = prompt | llm
-    
+
     evaluation: VerificationEvaluation = await chain.ainvoke({
         "claim_text": claim.text,
         "verification_question": verification_question,
         "verification_answer": verification_answer
     })
-    
+
     return VerificationResult(
         claim_id=claim.id,
         is_verified=evaluation.is_verified,
@@ -200,11 +286,11 @@ async def evaluate_claim_accuracy(
 async def check_facts(state: dict) -> dict:
     """
     事实核查节点 - 完整的 CoVe 验证链
-    
+
     输入 state:
         - draft_sections: Dict[str, str] 或 final_content
         - workflow_run_id: str
-    
+
     输出更新:
         - fact_check_report: FactCheckReport
         - fact_check_artifact_id: str
@@ -214,30 +300,38 @@ async def check_facts(state: dict) -> dict:
     content_dict = state.get("final_content") or state.get("draft_sections", {})
     workflow_run_id = state["workflow_run_id"]
     store = get_artifact_store()
-    
+
     # 创建节点运行记录
     node_run = NodeRun(
         workflow_run_id=workflow_run_id,
         node_name="check_facts",
-        node_type="llm_call",
+        node_type="checker",
         started_at=datetime.utcnow(),
-        status=NodeRunStatus.RUNNING
+        status=NodeRunStatus.RUNNING,
+        input_artifact_ids=[
+            artifact_id
+            for artifact_id in [
+                state.get("final_content_artifact_id"),
+                *list(state.get("section_artifact_ids", {}).values()),
+            ]
+            if artifact_id
+        ],
     )
     await store.create_node_run(node_run)
-    
+
     try:
         all_claims: List[FactClaim] = []
         all_results: List[VerificationResult] = []
-        
+
         # 遍历每个章节提取并验证事实声明
         for section_id, content in content_dict.items():
             # 步骤1：提取事实声明
             start_time = datetime.utcnow()
             claims = await extract_fact_claims(content, section_id)
             end_time = datetime.utcnow()
-            
+
             all_claims.extend(claims)
-            
+
             # 记录LLM调用（动态获取模型配置）
             model_info = get_current_model_info()
             llm_call = LLMCallRecord(
@@ -248,71 +342,92 @@ async def check_facts(state: dict) -> dict:
                 response_preview=f"Found {len(claims)} claims"
             )
             node_run.llm_calls.append(llm_call)
-            
+
             # 对每个声明执行 CoVe 验证
             for claim in claims:
                 # 步骤2：生成验证问题
                 start_time = datetime.utcnow()
                 question = await generate_verification_question(claim)
-                
+
                 # 步骤3：独立执行验证
                 answer = await execute_verification(question)
-                
+
                 # 步骤4：评估准确性
                 result = await evaluate_claim_accuracy(claim, question, answer)
                 end_time = datetime.utcnow()
-                
+
                 all_results.append(result)
-                
+
                 # 记录LLM调用
+                model_info = get_current_model_info()
                 llm_call = LLMCallRecord(
-                    model="gpt-4o",
-                    provider="openai",
+                    model=model_info["model"],
+                    provider=model_info["provider"],
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Verify: {claim.text[:50]}...",
                     response_preview=f"Verified: {result.is_verified}, Risk: {result.risk_level}"
                 )
                 node_run.llm_calls.append(llm_call)
-        
+
         # 生成报告
         report = FactCheckReport(
             claims=all_claims,
             results=all_results
         )
         report.compute_stats()
-        
+
         # 创建 Artifact
         artifact = await store.create_artifact(
             type=ArtifactType.FACT_CHECK_REPORT,
             content=report.model_dump(),
             workflow_run_id=workflow_run_id,
-            node_run_id=node_run.id
+            node_run_id=node_run.id,
+            metadata={
+                "high_risk_count": report.high_risk_count,
+                "awaiting_approval": report.has_high_risk_items(),
+                "source_final_content_artifact_id": state.get("final_content_artifact_id"),
+            },
         )
         node_run.output_artifact_ids.append(artifact.id)
-        
+
         # 如果有高风险项，标记为需要用户确认
         if report.has_high_risk_items():
-            node_run.status = NodeRunStatus.INTERRUPTED
+            gate_opened_at = _now_iso()
+            await _update_gate_metadata(
+                store,
+                workflow_run_id,
+                {
+                    "gate_type": "fact_check",
+                    "trigger_reason": "fact_risk",
+                    "questions": _build_gate_questions(report),
+                    "answers": None,
+                    "opened_at": gate_opened_at,
+                    "handled_at": None,
+                    "resolution": None,
+                },
+            )
+            node_run.complete(NodeRunStatus.INTERRUPTED)
             await store.update_node_run(node_run)
-            
+
             return {
                 **state,
                 "fact_check_report": report,
                 "fact_check_artifact_id": artifact.id,
                 "awaiting_fact_check_approval": True
             }
-        
+
         # 无高风险项，直接完成
+        await _update_gate_metadata(store, workflow_run_id, None)
         node_run.complete(NodeRunStatus.COMPLETED)
         await store.update_node_run(node_run)
-        
+
         return {
             **state,
             "fact_check_report": report,
             "fact_check_artifact_id": artifact.id,
             "awaiting_fact_check_approval": False
         }
-        
+
     except Exception as e:
         node_run.complete(NodeRunStatus.FAILED, str(e))
         await store.update_node_run(node_run)
@@ -322,7 +437,7 @@ async def check_facts(state: dict) -> dict:
 async def approve_fact_check(state: dict) -> dict:
     """
     处理用户对事实核查结果的审批
-    
+
     输入 state:
         - fact_check_report: FactCheckReport
         - fact_check_decisions: Dict[claim_id, decision]
@@ -334,79 +449,155 @@ async def approve_fact_check(state: dict) -> dict:
     manual_corrections = state.get("manual_corrections", {})
     workflow_run_id = state["workflow_run_id"]
     store = get_artifact_store()
-    
+
     # 创建节点运行记录
     node_run = NodeRun(
         workflow_run_id=workflow_run_id,
         node_name="approve_fact_check",
-        node_type="user_input",
+        node_type="gate",
         started_at=datetime.utcnow(),
-        status=NodeRunStatus.RUNNING
+        status=NodeRunStatus.RUNNING,
+        input_artifact_ids=[
+            artifact_id
+            for artifact_id in [
+                state.get("fact_check_artifact_id"),
+                state.get("final_content_artifact_id"),
+            ]
+            if artifact_id
+        ],
     )
     await store.create_node_run(node_run)
-    
+
     try:
         # 应用用户决策
-        corrections_to_apply = {}
-        
+        corrections_to_apply: dict[str, dict[str, str]] = {}
+        handled_at = _now_iso()
+
         for claim_id, decision in decisions.items():
             # 找到对应的结果
             result = next((r for r in report.results if r.claim_id == claim_id), None)
             claim = next((c for c in report.claims if c.id == claim_id), None)
-            
+
             if not result or not claim:
                 continue
-            
+
             if decision == "confirm":
                 # 用户确认无误，标记为已验证
                 result.is_verified = True
                 result.risk_level = "low"
             elif decision == "use_suggestion" and result.suggested_correction:
                 # 采用系统建议的修正
-                corrections_to_apply[claim.section_id] = {
+                corrections_to_apply[claim_id] = {
+                    "claim_id": claim_id,
+                    "section_id": claim.section_id,
                     "original": claim.text,
-                    "replacement": result.suggested_correction
+                    "replacement": result.suggested_correction,
+                    "decision": decision,
                 }
             elif decision == "manual" and claim_id in manual_corrections:
                 # 使用用户手动提供的修正
-                corrections_to_apply[claim.section_id] = {
+                corrections_to_apply[claim_id] = {
+                    "claim_id": claim_id,
+                    "section_id": claim.section_id,
                     "original": claim.text,
-                    "replacement": manual_corrections[claim_id]
+                    "replacement": manual_corrections[claim_id],
+                    "decision": decision,
                 }
-        
+
         # 记录人工决策
         node_run.human_decision = HumanDecision(
             decision_type="modify" if corrections_to_apply else "approve",
-            user_input=str(decisions)
+            user_input=json.dumps(
+                {
+                    "decisions": decisions,
+                    "manual_corrections": manual_corrections,
+                },
+                ensure_ascii=False,
+            ),
+            modified_content=corrections_to_apply or None,
         )
-        
+
         # 更新报告
         report.compute_stats()
-        
+
+        updated_final_content = _apply_corrections_to_sections(
+            state.get("final_content") or state.get("draft_sections", {}),
+            corrections_to_apply,
+        )
+
         # 创建新版本 Artifact
-        artifact = await store.create_artifact(
+        report_artifact = await store.create_artifact(
             type=ArtifactType.FACT_CHECK_REPORT,
             content=report.model_dump(),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,
             parent_version_id=state.get("fact_check_artifact_id"),
             metadata={
+                "gate_type": "fact_check",
                 "user_decisions": decisions,
-                "corrections_applied": corrections_to_apply
-            }
+                "manual_corrections": manual_corrections,
+                "corrections_applied": corrections_to_apply,
+                "handled_at": handled_at,
+            },
         )
-        node_run.output_artifact_ids.append(artifact.id)
+        node_run.output_artifact_ids.append(report_artifact.id)
+
+        final_content_artifact = await store.create_artifact(
+            type=ArtifactType.FINAL_CONTENT,
+            content=_build_final_content_payload(
+                state,
+                updated_final_content,
+                corrections_to_apply,
+                report_artifact.id,
+            ),
+            workflow_run_id=workflow_run_id,
+            node_run_id=node_run.id,
+            parent_version_id=state.get("final_content_artifact_id"),
+            metadata={
+                "gate_type": "fact_check",
+                "resolution": "approved_with_changes" if corrections_to_apply else "approved",
+                "fact_check_artifact_id": report_artifact.id,
+            },
+        )
+        node_run.output_artifact_ids.append(final_content_artifact.id)
+
+        workflow_run = await store.get_workflow_run(workflow_run_id)
+        current_gate = {}
+        if workflow_run and isinstance(workflow_run.metadata, dict):
+            gate = workflow_run.metadata.get("gate")
+            if isinstance(gate, dict):
+                current_gate = dict(gate)
+
+        await _update_gate_metadata(
+            store,
+            workflow_run_id,
+            {
+                "gate_type": "fact_check",
+                "trigger_reason": current_gate.get("trigger_reason") or "fact_risk",
+                "questions": current_gate.get("questions") or _build_gate_questions(report),
+                "answers": {
+                    "decisions": decisions,
+                    "manual_corrections": manual_corrections,
+                },
+                "opened_at": current_gate.get("opened_at") or handled_at,
+                "handled_at": handled_at,
+                "resolution": "approved_with_changes" if corrections_to_apply else "approved",
+            },
+        )
+
         node_run.complete(NodeRunStatus.COMPLETED)
         await store.update_node_run(node_run)
-        
+
         return {
             **state,
             "fact_check_report": report,
-            "fact_check_artifact_id": artifact.id,
+            "fact_check_artifact_id": report_artifact.id,
             "awaiting_fact_check_approval": False,
-            "fact_corrections": corrections_to_apply
+            "fact_corrections": corrections_to_apply,
+            "final_content": updated_final_content,
+            "final_content_artifact_id": final_content_artifact.id,
         }
-        
+
     except Exception as e:
         node_run.complete(NodeRunStatus.FAILED, str(e))
         await store.update_node_run(node_run)
