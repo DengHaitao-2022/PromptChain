@@ -197,6 +197,25 @@ def _mark_result_resolved(result: VerificationResult) -> None:
     result.risk_level = "low"
 
 
+def _get_high_risk_claim_ids(report: FactCheckReport) -> list[str]:
+    return [
+        result.claim_id
+        for result in report.results
+        if result.risk_level == "high"
+    ]
+
+
+def _get_missing_gate_decisions(
+    report: FactCheckReport,
+    decisions: dict[str, str],
+) -> list[str]:
+    return [
+        claim_id
+        for claim_id in _get_high_risk_claim_ids(report)
+        if not decisions.get(claim_id)
+    ]
+
+
 def _build_final_content_payload(
     state: dict,
     updated_sections: dict[str, str],
@@ -495,6 +514,13 @@ async def approve_fact_check(state: dict) -> dict:
     await store.create_node_run(node_run)
 
     try:
+        missing_decisions = _get_missing_gate_decisions(report, decisions)
+        if missing_decisions:
+            raise ValueError(
+                "Fact-check approval incomplete: missing_decisions="
+                f"{','.join(missing_decisions)}"
+            )
+
         # 应用用户决策
         requested_corrections: dict[str, dict[str, str]] = {}
         failed_corrections: dict[str, dict[str, str]] = {}
