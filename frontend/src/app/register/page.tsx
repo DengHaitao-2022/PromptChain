@@ -150,9 +150,9 @@ export default function RegisterPage() {
       asideHeadline="从构思到自动化"
       asideBody="PromptChain 是专为开发者与团队设计的 AI 协作引擎。我们提供高性能的多智能体编排能力，让您的创意在数秒内转化为高效的工作流。"
       statusSlot={!registrationSuccess ? statusSlot : null}
-      footerPrompt={registrationSuccess ? '邮箱没收到？' : '已有账号？'}
-      footerLink={registrationSuccess ? '检查垃圾邮件或联系支持' : '立即登录'}
-      footerHref={registrationSuccess ? 'mailto:support@example.com' : '/login'}
+      footerPrompt={registrationSuccess ? '没收到邮件？请检查垃圾邮件或联系管理员' : '已有账号？'}
+      footerLink={registrationSuccess ? '' : '立即登录'}
+      footerHref={!registrationSuccess ? '/login' : undefined}
     >
       {registrationSuccess ? successView : formView}
     </AuthShell>

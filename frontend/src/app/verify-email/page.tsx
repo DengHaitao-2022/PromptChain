@@ -7,31 +7,97 @@ import { AuthShell } from '../../components/AuthShell/AuthShell';
 import { verifyEmail } from '../../lib/auth';
 import styles from '../login/login.module.css';
 
-// Define a more comprehensive status type
 type VerificationStatus = 'loading' | 'success' | 'error' | 'missing_token';
+
+// Module-level caches to survive React Strict Mode remounts
+const promiseCache: { [token: string]: Promise<void> } = {};
+const terminalStateCache: { [token: string]: VerificationStatus } = {};
+
+function getSessionStorageKey(token: string) {
+  return `verification_status_${token}`;
+}
 
 function VerifyEmailComponent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
-
-  // Initialize state based on token presence, avoiding sync setState in useEffect
-  const [status, setStatus] = useState<VerificationStatus>(
-    token ? 'loading' : 'missing_token'
-  );
+  const [status, setStatus] = useState<VerificationStatus>(() => {
+    if (!token) return 'missing_token';
+    // Check session storage first for refresh persistence
+    if (typeof window !== 'undefined' && sessionStorage.getItem(getSessionStorageKey(token)) === 'success') {
+      return 'success';
+    }
+    // Check module-level cache for remount persistence
+    return terminalStateCache[token] || 'loading';
+  });
 
   useEffect(() => {
-    // The effect's responsibility is now only to perform the async operation
-    if (token) {
-      verifyEmail(token)
-        .then(() => {
-          setStatus('success');
-        })
-        .catch(() => {
-          // API call failed, indicating an invalid or expired token
-          setStatus('error');
-        });
-    }
-    // No else block needed; the 'missing_token' case is handled by the initial state.
+    let isActive = true;
+
+    const performVerification = async () => {
+      if (!token) {
+        if (isActive) setStatus('missing_token');
+        return;
+      }
+
+      // Pre-flight checks. If any are true, we have a terminal state.
+      if (typeof window !== 'undefined' && sessionStorage.getItem(getSessionStorageKey(token)) === 'success') {
+        if (isActive) setStatus('success');
+        return;
+      }
+      if (terminalStateCache[token]) {
+        if (isActive) setStatus(terminalStateCache[token]);
+        return;
+      }
+
+      // Check for an in-flight promise from another render/component
+      if (promiseCache[token]) {
+        if (isActive) setStatus('loading');
+        try {
+          await promiseCache[token];
+          // After awaiting, the cache *should* be populated by the original caller.
+          if (isActive) setStatus(terminalStateCache[token] || 'success');
+        } catch {
+          // The promise rejected. The cache should be populated.
+          if (isActive) setStatus(terminalStateCache[token] || 'error');
+        }
+        return;
+      }
+
+      // This is the first component instance for this token.
+      // It's responsible for making the API call and populating the caches.
+      if (isActive) setStatus('loading');
+
+      const verificationPromise = verifyEmail(token);
+      promiseCache[token] = verificationPromise;
+
+      try {
+        await verificationPromise;
+        // On success, we are the authority. Set the caches.
+        terminalStateCache[token] = 'success';
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem(getSessionStorageKey(token), 'success');
+        }
+        if (isActive) setStatus('success');
+      } catch {
+        // On error, only set cache if a success state isn't already there from a race condition.
+        if (terminalStateCache[token] !== 'success') {
+          terminalStateCache[token] = 'error';
+        }
+        if (isActive) {
+          // Read from cache to respect the authoritative state.
+          setStatus(terminalStateCache[token]!);
+        }
+      } finally {
+        // The promise is settled, remove it from the in-flight cache.
+        delete promiseCache[token];
+      }
+    };
+
+    performVerification();
+
+    return () => {
+      isActive = false;
+    };
   }, [token]);
 
   const aside = {
@@ -73,9 +139,8 @@ function VerifyEmailComponent() {
       asideBody={aside.asideBody}
       footerPrompt={isErrorState ? '遇到问题？' : ''}
       footerLink={isErrorState ? '返回登录' : ''}
-      footerHref={isErrorState ? '/login' : ''}
+      footerHref={isErrorState ? '/login' : undefined}
     >
-      {/* AuthShell requires children. Provide a minimal placeholder. */}
       <div style={{ minHeight: '1px' }} />
     </AuthShell>
   );
