@@ -29,6 +29,9 @@ ignore = [
     "UP007", # 使用X|Y联合类型 (保持兼容性)
 ]
 
+# 允许中文注释/docstring中出现的全角符号，避免 RUF002 / RUF003 误报
+allowed-confusables = ["，", "（", "）"]
+
 # 每个文件可忽略的规则
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]  # 允许未使用的导入
@@ -37,5 +40,5 @@ ignore = [
 # 使用双引号
 quote-style = "double"
 
-# 缩进宽度
-indent-width = 4
+# 缩进风格
+indent-style = "space"

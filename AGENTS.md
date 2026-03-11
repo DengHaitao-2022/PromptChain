@@ -13,7 +13,16 @@ PromptChain 是一个以 `Prompt Chain + LangGraph` 为核心的 AI 内容生成
 ## 2. 一眼看懂架构
 
 ### 2.1 后端主链路（内容生成）
-工作流定义在 `backend/graph/content_generation_graph.py`：
+当前内容生成图已经拆分为以下 canonical 模块：
+
+- `backend/graph/state.py`：`GraphState`
+- `backend/graph/conditions.py`：条件路由函数
+- `backend/graph/builder.py`：图构建与 `finalize_output`
+- `backend/graph/executor.py`：`ContentGenerationWorkflow` 与 `get_workflow()`
+
+兼容入口 `backend/graph/content_generation_graph.py` 仍然存在，但只负责 re-export，不再是主修改落点。
+
+主链路仍为：
 
 `parse_intent -> (clarify?) -> generate_outline -> (HITL审批) -> generate_content -> self_refine -> check_facts -> (高风险HITL确认) -> finalize`
 
@@ -23,8 +32,6 @@ PromptChain 是一个以 `Prompt Chain + LangGraph` 为核心的 AI 内容生成
 - `backend/nodes/content_generator.py`
 - `backend/nodes/self_refiner.py`
 - `backend/nodes/fact_checker.py`
-
-核心状态模型：`GraphState`（同文件内 `TypedDict`）。
 
 ### 2.2 后端 API 入口
 应用入口：`backend/app.py`（应用工厂 + 路由注册）
@@ -38,15 +45,29 @@ PromptChain 是一个以 `Prompt Chain + LangGraph` 为核心的 AI 内容生成
 - 工作流版本：`/api/workflows/*/versions*`（`routes/workflow_version_routes.py`）
 - 实时推送：`/ws/*`（`routes/websocket_routes.py`）
 
-同时保留一组内容工作流接口（`main.py` 直接定义）：
-- `POST /api/workflow/start`
-- `POST /api/workflow/{id}/approve-outline`
-- `POST /api/workflow/{id}/clarify`
-- `GET /api/workflow/{id}`
-- `GET /api/trace/{id}`
-- `GET /api/trace/node/{node_run_id}`
-- `GET /api/workflow/{id}/rerun-options`
-- `POST /api/workflow/{id}/rerun`
+内容工作流接口当前已迁移到独立路由模块：
+- `backend/routes/workflow_routes.py`
+  - `POST /api/workflow/start`
+  - `POST /api/workflow/{id}/pause`
+  - `POST /api/workflow/{id}/resume`
+  - `POST /api/workflow/{id}/approve-outline`
+  - `POST /api/workflow/{id}/approve-fact-check`
+  - `POST /api/workflow/{id}/clarify`
+  - `GET /api/workflow/{id}`
+  - `GET /api/workflow/{id}/rerun-options`
+  - `POST /api/workflow/{id}/rerun`
+  - `GET /api/workflow/{id}/rerun-history`
+- `backend/routes/trace_routes.py`
+  - `GET /api/trace/{id}`
+  - `GET /api/trace/node/{node_run_id}`
+  - `GET /api/artifact/{artifact_id}`
+  - `GET /api/artifact/{artifact_id}/history`
+- `backend/routes/workflow_helpers.py`
+  - 共享请求/响应模型
+  - 状态规范化
+  - 运行态访问控制与 trace 补偿
+
+`backend/main.py` 当前仅保留 `uvicorn main:app` 兼容入口。
 
 ### 2.3 前端主链路
 - 首页启动工作流：`frontend/src/app/page.tsx`
@@ -70,14 +91,15 @@ API 客户端集中在：
 定义文件：`backend/models/artifact.py`
 
 ### 3.2 两套存储实现（非常关键）
-- 内存存储：`backend/services/artifact_store.py`
-- PostgreSQL 存储：`backend/db/postgres_store.py`
+- 内存回退实现：`backend/services/artifact_store.py` 中的 `ArtifactStore`
+- PostgreSQL 主实现：`backend/db/postgres_store.py`
 
-当前内容工作流链路（graph/nodes/trace/rerun）默认走**内存存储单例**；认证、权限、后台管理、工作流定义走 PostgreSQL。
+当前内容工作流链路默认走 **PostgreSQL-backed runtime store**。只有显式设置 `RUNTIME_STORE_BACKEND=memory` 时才回退到内存实现。
 
 这意味着：
-- 内容运行数据重启后会丢失
-- Dashboard 与内容工作流运行数据可能不一致
+- `dev@df88a42` 的默认基线已经具备运行态持久化
+- 内存 store 现在只是开发回退，不再是主线事实
+- 根工作区中未跟踪的 `backend/orm/` 目录不属于当前 canonical 主线结构
 
 ---
 
@@ -135,29 +157,26 @@ npm run dev
 
 ---
 
-## 6. 当前实现状态评估（已识别缺口）
+## 6. 当前实现状态评估（以 `dev@df88a42` 为准）
 
-1. 内容工作流与前端契约存在不一致
-- 前端 `workflowApi.getStatus()` 期望 `WorkflowResponse{workflow_run_id,status,state}`。
-- 后端 `GET /api/workflow/{id}` 当前返回 `WorkflowRun.model_dump()`，字段结构不一致。
+1. 运行态主链路已在主线
+- `WorkflowResponse`、pause/resume、clarify、outline approval、fact-check approval、rerun、rerun-history 都已在 `backend/routes/workflow_routes.py` 落地。
+- 运行态访问控制和 trace 归属校验已在 `backend/routes/workflow_helpers.py`、`backend/routes/trace_routes.py` 收口。
 
-2. 澄清字段不一致
-- 后端状态字段是 `clarification_questions`（且 priority 为 1-5 数值）。
-- 前端详情页判断 `state.uncertainties`，并按 `high/medium/low` 处理。
+2. 内容生成首页与详情页闭环已在主线
+- 首页 `frontend/src/app/page.tsx` 已支持已发布工作流与版本选择，并可直接启动任务。
+- 详情页 `frontend/src/app/workflow/[id]/page.tsx` 已接通 Gate、pause/resume、trace、意图卡、提纲、终稿与事实核查审批。
 
-3. 事实核查审批未打通
-- 前端 `FactCheckViewer` 回调仅 `console.log`。
-- 后端无对应 `approve_fact_check` HTTP 路由暴露（仅节点函数存在）。
+3. 工作流编辑/发布闭环已在主线
+- `backend/routes/workflow_definition_routes.py`、`backend/routes/workflow_version_routes.py` 与 `frontend/src/app/console/workflows/*` 已支持 CRUD、validate、publish、compare、restore 和已发布状态展示。
 
-4. Workflow Definition / Version 路由的 session 获取方式异常
-- `session = await get_session()` 使用了异步生成器样式函数，写法不标准，运行时风险高。
+4. RBAC 与成员管理已在主线
+- `viewer / editor / admin / owner` 权限矩阵、控制台布局守卫、成员管理页、工作空间级运行态归属保护均已并入 `dev`。
 
-5. 控制台多个页面仍是占位实现
-- `console/workflows`、`console/runs` 仍有 mock/空列表逻辑。
-- 编辑器保存按钮仍是 TODO。
-
-6. WebSocket 推送未接入节点执行
-- 有连接管理与 emit 工具函数，但主工作流执行未实际调用 emit。
+5. 当前残余缺口
+- `frontend/src/lib/api.ts` 仍未完全成为首页/运行态的唯一客户端入口；首页列表/版本/启动仍有直接 `fetch` 逻辑。
+- `frontend/src/app/console/runs/page.tsx` 仍是占位实现，US4 的总览页监控入口尚未收口。
+- 文案 audit 与错误路径 final polish 仍可继续，但不再属于“主链路缺失”。
 
 ---
 
@@ -176,6 +195,7 @@ npm run dev
 - API 访问默认 `credentials: include`（依赖 Cookie）
 - 页面元素的用户可见文本（如标题、按钮、导航、表单标签、占位提示、空状态、错误提示）默认尽量使用中文；仅在专有名词、协议字段、代码标识或必须保留英文的场景下使用英文。
 - 凡涉及 `frontend/` 下任何代码文件的新增、修改、重构、样式调整、交互实现、动画实现、页面实现、组件实现、hooks/lib 客户端实现，代码编写必须由 Gemini CLI 执行，并在 `gemini` 中使用 `/ui-ux-pro-max` 完成；这条规则同样适用于 `frontend/src/lib/api.ts`、`frontend/src/lib/auth.ts` 等前端契约与客户端代码。
+- Gemini CLI 的模型选择规则固定为：默认优先 `gemini-3.1-pro-preview`；若该模型因容量、网络或服务可用性不可用，则首推回退到 `gemini-2.5-pro`；只有当 `gemini-2.5-pro` 也不可用时，才允许继续回退到其他 Gemini 模型。每次回退都必须在共享日志或执行记录中显式说明，不得静默切换。
 - Codex 在前端任务中的职责仅限于统筹分工、定义接口约束、准备任务说明、检查 diff、做 CR、执行验收和控制合并 gate；除非用户明确推翻本规则，否则 Codex 不直接编写前端业务代码。
 - 凡涉及前端代码落地的开发任务，必须使用 `git worktree` 隔离工作区；优先进入对应已有的 `code/feat/*` 分支 worktree，如不存在则先新建 `code/feat/*` 分支与 worktree 后再开发。
 - 每个前端任务在申请评审前，必须在共享日志中记录对应 Gemini worktree、分支和执行说明；没有这条记录，不得进入 `spec-review`、`code-review` 或合并流程。
@@ -185,26 +205,30 @@ npm run dev
 - 不自动生成测试脚本
 - 不默认自动运行/编译
 
+### 7.4 当前协作事实源
+- 主线事实固定以当前 `dev` 分支 head 为准；本轮文档同步基线为 `df88a42`。
+- 多 agent 协作只认以下 canonical 文件：
+  - `specs/002-content-gen-mvp1/subagent-events.jsonl`
+  - `specs/002-content-gen-mvp1/subagent-locks.json`
+  - `specs/002-content-gen-mvp1/gemini-executions.jsonl`
+  - `specs/002-content-gen-mvp1/subagent-handoffs.jsonl`
+- `specs/002-content-gen-mvp1/subagent-tasks.md` 当前只保留“主线现状快照 + 下一轮派工入口”，不再复用旧 owner 表直接分派任务。
+- 根工作区中的 `.cunzhi-memory/*`、`backend/orm/` 等本地运行态/未跟踪内容不是主线事实源。
+
 ---
 
 ## 8. Agent 修改建议（执行顺序）
 
 当你要继续开发时，建议按以下顺序推进：
 
-1. 先统一 API 契约
-- 以 `frontend/src/lib/api.ts` 为目标契约，修正 `backend/main.py` 响应结构。
+1. 先补 US4 总览页与验收闭环
+- 优先完成 `frontend/src/app/console/runs/page.tsx` 真数据接线，以及 US3/US4 的 acceptance-gap audit。
 
-2. 再打通审批闭环
-- 增加事实核查审批接口并接入前端 `FactCheckViewer`。
+2. 再统一首页与共享运行态客户端
+- 以 `frontend/src/lib/api.ts` 为目标契约，收拢首页当前的直接 `fetch`，避免双轨客户端继续漂移。
 
-3. 统一状态字段语义
-- `clarification_questions` vs `uncertainties` 二选一并全链路一致。
-
-4. 决定内容链路持久化策略
-- 要么全量切 PostgreSQL Store；要么显式标注“仅内存开发模式”。
-
-5. 最后完善控制台页
-- 接真实列表 API，去掉 mock/TODO。
+3. 最后做 copy / error-path polish
+- 集中处理 `T045` / `T046` 这类中文文案与错误路径收口，而不是重复开发已经在主线的功能。
 
 ---
 
@@ -212,7 +236,8 @@ npm run dev
 
 - 应用入口：`backend/app.py`
 - 统一配置：`backend/core/config.py`
-- 工作流图：`backend/graph/content_generation_graph.py`
+- 工作流图入口：`backend/graph/executor.py`, `backend/graph/builder.py`, `backend/graph/state.py`, `backend/graph/conditions.py`
+- 兼容 graph shim：`backend/graph/content_generation_graph.py`
 - 节点实现：`backend/nodes/*.py`
 - 路由层：`backend/routes/*.py`
   - 内容工作流 API：`routes/workflow_routes.py`

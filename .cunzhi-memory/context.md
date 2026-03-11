@@ -20,3 +20,4 @@
 - PostgreSQL持久化存储（db/postgres_store.py）
 - 核心功能规划：1. 登录与权限/角色管理 2. Prompt Chain工作流可视化编排 3. 一键生成长文/脚本 4. 不确定点检测与人机门控 5. 任务监控与结果回放。技术栈：Spring Boot(权限管理)、Python/FastAPI(AI工作流)、Next.js前端。
 - PromptChain 当前仓库技术栈以代码和 AGENTS.md 为准：后端为 FastAPI + LangGraph + SQLAlchemy，前端为 Next.js App Router + React + TypeScript，基础设施为 PostgreSQL + Redis。若历史记忆中出现 Spring Boot 等描述，应视为过时信息。
+- 2026-03-10 已进行目录结构重构：backend 新增 app.py、core/config.py、orm/，graph 拆为 state.py、conditions.py、builder.py、executor.py；main.py 保留兼容入口。当前根工作区仍混有测试、前端和协调文件改动，因此目录重构应先被隔离成独立基线提交，再让活跃分支同步。

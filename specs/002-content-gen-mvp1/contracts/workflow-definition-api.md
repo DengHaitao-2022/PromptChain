@@ -1,5 +1,11 @@
 # Workflow Definition & Publication API Contract
 
+## 0. Current Baseline (`dev@df88a42`)
+
+- 工作流定义 CRUD、validate、compile、publish、versions、compare、restore 已全部在主线。
+- `GET /api/workflows` 与 `GET /api/workflows/{workflow_id}` 对 `viewer` 角色默认返回已发布快照；编辑器读取草稿语义则走 `/definition`。
+- 当前剩余工作主要是 acceptance 与 polish，不再是“缺 publish/version API”。
+
 ## 1. Response Envelope
 
 工作流定义、版本与发布类接口统一使用 `Result` 包装：
@@ -74,7 +80,7 @@
 | `DELETE` | `/api/workflows/{workflow_id}` | Existing | 软删除工作流 |
 | `POST` | `/api/workflows/{workflow_id}/validate` | Existing | 校验工作流合法性 |
 | `POST` | `/api/workflows/{workflow_id}/compile` | Existing | 编译为可执行图预览 |
-| `POST` | `/api/workflows/{workflow_id}/publish` | Target New | 将当前草稿发布为可运行版本 |
+| `POST` | `/api/workflows/{workflow_id}/publish` | Existing | 将当前草稿发布为可运行版本 |
 | `GET` | `/api/workflows/{workflow_id}/versions` | Existing | 获取版本历史 |
 | `GET` | `/api/workflows/{workflow_id}/versions/{version_id}` | Existing | 获取单个历史版本快照 |
 | `GET` | `/api/workflows/{workflow_id}/versions/compare` | Existing | 对比两个版本 |
@@ -114,5 +120,5 @@
 
 ## 6. Migration Notes
 
-- 当前模型中已有 `is_published` 和 `WorkflowVersionORM`，但缺少独立发布接口；本契约将其补齐。
-- 当前节点类型是通用技术类型，不直接等同于规格中的业务节点名称；两者的语义映射应由前端节点模板和 `config` 字段承担。
+- 当前模型中的 `is_published`、发布快照、版本历史、compare 与 restore 均已由主线路由和服务层接通。
+- 当前节点类型仍是通用技术类型，不直接等同于规格中的业务节点名称；两者的语义映射继续由前端节点模板和 `config` 字段承担。
