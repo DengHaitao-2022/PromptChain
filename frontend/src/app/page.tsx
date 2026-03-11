@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import styles from './page.module.css';
 import { HomeWorkflowPreview } from '@/components/HomeWorkflowPreview/HomeWorkflowPreview';
+import { workflowApi, workflowDefinitionApi } from '@/lib/api';
 
 type LaunchState = 'idle' | 'launching' | 'handoff';
 
@@ -140,8 +141,6 @@ export default function Home() {
   const [selectedVersion, setSelectedVersion] = useState<string>('');
   const [publishedCompatibilityMessage, setPublishedCompatibilityMessage] = useState<string | null>(null);
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
   const railRef = useRef<HTMLElement | null>(null);
   const featuresRef = useRef<HTMLElement | null>(null);
   const trustRef = useRef<HTMLElement | null>(null);
@@ -191,11 +190,7 @@ export default function Home() {
     const fetchWorkflows = async () => {
       try {
         setError(null);
-        const response = await fetch(`${API_BASE}/api/workflows`, { credentials: 'include' });
-        if (!response.ok) {
-          throw new Error('获取工作流列表失败');
-        }
-        const data = await response.json();
+        const data = await workflowDefinitionApi.list();
         const workflowData = data.data.workflows || [];
 
         const hasPublished = workflowData.some((w: WorkflowDefinition) => 'is_published' in w);
@@ -218,7 +213,7 @@ export default function Home() {
       }
     };
     fetchWorkflows();
-  }, [API_BASE]);
+  }, []);
 
   useEffect(() => {
     if (!selectedWorkflow) {
@@ -230,11 +225,7 @@ export default function Home() {
     const fetchVersions = async () => {
       try {
         setError(null);
-        const response = await fetch(`${API_BASE}/api/workflows/${selectedWorkflow}/versions`, { credentials: 'include' });
-        if (!response.ok) {
-          throw new Error('获取版本列表失败');
-        }
-        const data = await response.json();
+        const data = await workflowDefinitionApi.getVersions(selectedWorkflow);
         const versionData = data.data.versions || [];
         setVersions(versionData);
         if (versionData.length > 0) {
@@ -247,7 +238,7 @@ export default function Home() {
       }
     };
     fetchVersions();
-  }, [selectedWorkflow, API_BASE]);
+  }, [selectedWorkflow]);
 
   const handleSubmit = async () => {
     if (!userInput.trim() || !selectedWorkflow || !selectedVersion || isLoading) return;
@@ -257,25 +248,8 @@ export default function Home() {
     setLaunchState('launching');
 
     try {
-      const response = await fetch(`${API_BASE}/api/workflow/start`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          user_input: userInput.trim(),
-          workflow_definition_id: selectedWorkflow,
-          workflow_version_id: selectedVersion,
-        }),
-      });
+      const result = await workflowApi.start(userInput.trim(), selectedWorkflow, selectedVersion);
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: '未知错误' }));
-        throw new Error(errorData.detail);
-      }
-
-      const result = await response.json();
       setWorkflowRunId(result.workflow_run_id);
       setLaunchState('handoff');
       await sleep(280);

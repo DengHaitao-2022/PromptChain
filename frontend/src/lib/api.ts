@@ -169,6 +169,31 @@ export type WorkflowRealtimeEvent =
   | WorkflowLifecycleEvent
   | WorkflowGateWaitingEvent;
 
+export interface WorkflowDefinition {
+  id: string;
+  name: string;
+  description: string;
+  is_published?: boolean;
+}
+
+export interface WorkflowVersion {
+  id: string;
+  version: number;
+  change_log: string;
+}
+
+export interface WorkflowRunSummary {
+  id: string;
+  workflow_name: string;
+  status: WorkflowStatus | string;
+  current_node: string | null;
+  user_input: string;
+  started_at: string;
+  completed_at: string | null;
+  total_duration_ms: number | null;
+}
+
+
 // API 请求函数
 async function request<T>(
   endpoint: string,
@@ -196,10 +221,14 @@ async function request<T>(
 // 工作流 API
 export const workflowApi = {
   // 启动新工作流
-  start: (userInput: string) =>
+  start: (userInput: string, workflowDefinitionId?: string, workflowVersionId?: string) =>
     request<WorkflowResponse>('/api/workflow/start', {
       method: 'POST',
-      body: JSON.stringify({ user_input: userInput }),
+      body: JSON.stringify({
+        user_input: userInput,
+        workflow_definition_id: workflowDefinitionId,
+        workflow_version_id: workflowVersionId,
+      }),
     }),
 
   // 获取工作流状态
@@ -278,7 +307,23 @@ export const workflowApi = {
         reason,
       }),
     }),
+
+  // 获取运行记录列表 (如果尚未实现后端将返回404)
+  getRuns: () =>
+    request<{ data: { runs: WorkflowRunSummary[] } }>('/api/workflow/runs'),
 };
+
+// 工作流定义 API
+export const workflowDefinitionApi = {
+  // 获取工作流列表
+  list: () =>
+    request<{ data: { workflows: WorkflowDefinition[] } }>('/api/workflows'),
+
+  // 获取工作流版本列表
+  getVersions: (workflowId: string) =>
+    request<{ data: { versions: WorkflowVersion[] } }>(`/api/workflows/${workflowId}/versions`),
+};
+
 
 // Trace API
 export const traceApi = {

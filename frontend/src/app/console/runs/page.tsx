@@ -7,33 +7,24 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import styles from './runs.module.css';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
-
-interface WorkflowRun {
-    id: string;
-    workflow_name: string;
-    status: string;
-    current_node: string | null;
-    user_input: string;
-    started_at: string;
-    completed_at: string | null;
-    total_duration_ms: number | null;
-}
+import { workflowApi, WorkflowRunSummary } from '@/lib/api';
 
 export default function RunsPage() {
-    const [runs, setRuns] = useState<WorkflowRun[]>([]);
+    const [runs, setRuns] = useState<WorkflowRunSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
     useEffect(() => {
         async function fetchRuns() {
             try {
-                // 获取所有工作流运行记录
-                // 这里需要新的 API 端点，暂时模拟
-                setRuns([]);
-            } catch (err) {
-                setError('加载失败');
+                const response = await workflowApi.getRuns();
+                setRuns(response.data.runs || []);
+            } catch (err: any) {
+                if (err.message && (err.message.includes('404') || err.message.includes('Not Found'))) {
+                    setError('运行记录接口尚未就绪 (404)');
+                } else {
+                    setError(err.message || '加载记录失败');
+                }
             } finally {
                 setLoading(false);
             }
