@@ -10,7 +10,7 @@ import styles from '../login/login.module.css';
 type VerificationStatus = 'loading' | 'success' | 'error' | 'missing_token';
 
 // Module-level caches to survive React Strict Mode remounts
-const promiseCache: { [token: string]: Promise<void> } = {};
+const promiseCache: { [token: string]: Promise<{ message: string }> | undefined } = {};
 const terminalStateCache: { [token: string]: VerificationStatus } = {};
 
 function getSessionStorageKey(token: string) {
@@ -50,10 +50,11 @@ function VerifyEmailComponent() {
       }
 
       // Check for an in-flight promise from another render/component
-      if (promiseCache[token]) {
+      const inFlightPromise = promiseCache[token];
+      if (inFlightPromise) {
         if (isActive) setStatus('loading');
         try {
-          await promiseCache[token];
+          await inFlightPromise;
           // After awaiting, the cache *should* be populated by the original caller.
           if (isActive) setStatus(terminalStateCache[token] || 'success');
         } catch {
