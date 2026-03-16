@@ -104,7 +104,19 @@ function Sidebar() {
   const pathname = usePathname();
   const { hasPermission } = useAuth();
   const visibleNavItems = NAV_ITEMS.filter((item) => isVisible(item, hasPermission));
-  const visibleSettingsItems = SETTINGS_ITEMS.filter((item) => isVisible(item, hasPermission));
+  const visibleManagedSettingsItems = SETTINGS_ITEMS.filter((item) => isVisible(item, hasPermission));
+  const visibleSettingsItems =
+    visibleManagedSettingsItems.length > 0
+      ? [
+          {
+            label: '设置总览',
+            href: '/console/settings',
+            icon: Settings2,
+            exact: true,
+          },
+          ...visibleManagedSettingsItems,
+        ]
+      : [];
   const [settingsOpen, setSettingsOpen] = useState(pathname.startsWith('/console/settings'));
 
   useEffect(() => {
@@ -188,7 +200,9 @@ function Sidebar() {
                     <Link
                       key={item.href}
                       href={item.href}
-                      className={`${styles.navItem} ${styles.subNavItem} ${isActive(item.href) ? styles.active : ''}`}
+                      className={`${styles.navItem} ${styles.subNavItem} ${
+                        isActive(item.href, item.exact) ? styles.active : ''
+                      }`}
                     >
                       <span className={styles.navIcon} aria-hidden="true">
                         <Icon size={16} strokeWidth={1.9} />

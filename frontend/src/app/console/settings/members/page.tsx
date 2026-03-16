@@ -4,7 +4,9 @@
  * 成员管理页面
  */
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Role,
@@ -28,6 +30,10 @@ function getWorkspaceAccessLabel(status: WorkspaceMember['workspace_access']) {
   return '可访问';
 }
 
+function getWorkspaceAccessTone(status: WorkspaceMember['workspace_access']) {
+  return status === 'suspended' ? styles.error : styles.success;
+}
+
 function getAccountStatusLabel(status: WorkspaceMember['account_status']) {
   if (status === 'active') {
     return '账号正常';
@@ -36,6 +42,16 @@ function getAccountStatusLabel(status: WorkspaceMember['account_status']) {
     return '全局账号已停用';
   }
   return '账号未激活';
+}
+
+function getAccountStatusTone(status: WorkspaceMember['account_status']) {
+  if (status === 'active') {
+    return styles.success;
+  }
+  if (status === 'suspended') {
+    return styles.error;
+  }
+  return styles.warning;
 }
 
 export default function MembersPage() {
@@ -98,6 +114,15 @@ export default function MembersPage() {
       }
       return left.email.localeCompare(right.email);
     });
+  }, [members]);
+
+  const summary = useMemo(() => {
+    const total = members.length;
+    const activeAccess = members.filter((member) => member.workspace_access === 'active').length;
+    const suspendedAccess = members.filter((member) => member.workspace_access === 'suspended').length;
+    const unverified = members.filter((member) => !member.email_verified).length;
+
+    return { total, activeAccess, suspendedAccess, unverified };
   }, [members]);
 
   async function handleInvite() {
@@ -196,57 +221,93 @@ export default function MembersPage() {
   if (!canReadMembers) {
     return (
       <div className={styles.container}>
-        <h1 className={styles.title}>成员管理</h1>
-        <p className={styles.subtitle}>暂无访问权限</p>
-        <div className={styles.empty}>
-          <p>您当前没有查看成员列表的权限。</p>
-          <p style={{ fontSize: 14, marginTop: 8 }}>如需访问，请联系工作空间管理员调整角色。</p>
-          <a href="/console" className={styles.button} style={{ marginTop: 16, display: 'inline-flex' }}>
-            返回控制台首页
-          </a>
-        </div>
+        <section className={styles.hero}>
+          <div className={styles.heroContent}>
+            <span className={styles.eyebrow}>Workspace Access</span>
+            <h1 className={styles.title}>成员管理</h1>
+            <p className={styles.subtitle}>
+              您当前没有查看成员列表的权限。如需继续，请联系工作空间管理员调整角色。
+            </p>
+          </div>
+          <div className={styles.heroActions}>
+            <Link href="/console" className={`${styles.button} ${styles.buttonSecondary}`}>
+              返回控制台首页
+            </Link>
+          </div>
+        </section>
       </div>
     );
   }
 
   return (
     <div className={styles.container}>
-      <h1 className={styles.title}>成员管理</h1>
-      <p className={styles.subtitle}>管理成员角色与当前工作空间访问边界，不会修改用户全局账号状态。</p>
+      <section className={styles.hero}>
+        <div className={styles.heroContent}>
+          <span className={styles.eyebrow}>Workspace Access</span>
+          <h1 className={styles.title}>成员管理</h1>
+          <p className={styles.subtitle}>
+            管理成员角色、当前工作空间访问边界与邀请节奏，不会修改用户的全局账号状态。
+          </p>
+        </div>
 
-      {feedback && (
-        <div
-          style={{
-            marginBottom: 16,
-            padding: '12px 14px',
-            borderRadius: 10,
-            background: '#ecfdf5',
-            color: '#166534',
-            fontSize: 14,
-          }}
-        >
+        <div className={styles.heroActions}>
+          <button
+            className={`${styles.button} ${styles.buttonSecondary}`}
+            onClick={() => void fetchMembers()}
+            type="button"
+          >
+            <RefreshCw size={16} strokeWidth={2} />
+            刷新列表
+          </button>
+        </div>
+
+        <div className={styles.summaryGrid}>
+          <div className={styles.summaryCard}>
+            <span className={styles.summaryLabel}>成员总数</span>
+            <span className={styles.summaryValue}>{summary.total}</span>
+            <span className={styles.summaryMeta}>当前工作空间：{workspace?.name || '未选择'}</span>
+          </div>
+          <div className={styles.summaryCard}>
+            <span className={styles.summaryLabel}>可访问</span>
+            <span className={styles.summaryValue}>{summary.activeAccess}</span>
+            <span className={styles.summaryMeta}>可以正常进入并操作当前工作空间</span>
+          </div>
+          <div className={styles.summaryCard}>
+            <span className={styles.summaryLabel}>已暂停</span>
+            <span className={styles.summaryValue}>{summary.suspendedAccess}</span>
+            <span className={styles.summaryMeta}>仅暂停当前工作空间访问，不影响其他工作空间</span>
+          </div>
+          <div className={styles.summaryCard}>
+            <span className={styles.summaryLabel}>待验证邮箱</span>
+            <span className={styles.summaryValue}>{summary.unverified}</span>
+            <span className={styles.summaryMeta}>可用于识别尚未完成初次验证的成员</span>
+          </div>
+        </div>
+      </section>
+
+      {feedback ? (
+        <div className={`${styles.notice} ${styles.noticeSuccess}`} role="status">
           {feedback}
         </div>
-      )}
+      ) : null}
 
-      {error && (
-        <div
-          style={{
-            marginBottom: 16,
-            padding: '12px 14px',
-            borderRadius: 10,
-            background: '#fef2f2',
-            color: '#b91c1c',
-            fontSize: 14,
-          }}
-        >
+      {error ? (
+        <div className={`${styles.notice} ${styles.noticeError}`} role="alert">
           {error}
         </div>
-      )}
+      ) : null}
 
-      {canManageMembers && (
-        <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>邀请成员</h2>
+      {canManageMembers ? (
+        <section className={styles.section}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionHeaderStack}>
+              <h2 className={styles.sectionTitle}>邀请成员</h2>
+              <p className={styles.sectionDescription}>
+                新成员会继承当前工作空间角色，后续仍可单独调整为查看者、编辑者或管理员。
+              </p>
+            </div>
+          </div>
+
           <div className={styles.inviteForm}>
             <input
               type="email"
@@ -264,37 +325,39 @@ export default function MembersPage() {
               <option value="editor">编辑者</option>
               <option value="admin">管理员</option>
             </select>
-            <button onClick={() => void handleInvite()} disabled={inviting || !inviteEmail.trim()} className={styles.button} type="button">
+            <button
+              onClick={() => void handleInvite()}
+              disabled={inviting || !inviteEmail.trim()}
+              className={styles.button}
+              type="button"
+            >
               {inviting ? '发送中...' : '发送邀请'}
             </button>
           </div>
-        </div>
-      )}
+          <p className={styles.helperText}>
+            邀请邮件由后端服务发送；若成员已存在于系统中，将直接收到当前工作空间邀请。
+          </p>
+        </section>
+      ) : null}
 
-      <div className={styles.section}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 12,
-            marginBottom: 16,
-          }}
-        >
-          <div>
-            <h2 className={styles.sectionTitle} style={{ marginBottom: 4 }}>
-              成员列表
-            </h2>
-            <p style={{ margin: 0, color: '#6b7280', fontSize: 13 }}>
-              当前工作空间：{workspace?.name || '未选择'}
-            </p>
-            <p style={{ margin: '6px 0 0', color: '#9ca3af', fontSize: 12 }}>
+      <section className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionHeaderStack}>
+            <h2 className={styles.sectionTitle}>成员列表</h2>
+            <p className={styles.sectionDescription}>
               “暂停访问”仅阻止该成员进入当前工作空间；“移除成员”会直接移出当前工作空间。
             </p>
           </div>
-          <button className={styles.button} onClick={() => void fetchMembers()} type="button">
-            刷新列表
-          </button>
+          <div className={styles.sectionActions}>
+            <button
+              className={`${styles.button} ${styles.buttonGhost}`}
+              onClick={() => void fetchMembers()}
+              type="button"
+            >
+              <RefreshCw size={16} strokeWidth={2} />
+              刷新
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -302,8 +365,9 @@ export default function MembersPage() {
             <div className={styles.spinner} />
           </div>
         ) : sortedMembers.length === 0 ? (
-          <div className={styles.card}>
-            <p style={{ margin: 0, color: '#6b7280' }}>当前工作空间还没有成员。</p>
+          <div className={styles.empty}>
+            <div className={styles.emptyTitle}>当前工作空间还没有成员</div>
+            <div className={styles.emptyText}>先发送邀请，再按角色和访问边界整理协作关系。</div>
           </div>
         ) : (
           <div className={styles.list}>
@@ -313,89 +377,44 @@ export default function MembersPage() {
               const roleDraft = roleDrafts[member.id] || 'viewer';
               const isRoleSaving = pendingMembershipId === member.id;
               const isStatusSaving = pendingUserId === member.user_id;
-              const workspaceAccessLabel = getWorkspaceAccessLabel(member.workspace_access);
-              const accountStatusLabel = getAccountStatusLabel(member.account_status);
 
               return (
-                <div
-                  key={member.id}
-                  className={styles.listItem}
-                  style={{
-                    alignItems: 'flex-start',
-                    justifyContent: 'space-between',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <div style={{ display: 'flex', gap: 16, flex: '1 1 280px' }}>
+                <article key={member.id} className={styles.listItem}>
+                  <div className={styles.itemLead}>
                     <div className={styles.avatar}>{member.display_name?.[0] || member.email[0]}</div>
                     <div className={styles.itemInfo}>
-                      <div className={styles.itemName}>
-                        {member.display_name || member.email}
-                        {isCurrentUser && (
-                          <span style={{ marginLeft: 8, fontSize: 12, color: '#6366f1' }}>当前账号</span>
-                        )}
+                      <div className={styles.itemNameRow}>
+                        <span className={styles.itemName}>{member.display_name || member.email}</span>
+                        {isCurrentUser ? <span className={styles.currentUserTag}>当前账号</span> : null}
                       </div>
                       <div className={styles.itemMeta}>{member.email}</div>
-                      <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        <span className={`${styles.roleTag} ${styles[member.role]}`}>{getRoleLabel(member.role)}</span>
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            padding: '4px 12px',
-                            borderRadius: 20,
-                            fontSize: 12,
-                            fontWeight: 500,
-                            background: member.workspace_access === 'active' ? '#ecfdf5' : '#fef2f2',
-                            color: member.workspace_access === 'active' ? '#166534' : '#b91c1c',
-                          }}
-                        >
-                          {workspaceAccessLabel}
+                      <div className={styles.badgeRow}>
+                        <span className={`${styles.roleTag} ${styles[member.role]}`}>
+                          {getRoleLabel(member.role)}
                         </span>
-                        {member.account_status !== 'active' && (
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '4px 12px',
-                              borderRadius: 20,
-                              fontSize: 12,
-                              fontWeight: 500,
-                              background: '#eef2ff',
-                              color: '#4338ca',
-                            }}
-                          >
-                            {accountStatusLabel}
-                          </span>
-                        )}
-                        {!member.email_verified && (
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '4px 12px',
-                              borderRadius: 20,
-                              fontSize: 12,
-                              fontWeight: 500,
-                              background: '#fff7ed',
-                              color: '#c2410c',
-                            }}
-                          >
-                            邮箱未验证
-                          </span>
-                        )}
+                        <span
+                          className={`${styles.statusTag} ${getWorkspaceAccessTone(member.workspace_access)}`}
+                        >
+                          {getWorkspaceAccessLabel(member.workspace_access)}
+                        </span>
+                        <span
+                          className={`${styles.statusTag} ${getAccountStatusTone(member.account_status)}`}
+                        >
+                          {getAccountStatusLabel(member.account_status)}
+                        </span>
+                        {!member.email_verified ? (
+                          <span className={`${styles.statusTag} ${styles.warning}`}>邮箱未验证</span>
+                        ) : null}
+                      </div>
+                      <div className={styles.itemMetaMuted}>
+                        加入时间：{new Date(member.joined_at).toLocaleDateString('zh-CN')}
                       </div>
                     </div>
                   </div>
 
-                  {canManageMembers && (
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 10,
-                        minWidth: 240,
-                        flex: '0 0 240px',
-                      }}
-                    >
-                      <div style={{ display: 'flex', gap: 8 }}>
+                  {canManageMembers ? (
+                    <div className={styles.actionPanel}>
+                      <div className={styles.actionsRow}>
                         <select
                           value={roleDraft}
                           onChange={(event) =>
@@ -406,7 +425,6 @@ export default function MembersPage() {
                           }
                           className={styles.select}
                           disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving}
-                          style={{ flex: 1 }}
                         >
                           {MANAGEABLE_ROLES.map((role) => (
                             <option key={role} value={role}>
@@ -415,7 +433,7 @@ export default function MembersPage() {
                           ))}
                         </select>
                         <button
-                          className={styles.button}
+                          className={`${styles.button} ${styles.buttonSmall}`}
                           disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving || roleDraft === member.role}
                           onClick={() => void handleRoleUpdate(member)}
                           type="button"
@@ -424,37 +442,34 @@ export default function MembersPage() {
                         </button>
                       </div>
 
-                      <div style={{ display: 'flex', gap: 8 }}>
+                      <div className={styles.actionsRow}>
                         <button
-                          className={styles.button}
+                          className={`${styles.button} ${styles.buttonSmall} ${
+                            member.workspace_access === 'suspended' ? '' : styles.buttonDanger
+                          }`}
                           disabled={isOwner || isCurrentUser || isStatusSaving}
                           onClick={() => void handleToggleWorkspaceAccess(member)}
                           type="button"
-                          style={{
-                            flex: 1,
-                            background: member.workspace_access === 'suspended' ? '#059669' : '#b91c1c',
-                          }}
                         >
                           {isStatusSaving ? '处理中...' : member.workspace_access === 'suspended' ? '恢复访问' : '暂停访问'}
                         </button>
                         <button
-                          className={styles.button}
+                          className={`${styles.button} ${styles.buttonSmall} ${styles.buttonGhost}`}
                           disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving}
                           onClick={() => void handleRemoveMember(member)}
                           type="button"
-                          style={{ flex: 1, background: '#374151' }}
                         >
                           移除成员
                         </button>
                       </div>
                     </div>
-                  )}
-                </div>
+                  ) : null}
+                </article>
               );
             })}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
