@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { ThemeProvider } from "@/contexts/ThemeContext";
+import { buildThemeInitScript } from "@/lib/theme";
 import "./globals.css";
 
 const inter = Inter({
@@ -32,12 +34,23 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html
+      lang="zh-CN"
+      suppressHydrationWarning
+      data-theme="dark"
+      data-theme-preference="system"
+    >
+      <head>
+        <script
+          id="promptchain-theme-init"
+          dangerouslySetInnerHTML={{ __html: buildThemeInitScript() }}
+        />
+      </head>
       <body
         suppressHydrationWarning
         className={`${inter.variable} ${jetbrainsMono.variable} ${spaceGrotesk.variable}`}
       >
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );
