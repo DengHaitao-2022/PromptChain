@@ -1,14 +1,11 @@
-from pathlib import Path
 import sys
-from datetime import datetime, UTC
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
-
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests._runtime_auth import authenticated_client, ownership_metadata
-from main import app
 
 
 class _FakeWorkflowRun:
@@ -55,9 +52,7 @@ class _FakeGraph:
         self.values = values or {}
 
     async def aget_state(self, config):
-        return SimpleNamespace(
-            values=self.values
-        )
+        return SimpleNamespace(values=self.values)
 
 
 class _FakeWorkflow:
@@ -229,3 +224,23 @@ def test_manual_pause_status_beats_running_graph_snapshot(monkeypatch):
 
     assert res.status_code == 200
     assert res.json()["status"] == "paused"
+
+
+def test_failed_workflow_status_surfaces_persisted_error(monkeypatch):
+    store = _FakeStore(
+        _FakeWorkflowRun(
+            status="failed",
+            metadata={"error": "LLM API key 无效"},
+        )
+    )
+    workflow = _FakeWorkflow({})
+    monkeypatch.setattr("services.get_artifact_store", lambda: store)
+    monkeypatch.setattr("graph.get_workflow", lambda: workflow)
+
+    client = authenticated_client(monkeypatch)
+    res = client.get("/api/workflow/wf-123")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "failed"
+    assert body["state"]["error"] == "LLM API key 无效"

@@ -1,10 +1,10 @@
 # Realtime Event Contract
 
-## 0. Current Baseline (`dev@df88a42`)
+## 0. Current Baseline (`dev@c396a48`)
 
 - `backend/graph/executor.py` 已在节点执行、Gate 等待、手动 pause/resume、completed/failed 上调用 `emit_*`。
 - `backend/routes/websocket_routes.py` 已承担 transport 层广播；REST 轮询与 trace timeline 仍是状态对账权威。
-- 当前剩余漂移是 fact-check Gate 的事件命名：执行路径广播值仍是 `fact_check_approval`，而前端共享静态类型与本文档目标值仍以 `fact_check` 为准。
+- 已知兼容点：`backend/graph/executor.py` 的 fact-check Gate 某条 emit 路径仍写出 `fact_check_approval`；对外契约与前端共享静态类型继续以 `fact_check` 为准，并由 REST/trace 读模型归一化兜底。
 
 ## 1. Channels
 
@@ -40,7 +40,7 @@
 | `workflow_paused` | 工作流被用户主动暂停 | `workflow_run_id`, `data.reason?`, `data.paused_at?`, `data.current_node?` | Shipped in dev |
 | `workflow_completed` | 工作流完成 | `workflow_run_id`, `data` | Shipped in dev |
 | `workflow_failed` | 工作流失败 | `workflow_run_id`, `data` | Shipped in dev |
-| `workflow_gate_waiting` | 进入 Gate 等待 | `workflow_run_id`, `data.gate_type`, `data.questions`, `data.current_node?`, `data.opened_at?` | Shipped in dev; fact-check gate naming still needs final normalization |
+| `workflow_gate_waiting` | 进入 Gate 等待 | `workflow_run_id`, `data.gate_type`, `data.questions`, `data.current_node?`, `data.opened_at?` | Shipped in dev; 公开契约继续以 `fact_check` 作为 fact-check Gate 命名 |
 | `workflow_resumed` | 从手动暂停恢复 | `workflow_run_id`, `data.resumed_at?`, `data.current_node?` | Shipped in dev |
 
 `workflow_gate_waiting.data.gate_type` allowed values:
@@ -76,5 +76,5 @@
 ## 6. Migration Notes
 
 - 当前仓库已经有 WebSocket 路由和 `emit_*` 工具，节点开始/完成/失败、Gate 等待、pause/resume、completed/failed 的执行路径 emit 已接线到 `backend/graph/executor.py`。
-- 当前剩余工作不是“是否发事件”，而是“是否把 event payload 命名彻底收口到共享契约”，尤其是 fact-check Gate 的 `gate_type`。
+- 当前主线不再缺少 WebSocket 事件通路；fact-check Gate 的兼容点继续由共享契约、REST 状态和 trace timeline 对齐。
 - 前端仍需保留轮询或手动刷新作为兜底；`GET /api/workflow/{workflow_run_id}` 与 `GET /api/trace/{workflow_run_id}` 继续是权威对账入口。

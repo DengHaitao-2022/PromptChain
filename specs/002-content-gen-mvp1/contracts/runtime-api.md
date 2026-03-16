@@ -1,11 +1,11 @@
 # Runtime API Contract
 
-## 0. Current Baseline (`dev@df88a42`)
+## 0. Current Baseline (`dev@c396a48`)
 
 - 当前后端 canonical 落点是 `backend/routes/workflow_routes.py` 与 `backend/routes/workflow_helpers.py`；`backend/main.py` 只保留兼容入口。
 - `POST /api/workflow/start` 现已支持可选的 `workflow_definition_id` 与 `workflow_version_id`，用于从已发布工作流版本启动任务。
 - pause/resume、clarify、outline approval、fact-check approval、rerun、rerun-history 均已进入主线。
-- 当前残余漂移主要在前端共享 helper：首页仍直接 `fetch` 列表/版本/启动接口，而不是完全复用 `frontend/src/lib/api.ts`。
+- 当前契约侧剩余主线主要落在 `T005/T011`：首页仍直接 `fetch` 列表/版本/启动接口，而不是完全复用 `frontend/src/lib/api.ts`。
 
 ## 1. Canonical Envelope
 

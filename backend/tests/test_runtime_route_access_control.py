@@ -1,6 +1,6 @@
-from datetime import UTC, datetime
-from pathlib import Path
 import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +21,9 @@ class _FakeWorkflowRun:
         metadata: dict | None = None,
         status: str = "running",
         current_node: str = "generate_content",
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        total_duration_ms: int | None = None,
     ):
         self.id = workflow_run_id
         self.status = status
@@ -29,7 +32,9 @@ class _FakeWorkflowRun:
         self.workflow_name = "content_generation"
         self.workflow_version = "1.0.0"
         self.user_input = "hello"
-        self.started_at = datetime(2026, 3, 8, 10, 0, tzinfo=UTC)
+        self.started_at = started_at or datetime(2026, 3, 8, 10, 0, tzinfo=UTC)
+        self.completed_at = completed_at
+        self.total_duration_ms = total_duration_ms
 
     def model_dump(self) -> dict:
         return {
@@ -41,6 +46,8 @@ class _FakeWorkflowRun:
             "workflow_version": self.workflow_version,
             "user_input": self.user_input,
             "started_at": self.started_at.isoformat(),
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "total_duration_ms": self.total_duration_ms,
         }
 
 
@@ -84,16 +91,33 @@ class _FakeArtifact:
 
 class _FakeStore:
     def __init__(self):
+        base_time = datetime(2026, 3, 8, 10, 0, tzinfo=UTC)
         self.workflow_runs = {
             "wf-123": _FakeWorkflowRun(
                 "wf-123",
                 metadata={"workspace_id": "ws-1", "user_id": "user-1"},
+                started_at=base_time,
+            ),
+            "wf-124": _FakeWorkflowRun(
+                "wf-124",
+                metadata={"workspace_id": "ws-1", "user_id": "user-1"},
+                status="completed",
+                current_node="finalize",
+                started_at=base_time + timedelta(hours=1),
+                completed_at=base_time + timedelta(hours=1, minutes=5),
+                total_duration_ms=300000,
+            ),
+            "wf-same-workspace-other-user": _FakeWorkflowRun(
+                "wf-same-workspace-other-user",
+                metadata={"workspace_id": "ws-1", "user_id": "user-2"},
+                started_at=base_time + timedelta(hours=2),
             ),
             "wf-new": _FakeWorkflowRun("wf-new"),
             "wf-rerun": _FakeWorkflowRun("wf-rerun"),
             "wf-foreign": _FakeWorkflowRun(
                 "wf-foreign",
                 metadata={"workspace_id": "ws-2", "user_id": "user-2"},
+                started_at=base_time + timedelta(hours=3),
             ),
         }
         self.node_runs = {
@@ -125,6 +149,17 @@ class _FakeStore:
     async def get_all_workflow_runs(self):
         return list(self.workflow_runs.values())
 
+    async def list_workflow_runs(self, *, workspace_id: str, user_id: str | None = None):
+        runs = []
+        for workflow_run in self.workflow_runs.values():
+            metadata = workflow_run.metadata or {}
+            if metadata.get("workspace_id") != workspace_id:
+                continue
+            if user_id is not None and metadata.get("user_id") != user_id:
+                continue
+            runs.append(workflow_run)
+        return sorted(runs, key=lambda run: run.started_at, reverse=True)
+
 
 class _FakeTraceService:
     async def get_workflow_trace(self, workflow_run_id: str):
@@ -154,7 +189,9 @@ class _FakeRerunService:
     async def get_rerun_options(self, workflow_run_id: str):
         return [{"node_name": "generate_outline"}]
 
-    async def prepare_rerun_state(self, workflow_run_id: str, from_node: str, updated_input: dict | None = None):
+    async def prepare_rerun_state(
+        self, workflow_run_id: str, from_node: str, updated_input: dict | None = None
+    ):
         return updated_input or {}
 
     async def create_rerun_workflow(self, workflow_run_id: str, from_node: str, reason: str = ""):
@@ -182,7 +219,12 @@ class _FakeWorkflow:
             return "paused"
         return "running"
 
-    async def start(self, user_input: str, workflow_definition_id: str | None = None, workflow_version_id: str | None = None):
+    async def start(
+        self,
+        user_input: str,
+        workflow_definition_id: str | None = None,
+        workflow_version_id: str | None = None,
+    ):
         return {
             "workflow_run_id": "wf-new",
             "status": "running",
@@ -198,7 +240,13 @@ class _FakeWorkflow:
     async def resume(self, workflow_run_id: str, user_input: dict):
         return {"workflow_run_id": workflow_run_id, "status": "running", "state": user_input}
 
-    async def approve_outline(self, workflow_run_id: str, action: str, feedback: str = "", modified_outline: dict | None = None):
+    async def approve_outline(
+        self,
+        workflow_run_id: str,
+        action: str,
+        feedback: str = "",
+        modified_outline: dict | None = None,
+    ):
         return {"workflow_run_id": workflow_run_id, "status": "running", "state": {}}
 
 
@@ -225,10 +273,15 @@ async def _allow_workspace_permission(request, resource: str, action: str):
     return "user-1", "ws-1", "editor"
 
 
+async def _allow_workspace_admin_permission(request, resource: str, action: str):
+    return "user-1", "ws-1", "admin"
+
+
 @pytest.mark.parametrize(
     ("method", "path", "payload"),
     [
         ("post", "/api/workflow/start", {"user_input": "hello"}),
+        ("get", "/api/workflow/runs", None),
         ("get", "/api/workflow/wf-123", None),
         ("post", "/api/workflow/wf-123/pause", {"reason": "先暂停"}),
         ("post", "/api/workflow/wf-123/resume", {}),
@@ -244,11 +297,17 @@ async def _allow_workspace_permission(request, resource: str, action: str):
         ("get", "/api/artifact/art-123/history", None),
     ],
 )
-def test_runtime_and_trace_routes_require_authentication(monkeypatch, method: str, path: str, payload: dict | None):
+def test_runtime_and_trace_routes_require_authentication(
+    monkeypatch, method: str, path: str, payload: dict | None
+):
     _install_runtime_fakes(monkeypatch)
     client = _make_client()
 
-    response = getattr(client, method)(path, json=payload) if payload is not None else getattr(client, method)(path)
+    response = (
+        getattr(client, method)(path, json=payload)
+        if payload is not None
+        else getattr(client, method)(path)
+    )
 
     assert response.status_code == 401
 
@@ -268,6 +327,54 @@ def test_start_workflow_persists_runtime_ownership(monkeypatch):
     assert response.status_code == 200
     assert store.workflow_runs["wf-new"].metadata["user_id"] == "user-1"
     assert store.workflow_runs["wf-new"].metadata["workspace_id"] == "ws-1"
+
+
+def test_runs_list_returns_current_user_visible_runs(monkeypatch):
+    _install_runtime_fakes(monkeypatch)
+    monkeypatch.setattr(
+        workflow_helpers,
+        "require_workspace_permission",
+        _allow_workspace_permission,
+        raising=False,
+    )
+    client = _make_client(user_id="user-1", workspace_id="ws-1")
+
+    response = client.get("/api/workflow/runs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [run["id"] for run in body["runs"]] == ["wf-124", "wf-123"]
+    assert set(body["runs"][0].keys()) == {
+        "id",
+        "workflow_name",
+        "status",
+        "current_node",
+        "user_input",
+        "started_at",
+        "completed_at",
+        "total_duration_ms",
+    }
+
+
+def test_runs_list_admin_scope_still_excludes_foreign_workspace(monkeypatch):
+    _install_runtime_fakes(monkeypatch)
+    monkeypatch.setattr(
+        workflow_helpers,
+        "require_workspace_permission",
+        _allow_workspace_admin_permission,
+        raising=False,
+    )
+    client = _make_client(user_id="user-1", workspace_id="ws-1")
+
+    response = client.get("/api/workflow/runs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [run["id"] for run in body["runs"]] == [
+        "wf-same-workspace-other-user",
+        "wf-124",
+        "wf-123",
+    ]
 
 
 def test_workflow_status_rejects_foreign_workspace(monkeypatch):
