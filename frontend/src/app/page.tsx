@@ -128,6 +128,7 @@ const sleep = (ms: number) =>
 
 export default function Home() {
   const router = useRouter();
+  const pageRef = useRef<HTMLDivElement | null>(null);
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
@@ -146,6 +147,65 @@ export default function Home() {
   const featuresRef = useRef<HTMLElement | null>(null);
   const trustRef = useRef<HTMLElement | null>(null);
   const [revealed, setRevealed] = useState({ rail: false, features: false, trust: false });
+
+  // 主盒体的指针高光只对精确指针设备启用，避免在触屏上依赖 hover。
+  useEffect(() => {
+    const root = pageRef.current;
+    if (!root) {
+      return;
+    }
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const supportsFinePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+
+    if (prefersReducedMotion || !supportsFinePointer) {
+      return;
+    }
+
+    const panels = Array.from(root.querySelectorAll<HTMLElement>('[data-pointer-glow]'));
+    const cleanups = panels.map((panel) => {
+      panel.style.setProperty('--pointer-x', '50%');
+      panel.style.setProperty('--pointer-y', '50%');
+      panel.style.setProperty('--pointer-active', '0');
+
+      let frame = 0;
+
+      const updatePointer = (event: PointerEvent) => {
+        const bounds = panel.getBoundingClientRect();
+        const x = ((event.clientX - bounds.left) / bounds.width) * 100;
+        const y = ((event.clientY - bounds.top) / bounds.height) * 100;
+
+        cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(() => {
+          panel.style.setProperty('--pointer-x', `${Math.max(0, Math.min(100, x))}%`);
+          panel.style.setProperty('--pointer-y', `${Math.max(0, Math.min(100, y))}%`);
+          panel.style.setProperty('--pointer-active', '1');
+        });
+      };
+
+      const resetPointer = () => {
+        cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(() => {
+          panel.style.setProperty('--pointer-active', '0');
+        });
+      };
+
+      panel.addEventListener('pointerenter', updatePointer);
+      panel.addEventListener('pointermove', updatePointer);
+      panel.addEventListener('pointerleave', resetPointer);
+
+      return () => {
+        cancelAnimationFrame(frame);
+        panel.removeEventListener('pointerenter', updatePointer);
+        panel.removeEventListener('pointermove', updatePointer);
+        panel.removeEventListener('pointerleave', resetPointer);
+      };
+    });
+
+    return () => {
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, []);
 
   // Scroll Reveal Logic
   useEffect(() => {
@@ -309,7 +369,13 @@ export default function Home() {
   }
 
   return (
-    <div className={styles.page} data-launch-state={launchState}>
+    <div ref={pageRef} className={styles.page} data-launch-state={launchState}>
+      <div className={styles.backgroundMotion} aria-hidden="true">
+        <span className={styles.backgroundOrbPrimary} />
+        <span className={styles.backgroundOrbSecondary} />
+        <span className={styles.backgroundBeam} />
+      </div>
+
       <header className={styles.header}>
         <div className={styles.headerContent}>
           <Link href="/" className={styles.logo}>
@@ -361,7 +427,13 @@ export default function Home() {
               <span>执行追踪</span>
             </div>
 
-            <section className={styles.composer} aria-labelledby="launch-composer-title">
+            <section
+              className={styles.composer}
+              data-pointer-glow
+              aria-labelledby="launch-composer-title"
+            >
+              <span className={styles.panelStandbyBorder} aria-hidden="true" />
+              <span className={styles.panelPointerGlow} aria-hidden="true" />
               <div className={styles.composerInner}>
                 <div className={styles.composerHeader}>
                   <div>
@@ -486,7 +558,9 @@ export default function Home() {
             </section>
           </div>
 
-          <div className={styles.heroPreview}>
+          <div className={styles.heroPreview} data-pointer-glow>
+            <span className={styles.panelStandbyBorder} aria-hidden="true" />
+            <span className={styles.panelPointerGlow} aria-hidden="true" />
             <HomeWorkflowPreview mode={launchState} workflowId={workflowRunId} />
           </div>
         </section>
