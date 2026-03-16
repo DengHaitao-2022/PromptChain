@@ -1,97 +1,113 @@
 .page {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    padding: 24px;
-    background:
-        radial-gradient(circle at top left, rgba(14, 165, 233, 0.12), transparent 24%),
-        #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
 }
 
 .pageHeader {
-    display: flex;
-    justify-content: space-between;
-    gap: 20px;
-    align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  padding: 24px;
+  border-radius: 28px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background:
+    linear-gradient(180deg, rgba(8, 18, 30, 0.96), rgba(5, 11, 18, 0.94)),
+    rgba(8, 18, 30, 0.96);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
 }
 
 .backLink {
-    display: inline-flex;
-    margin-bottom: 12px;
-    color: #2563eb;
-    font-size: 14px;
-    font-weight: 700;
-    text-decoration: none;
+  display: inline-flex;
+  margin-bottom: 12px;
+  color: #7dd3fc;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .backLink:hover {
-    text-decoration: underline;
+  color: #d8ebfb;
 }
 
 .title {
-    margin: 0 0 10px;
-    font-size: 32px;
-    color: #0f172a;
+  margin: 0 0 10px;
+  font-size: clamp(2rem, 4vw, 3rem);
+  color: #f8fbff;
+  letter-spacing: -0.04em;
 }
 
 .subtitle {
-    margin: 0;
-    color: #475569;
-    max-width: 640px;
-    line-height: 1.6;
+  margin: 0;
+  max-width: 640px;
+  color: #b8cad9;
+  line-height: 1.7;
 }
 
 .summaryCard {
-    min-width: 200px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 18px 20px;
-    border-radius: 20px;
-    background: #ffffff;
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.08);
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px;
+  border-radius: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.summaryCard strong {
+  color: #f8fbff;
+  font-size: 1.2rem;
 }
 
 .summaryLabel {
-    font-size: 12px;
-    font-weight: 700;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #8fa4ba;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .summaryHint {
-    color: #475569;
-    font-size: 14px;
+  color: #8ea3ba;
+  font-size: 0.88rem;
+  line-height: 1.6;
 }
 
 .errorBanner,
 .loadingCard {
-    padding: 16px 18px;
-    border-radius: 18px;
-    background: #ffffff;
-    border: 1px solid rgba(239, 68, 68, 0.18);
-    color: #b91c1c;
-    font-weight: 700;
+  padding: 18px 20px;
+  border-radius: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background:
+    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
+    rgba(8, 18, 30, 0.94);
+  color: #d8ebfb;
+  font-weight: 700;
 }
 
-.loadingCard {
-    color: #1e293b;
-    border-color: rgba(148, 163, 184, 0.18);
+.errorBanner {
+  border-color: rgba(248, 113, 113, 0.18);
+  background:
+    linear-gradient(180deg, rgba(50, 14, 14, 0.6), rgba(36, 11, 13, 0.78)),
+    rgba(36, 11, 13, 0.78);
+  color: #fecaca;
 }
 
 @media (max-width: 900px) {
-    .page {
-        padding: 16px;
-    }
+  .page {
+    padding: 16px;
+  }
 
-    .pageHeader {
-        flex-direction: column;
-    }
+  .pageHeader {
+    flex-direction: column;
+  }
 
-    .summaryCard {
-        min-width: 0;
-        width: 100%;
-    }
+  .summaryCard {
+    min-width: 0;
+    width: 100%;
+  }
 }
