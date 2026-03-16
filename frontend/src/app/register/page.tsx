@@ -7,9 +7,8 @@ import { AuthShell } from '@/components/AuthShell/AuthShell';
 import styles from '../login/login.module.css';
 
 /**
- * RegisterPage: 注册页面
- * 遵循 AURA-X 电影感视觉风格，使用 AuthShell 布局
- * 注册成功后显示引导验证的成功态
+ * 用户注册页。
+ * 注册完成后保留同一视觉壳体，并直接引导邮箱验证。
  */
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
@@ -54,8 +53,8 @@ export default function RegisterPage() {
 
   const statusSlot = error && (
     <div className={styles.errorBanner} role="alert">
-      <span aria-hidden="true">⚠️</span>
-      {error}
+      <strong>注册失败</strong>
+      <span>{error}</span>
     </div>
   );
 
@@ -64,15 +63,22 @@ export default function RegisterPage() {
       <h2>注册成功！</h2>
       <p>感谢您的注册。我们已经向您的邮箱 <strong>{email}</strong> 发送了一封验证邮件。</p>
       <p>请点击邮件中的链接以激活您的账户。</p>
-      <p><small><strong>开发者提示：</strong>如果未配置 SMTP 服务，验证链接将输出在后端服务的日志中。</small></p>
-      <Link href="/login" className={styles.forgotLink}>返回登录</Link>
+      <p className={styles.successHint}>
+        <strong>开发说明：</strong>
+        如果本地未配置 SMTP，验证链接会输出在后端日志中。
+      </p>
+      <Link href="/login" className={styles.forgotLink}>
+        返回登录
+      </Link>
     </div>
   );
 
   const formView = (
     <form onSubmit={handleSubmit} className={styles.form}>
       <div className={styles.field}>
-        <label className={styles.label} htmlFor="displayName">显示名称</label>
+        <label className={styles.label} htmlFor="displayName">
+          显示名称
+        </label>
         <input
           id="displayName"
           className={styles.input}
@@ -86,7 +92,9 @@ export default function RegisterPage() {
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label} htmlFor="email">邮箱地址</label>
+        <label className={styles.label} htmlFor="email">
+          邮箱地址
+        </label>
         <input
           id="email"
           className={styles.input}
@@ -101,7 +109,9 @@ export default function RegisterPage() {
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label} htmlFor="password">设置密码</label>
+        <label className={styles.label} htmlFor="password">
+          设置密码
+        </label>
         <input
           id="password"
           className={styles.input}
@@ -118,7 +128,9 @@ export default function RegisterPage() {
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label} htmlFor="confirmPassword">确认密码</label>
+        <label className={styles.label} htmlFor="confirmPassword">
+          确认密码
+        </label>
         <input
           id="confirmPassword"
           className={styles.input}
@@ -145,10 +157,10 @@ export default function RegisterPage() {
   return (
     <AuthShell
       title={registrationSuccess ? '验证您的邮箱' : '创建您的账号'}
-      description={registrationSuccess ? '请检查您的收件箱' : '开启 PromptChain 之旅。构建、编排并部署属于您的自主 AI 智能体工作流。'}
+      description={registrationSuccess ? '请前往收件箱完成验证后再登录。' : '创建账号后即可发起、审批并回看完整的 AI 内容工作流。'}
       eyebrow="开始使用"
-      asideHeadline="从构思到自动化"
-      asideBody="PromptChain 是专为开发者与团队设计的 AI 协作引擎。我们提供高性能的多智能体编排能力，让您的创意在数秒内转化为高效的工作流。"
+      asideHeadline="让内容生成进入可编排状态"
+      asideBody="PromptChain 把意图解析、提纲审批、事实核查和最终交付组织成可追踪、可确认、可重跑的工作流。"
       statusSlot={!registrationSuccess ? statusSlot : null}
       footerPrompt={registrationSuccess ? '没收到邮件？请检查垃圾邮件或联系管理员' : '已有账号？'}
       footerLink={registrationSuccess ? '' : '立即登录'}

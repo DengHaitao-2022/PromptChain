@@ -8,8 +8,8 @@ import { AuthShell } from '@/components/AuthShell/AuthShell';
 import styles from './login.module.css';
 
 /**
- * LoginPage: 用户登录页面
- * 使用 AuthShell 提供的电影感深色主题布局
+ * 用户登录页。
+ * 使用统一认证壳体承接首页延展出的视觉语言。
  */
 export default function LoginPage() {
   const router = useRouter();
@@ -36,18 +36,18 @@ export default function LoginPage() {
   return (
     <AuthShell
       title="欢迎回来"
-      description="请使用您的电子邮件和密码访问 PromptChain 仪表板"
-      eyebrow="NEXT-GEN ORCHESTRATION"
-      asideHeadline="连接智能，编排未来"
-      asideBody="基于多智能体协作的自动化工作流引擎，为企业提供极致的生产力工具。"
+      description="登录后继续查看运行状态、审批节点和版本化产物。"
+      eyebrow="认证入口"
+      asideHeadline="进入可追踪的 AI 工作流控制台"
+      asideBody="从首页启动，到运行态审批、事实核查和内容交付，所有关键节点都保持可见。"
       footerPrompt="还没有账号？"
       footerLink="立即注册"
       footerHref="/register"
       statusSlot={
         error && (
           <div className={styles.errorBanner} role="alert">
-            <span aria-hidden="true">⚠️</span>
-            {error}
+            <strong>登录失败</strong>
+            <span>{error}</span>
           </div>
         )
       }
@@ -79,7 +79,7 @@ export default function LoginPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
+            placeholder="请输入登录密码"
             className={styles.input}
             required
             autoComplete="current-password"

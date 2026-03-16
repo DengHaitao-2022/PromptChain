@@ -7,40 +7,34 @@ import styles from '../login/login.module.css';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [error, setError] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success'>('idle');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatus('loading');
-    setError('');
 
     try {
       await forgotPassword(email);
-      // Per requirements, always show a generic success message
       setStatus('success');
     } catch {
-      // Even in case of error, we show the same message
-      // to prevent email enumeration attacks.
+      // 无论接口结果如何，都返回统一提示，避免泄露邮箱是否存在。
       setStatus('success');
     }
   };
 
   const aside = {
-    asideHeadline: '忘记密码？',
-    asideBody: '我们将通过安全的链接，帮助您重获账户访问权限。',
+    asideHeadline: '通过安全链接恢复访问',
+    asideBody: '认证入口会统一回到可审计链路，密码恢复流程同样不暴露账户存在状态。',
   };
 
   const renderStatus = () => {
     if (status === 'success') {
       return (
         <div className={styles.successBanner}>
-           如果该电子邮件地址在我们系统中注册，您将很快收到密码重置链接。
+          <strong>请求已提交</strong>
+          <span>如果该邮箱已注册，系统会向您发送密码重置链接。</span>
         </div>
       );
-    }
-    if (status === 'error' && error) {
-      return <div className={styles.errorBanner}>{error}</div>;
     }
     return null;
   };
@@ -48,7 +42,8 @@ export default function ForgotPasswordPage() {
   return (
     <AuthShell
       title="重置密码"
-      description="请输入您的电子邮件地址，我们将发送给您一个重置链接。"
+      description="请输入您的登录邮箱，我们会发送一封安全的密码重置邮件。"
+      eyebrow="密码恢复"
       statusSlot={renderStatus()}
       asideHeadline={aside.asideHeadline}
       asideBody={aside.asideBody}
@@ -71,9 +66,10 @@ export default function ForgotPasswordPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className={styles.input}
-              placeholder="you@example.com"
+              placeholder="name@company.com"
               disabled={status === 'loading'}
             />
+            <div className={styles.hint}>出于安全考虑，我们不会透露该邮箱是否已注册。</div>
           </div>
           <button type="submit" className={styles.submitButton} disabled={status === 'loading'}>
             {status === 'loading' ? '发送中...' : '发送重置邮件'}
