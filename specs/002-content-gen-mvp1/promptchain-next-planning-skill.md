@@ -44,7 +44,7 @@
    - `frontend/src/lib/api.ts`
    - `backend/graph/content_generation_graph.py`
    - `frontend/src/app/workflow/[id]/page.tsx`
-5. 检查前端分支是否缺少 Gemini 执行记录。
+5. 检查前端分支是否缺少实际执行证据（例如 IDE 智能助手执行记录或用户回报）。
 6. 汇总：
    - 已合入基线
    - 进行中
@@ -60,7 +60,7 @@
 ## Hard Rules
 
 - coordinator 做 sync audit，不默认替 owner 做 merge/rebase/cherry-pick。
-- 前端实际编码必须由 Gemini CLI 完成，Codex 只做统筹、审查、验收、merge gate。
+- 前端实际编码默认由用户在 IDE 智能助手中完成，Codex 只做统筹、派工提示词、审查、验收、merge gate。
 - 不要把 worktree 内的相对路径副本当作共享事实源。
 - 不要把“已经有提交”误判成“已经同步到 dev”。
 

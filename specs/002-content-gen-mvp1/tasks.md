@@ -12,24 +12,26 @@
 - **[Story]**: 对应 `spec.md` 中的用户故事标签
 - 所有任务描述都包含精确文件路径
 
-## Current Status Snapshot (`dev@df88a42`)
+## Current Status Snapshot (`dev@c396a48`)
 
 说明：
 - 本节才是当前派工事实源；下方 Phase/Task 原表保留为规划痕迹，不再直接代表主线进度。
-- “已在 dev”表示代码或文档结果已经进入 `dev@df88a42`。
+- “已在 dev”表示代码或文档结果已经进入 `dev@c396a48`。
 - “部分已在 dev”表示主体能力已进入主线，但仍有共享客户端、页面接线、错误路径或验收残口。
 - “未进入主线”表示当前还不能把该任务视为已收口结果，下一轮派工应优先从这些项继续。
-- 下方原表中的文件路径反映的是规划阶段的修改落点；若当前代码结构已迁移，以 `dev@df88a42` 的真实目录结构为准。
+- 下方原表中的文件路径反映的是规划阶段的修改落点；若当前代码结构已迁移，以 `dev@c396a48` 的真实目录结构为准。
 
 | 状态 | Task IDs | 当前说明 |
 |---|---|---|
 | 历史基线已在 `dev` | `T001`, `T002`, `T003` | 环境示例、启动说明、初始化 SQL 已存在于主线，后续仅在环境契约漂移时再改 |
-| 已在 `dev` | `T004`, `T006`, `T007`, `T008`, `T009`, `T010`, `T012`, `T013`, `T014`, `T015`, `T016`, `T018`, `T019`, `T020`, `T021`, `T022`, `T023`, `T025`, `T026`, `T027`, `T028`, `T029`, `T030`, `T032`, `T033`, `T034`, `T035`, `T038`, `T039`, `T040`, `T041` | 运行态契约/持久化、Gate、首页与详情页主链路、工作流发布闭环、RBAC 与成员管理已经并入主线 |
-| 部分已在 `dev` | `T005`, `T011`, `T036`, `T046` | 共享客户端与首页直连 fetch 仍有漂移；监控/回放已在详情页可用，但 `console/runs` 仍未接真实数据；错误路径已补大头，仍需最后收口 |
-| 未进入主线 | `T017`, `T024`, `T031`, `T037`, `T042`, `T045` | 这些项当前主要缺“可复用的验收闭环”或最终 polish，不应在下一轮被当作已完成 |
-| 本轮文档同步已回填 | `T043`, `T044`, `T047`, `T048` | 契约、协作方式、入口结构与 quickstart 已按 `dev@df88a42` 回写 |
+| 已在 `dev` | `T004`, `T006`, `T007`, `T008`, `T009`, `T010`, `T012`, `T013`, `T014`, `T015`, `T016`, `T018`, `T019`, `T020`, `T021`, `T022`, `T023`, `T025`, `T026`, `T027`, `T028`, `T029`, `T030`, `T032`, `T033`, `T034`, `T035`, `T038`, `T039`, `T040`, `T041` | 运行态契约/持久化、Gate、首页与详情页主链路、工作流发布闭环、RBAC 与成员管理已经并入主线；`c396a48` 进一步确认 auth-flow 已进入 `dev` |
+| 当前剩余主线：运行记录总览页 | `T036`, `T037` | 详情页内 trace/progress 已可用，但 `frontend/src/app/console/runs/page.tsx` 仍未接真实数据，不能当作 US4 主验收入口 |
+| 当前剩余主线：共享客户端与首页启动 | `T005`, `T011` | 共享类型与 Gate/pause API 已有，但首页仍直接 `fetch` 工作流列表/版本/启动接口，尚未完全收拢到统一客户端 |
+| 当前剩余主线：中文文案与错误路径 | `T045`, `T046` | 主要能力已经在 `dev`，但运行台/编辑器/成员页的中文文案与错误路径仍需最后收口 |
+| 当前剩余主线：验收闭环 | `T017`, `T024`, `T031`, `T042` | 这些项主要缺系统化验收结果；`T042` 是 auth/access 验收，不代表 auth-flow 缺实现 |
+| 本轮文档同步已回填 | `T043`, `T044`, `T047`, `T048` | 契约、协作方式、入口结构与 quickstart 已按 `dev@c396a48` 回写 |
 
-下一轮如果继续派工，优先从 `T036/T037`、`T005/T011`、`T045/T046` 与 `T017/T024/T031/T042` 继续，而不是重复派发已经吸收进 `dev` 的实现任务。
+补充事实：`register / verify-email / forgot-password / reset-password / login` 的 auth-flow 已在 `dev@c396a48`；下一轮如果继续派工，优先从 `T036/T037`、`T005/T011`、`T045/T046` 与 `T017/T024/T031/T042` 继续，而不是重复派发已经吸收进 `dev` 的实现任务。
 
 ## Phase 1: Setup (Shared Infrastructure)
 
@@ -64,13 +66,13 @@
 **Goal**: 普通用户能够选择已发布工作流、提交结构化输入、运行标准内容生成链路，并查看终稿与关键中间产物。
 **Independent Test**: 使用普通用户账号从首页发起一个已发布工作流，任务到达终态后可在详情页看到意图卡、提纲、终稿、当前节点/最终状态信息。
 
-- [ ] T011 [US1] Expand start-workflow request handling for published workflow/version selection in `backend/main.py` and `frontend/src/lib/api.ts`
+- [ ] T011 [US1] Expand start-workflow request handling for published workflow/version selection in `backend/routes/workflow_routes.py`, `backend/routes/workflow_helpers.py`, and `frontend/src/lib/api.ts`
 - [ ] T012 [P] [US1] Carry published workflow/version references on runtime records in `backend/models/artifact.py` and `backend/db/postgres_store.py`
 - [ ] T013 [US1] Load published workflow context into start/resume execution paths in `backend/graph/content_generation_graph.py`
 - [ ] T014 [US1] Persist intent, outline, section content, refinement feedback, and final content through PostgreSQL-backed node paths in `backend/nodes/intent_parser.py`, `backend/nodes/outline_generator.py`, `backend/nodes/content_generator.py`, and `backend/nodes/self_refiner.py`
 - [ ] T015 [US1] Build published-workflow selector and structured task creation form in `frontend/src/app/page.tsx`
 - [ ] T016 [US1] Refresh task detail rendering for intent card, outline, final content, and current node in `frontend/src/app/workflow/[id]/page.tsx`, `frontend/src/components/IntentCardViewer/IntentCardViewer.tsx`, `frontend/src/components/OutlineEditor/OutlineEditor.tsx`, and `frontend/src/components/ContentViewer/ContentViewer.tsx`
-- [ ] T017 [US1] Validate the standard generation smoke path from `specs/002-content-gen-mvp1/quickstart.md` against `frontend/src/app/page.tsx` and `backend/main.py`
+- [ ] T017 [US1] Validate the standard generation smoke path from `specs/002-content-gen-mvp1/quickstart.md` against `frontend/src/app/page.tsx`, `backend/routes/workflow_routes.py`, and `backend/routes/workflow_helpers.py`
 
 **Checkpoint**: User Story 1 可独立演示，且不依赖 Gate、编辑器或回放功能即可交付基本价值。
 
@@ -87,7 +89,7 @@
 - [ ] T021 [US2] Add user-driven pause and resume endpoints that stay separate from Gate semantics in `backend/main.py`
 - [ ] T022 [P] [US2] Wire clarify, outline approval, fact-check approval, pause, and resume client calls in `frontend/src/lib/api.ts`
 - [ ] T023 [US2] Implement Gate and paused-state interactions in `frontend/src/app/workflow/[id]/page.tsx`, `frontend/src/components/ClarificationDialog/ClarificationDialog.tsx`, and `frontend/src/components/FactCheckViewer/FactCheckViewer.tsx`
-- [ ] T024 [US2] Validate clarification, approval, and manual pause/resume flows from `specs/002-content-gen-mvp1/quickstart.md` against `backend/main.py` and `frontend/src/app/workflow/[id]/page.tsx`
+- [ ] T024 [US2] Validate clarification, approval, and manual pause/resume flows from `specs/002-content-gen-mvp1/quickstart.md` against `backend/routes/workflow_routes.py`, `backend/routes/workflow_helpers.py`, and `frontend/src/app/workflow/[id]/page.tsx`
 
 **Checkpoint**: User Story 2 可在已有运行链路上独立验证，且能清楚区分 Gate 等待与手动暂停。
 
@@ -135,7 +137,7 @@
 - [ ] T039 [P] [US5] Surface current user role and workspace context consistently in `backend/routes/auth_routes.py` and `frontend/src/contexts/AuthContext.tsx`
 - [ ] T040 [P] [US5] Update client-side permission matrix and navigation guards in `frontend/src/lib/auth.ts` and `frontend/src/app/console/layout.tsx`
 - [ ] T041 [US5] Complete admin member/user management flows for role updates and account enable/disable in `backend/routes/admin_routes.py`, `backend/routes/workspace_routes.py`, and `frontend/src/app/console/settings/members/page.tsx`
-- [ ] T042 [US5] Validate login, menu isolation, and authorization boundaries from `specs/002-content-gen-mvp1/quickstart.md` against `frontend/src/app/login/page.tsx`, `frontend/src/app/console/layout.tsx`, and `backend/routes/auth_routes.py`
+- [ ] T042 [US5] Validate auth-flow, menu isolation, and authorization boundaries from `specs/002-content-gen-mvp1/quickstart.md` against `frontend/src/app/login/page.tsx`, `frontend/src/app/register/page.tsx`, `frontend/src/app/verify-email/page.tsx`, `frontend/src/app/forgot-password/page.tsx`, `frontend/src/app/reset-password/page.tsx`, `frontend/src/app/console/layout.tsx`, and `backend/routes/auth_routes.py`
 
 **Checkpoint**: User Story 5 完成后，权限边界和管理员控制能力可独立验证，不依赖编辑器或回放页面。
 
@@ -148,7 +150,7 @@
 - [ ] T043 [P] Reconcile shipped runtime and realtime contracts in `specs/002-content-gen-mvp1/contracts/runtime-api.md` and `specs/002-content-gen-mvp1/contracts/realtime-events.md`
 - [ ] T044 [P] Reconcile shipped publication and access contracts in `specs/002-content-gen-mvp1/contracts/workflow-definition-api.md` and `specs/002-content-gen-mvp1/contracts/auth-and-access.md`
 - [ ] T045 Review Chinese user-facing copy across `frontend/src/app/page.tsx`, `frontend/src/app/workflow/[id]/page.tsx`, `frontend/src/app/console/workflows/edit/page.tsx`, and `frontend/src/app/console/settings/members/page.tsx`
-- [ ] T046 Harden error-path handling for publish, pause/resume, and role failures in `backend/main.py`, `backend/routes/workflow_definition_routes.py`, and `backend/routes/auth_routes.py`
+- [ ] T046 Harden error-path handling for publish, pause/resume, and role failures in `backend/routes/workflow_routes.py`, `backend/routes/workflow_helpers.py`, `backend/routes/workflow_definition_routes.py`, and `backend/routes/auth_routes.py`
 - [ ] T047 Update final acceptance steps and demo notes in `specs/002-content-gen-mvp1/quickstart.md`
 - [ ] T048 Refresh feature-level implementation context in `AGENTS.md`
 

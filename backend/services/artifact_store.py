@@ -6,14 +6,14 @@ Artifact 版本化存储服务
 2. 版本链可追溯
 3. rerun 创建新版本，不覆盖旧版本
 """
-from typing import Optional, List, Any
-from datetime import datetime
+
 import hashlib
 import json
 import os
+from typing import Any
 
-from models.artifact import Artifact, ArtifactType, NodeRun, WorkflowRun
 from db.postgres_store import PostgresArtifactStore, get_postgres_store
+from models.artifact import Artifact, ArtifactType, NodeRun, WorkflowRun
 
 
 class ArtifactStore:
@@ -40,8 +40,8 @@ class ArtifactStore:
         content: Any,
         workflow_run_id: str,
         node_run_id: str,
-        parent_version_id: Optional[str] = None,
-        metadata: dict = None
+        parent_version_id: str | None = None,
+        metadata: dict = None,
     ) -> Artifact:
         """
         创建新的 Artifact 版本
@@ -71,7 +71,7 @@ class ArtifactStore:
             workflow_run_id=workflow_run_id,
             node_run_id=node_run_id,
             parent_version=parent_version_id,
-            metadata=metadata
+            metadata=metadata,
         )
 
         # 持久化（不可覆盖）
@@ -79,23 +79,20 @@ class ArtifactStore:
 
         return artifact
 
-    async def _get_max_version(
-        self,
-        workflow_run_id: str,
-        artifact_type: ArtifactType
-    ) -> int:
+    async def _get_max_version(self, workflow_run_id: str, artifact_type: ArtifactType) -> int:
         """获取指定工作流中某类型的最大版本号"""
         versions = [
-            a.version for a in self._artifacts.values()
+            a.version
+            for a in self._artifacts.values()
             if a.workflow_run_id == workflow_run_id and a.type == artifact_type
         ]
         return max(versions) if versions else 0
 
-    async def get_artifact(self, artifact_id: str) -> Optional[Artifact]:
+    async def get_artifact(self, artifact_id: str) -> Artifact | None:
         """获取指定 Artifact"""
         return self._artifacts.get(artifact_id)
 
-    async def get_version_history(self, artifact_id: str) -> List[Artifact]:
+    async def get_version_history(self, artifact_id: str) -> list[Artifact]:
         """
         获取 Artifact 的完整版本历史链
 
@@ -114,28 +111,21 @@ class ArtifactStore:
         return list(reversed(history))  # 从旧到新
 
     async def get_latest_by_type(
-        self,
-        workflow_run_id: str,
-        artifact_type: ArtifactType
-    ) -> Optional[Artifact]:
+        self, workflow_run_id: str, artifact_type: ArtifactType
+    ) -> Artifact | None:
         """获取指定工作流中某类型的最新版本"""
         artifacts = [
-            a for a in self._artifacts.values()
+            a
+            for a in self._artifacts.values()
             if a.workflow_run_id == workflow_run_id and a.type == artifact_type
         ]
         if not artifacts:
             return None
         return max(artifacts, key=lambda a: a.version)
 
-    async def get_artifacts_by_workflow(
-        self,
-        workflow_run_id: str
-    ) -> List[Artifact]:
+    async def get_artifacts_by_workflow(self, workflow_run_id: str) -> list[Artifact]:
         """获取工作流的所有 Artifacts"""
-        return [
-            a for a in self._artifacts.values()
-            if a.workflow_run_id == workflow_run_id
-        ]
+        return [a for a in self._artifacts.values() if a.workflow_run_id == workflow_run_id]
 
     # NodeRun 相关方法
     async def create_node_run(self, node_run: NodeRun) -> NodeRun:
@@ -148,19 +138,13 @@ class ArtifactStore:
         self._node_runs[node_run.id] = node_run
         return node_run
 
-    async def get_node_run(self, node_run_id: str) -> Optional[NodeRun]:
+    async def get_node_run(self, node_run_id: str) -> NodeRun | None:
         """获取节点运行记录"""
         return self._node_runs.get(node_run_id)
 
-    async def get_node_runs_by_workflow(
-        self,
-        workflow_run_id: str
-    ) -> List[NodeRun]:
+    async def get_node_runs_by_workflow(self, workflow_run_id: str) -> list[NodeRun]:
         """获取工作流的所有节点运行记录（按时间排序）"""
-        runs = [
-            r for r in self._node_runs.values()
-            if r.workflow_run_id == workflow_run_id
-        ]
+        runs = [r for r in self._node_runs.values() if r.workflow_run_id == workflow_run_id]
         return sorted(runs, key=lambda r: r.started_at)
 
     # WorkflowRun 相关方法
@@ -174,18 +158,35 @@ class ArtifactStore:
         self._workflow_runs[workflow_run.id] = workflow_run
         return workflow_run
 
-    async def get_workflow_run(self, workflow_run_id: str) -> Optional[WorkflowRun]:
+    async def get_workflow_run(self, workflow_run_id: str) -> WorkflowRun | None:
         """获取工作流运行记录"""
         return self._workflow_runs.get(workflow_run_id)
 
-    async def get_all_workflow_runs(self) -> List[WorkflowRun]:
+    async def list_workflow_runs(
+        self,
+        *,
+        workspace_id: str,
+        user_id: str | None = None,
+    ) -> list[WorkflowRun]:
+        """按当前工作空间和用户范围返回可见的运行记录。"""
+        runs = []
+        for workflow_run in self._workflow_runs.values():
+            metadata = workflow_run.metadata or {}
+            if metadata.get("workspace_id") != workspace_id:
+                continue
+            if user_id is not None and metadata.get("user_id") != user_id:
+                continue
+            runs.append(workflow_run)
+        return sorted(runs, key=lambda run: run.started_at, reverse=True)
+
+    async def get_all_workflow_runs(self) -> list[WorkflowRun]:
         """获取所有工作流运行记录（按时间倒序）"""
         runs = list(self._workflow_runs.values())
         return sorted(runs, key=lambda r: r.started_at, reverse=True)
 
 
 # 全局单例
-_artifact_store: Optional[ArtifactStore | PostgresArtifactStore] = None
+_artifact_store: ArtifactStore | PostgresArtifactStore | None = None
 DEFAULT_RUNTIME_STORE_BACKEND = "postgres"
 
 

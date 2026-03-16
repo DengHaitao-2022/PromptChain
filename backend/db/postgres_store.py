@@ -5,11 +5,13 @@ PostgreSQL 存储层
 
 注意：这是生产环境的存储实现，内存存储(artifact_store.py)用于开发调试
 """
-from typing import Optional, List, Any, AsyncIterator, Iterator, Sequence
-from datetime import datetime
+
 import asyncio
 import base64
 import os
+from collections.abc import AsyncIterator, Sequence
+from datetime import datetime
+from typing import Any
 
 from langgraph.checkpoint.base import (
     BaseCheckpointSaver,
@@ -22,25 +24,34 @@ from langgraph.checkpoint.base import (
     get_checkpoint_metadata,
 )
 from sqlalchemy import (
-    Column,
-    String,
-    Integer,
-    DateTime,
-    Text,
-    Boolean,
     JSON,
+    Boolean,
+    Column,
+    DateTime,
     ForeignKey,
+    Integer,
+    String,
+    Text,
+    and_,
     text,
 )
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.future import select
+from sqlalchemy.orm import DeclarativeBase, relationship
 
-from models.artifact import Artifact, ArtifactType, NodeRun, NodeRunStatus, WorkflowRun, WorkflowRunStatus
+from models.artifact import (
+    Artifact,
+    ArtifactType,
+    NodeRun,
+    NodeRunStatus,
+    WorkflowRun,
+    WorkflowRunStatus,
+)
 
 
 class Base(DeclarativeBase):
     """SQLAlchemy 声明式基类"""
+
     pass
 
 
@@ -57,8 +68,10 @@ def _runtime_schema_statements(database_url: str) -> list[str]:
 
 # ==================== ORM 模型定义 ====================
 
+
 class ArtifactORM(Base):
     """Artifact ORM 模型"""
+
     __tablename__ = "artifacts"
 
     id = Column(String(36), primary_key=True)
@@ -84,11 +97,11 @@ class ArtifactORM(Base):
             parent_version=self.parent_version,
             workflow_run_id=self.workflow_run_id,
             node_run_id=self.node_run_id,
-            metadata=self.metadata_json or {}
+            metadata=self.metadata_json or {},
         )
 
     @classmethod
-    def from_model(cls, model: Artifact) -> "ArtifactORM":
+    def from_model(cls, model: Artifact) -> ArtifactORM:
         """从 Pydantic 模型创建"""
         return cls(
             id=model.id,
@@ -100,12 +113,13 @@ class ArtifactORM(Base):
             parent_version=model.parent_version,
             workflow_run_id=model.workflow_run_id,
             node_run_id=model.node_run_id,
-            metadata_json=model.metadata
+            metadata_json=model.metadata,
         )
 
 
 class NodeRunORM(Base):
     """NodeRun ORM 模型"""
+
     __tablename__ = "node_runs"
 
     id = Column(String(36), primary_key=True)
@@ -127,7 +141,7 @@ class NodeRunORM(Base):
 
     def to_model(self) -> NodeRun:
         """转换为 Pydantic 模型"""
-        from models.artifact import LLMCallRecord, HumanDecision
+        from models.artifact import HumanDecision, LLMCallRecord
 
         node_run = NodeRun(
             id=self.id,
@@ -145,12 +159,12 @@ class NodeRunORM(Base):
             human_decision=HumanDecision(**self.human_decision) if self.human_decision else None,
             retry_count=self.retry_count,
             is_rerun=self.is_rerun,
-            rerun_from_node_run_id=self.rerun_from_node_run_id
+            rerun_from_node_run_id=self.rerun_from_node_run_id,
         )
         return node_run
 
     @classmethod
-    def from_model(cls, model: NodeRun) -> "NodeRunORM":
+    def from_model(cls, model: NodeRun) -> NodeRunORM:
         """从 Pydantic 模型创建"""
         return cls(
             id=model.id,
@@ -168,12 +182,13 @@ class NodeRunORM(Base):
             human_decision=model.human_decision.model_dump() if model.human_decision else None,
             retry_count=model.retry_count,
             is_rerun=model.is_rerun,
-            rerun_from_node_run_id=model.rerun_from_node_run_id
+            rerun_from_node_run_id=model.rerun_from_node_run_id,
         )
 
 
 class WorkflowRunORM(Base):
     """WorkflowRun ORM 模型"""
+
     __tablename__ = "workflow_runs"
 
     id = Column(String(36), primary_key=True)
@@ -215,11 +230,11 @@ class WorkflowRunORM(Base):
             total_llm_calls=self.total_llm_calls,
             total_tokens=self.total_tokens,
             total_duration_ms=self.total_duration_ms,
-            metadata=self.metadata_json or {}
+            metadata=self.metadata_json or {},
         )
 
     @classmethod
-    def from_model(cls, model: WorkflowRun) -> "WorkflowRunORM":
+    def from_model(cls, model: WorkflowRun) -> WorkflowRunORM:
         """从 Pydantic 模型创建"""
         return cls(
             id=model.id,
@@ -237,7 +252,7 @@ class WorkflowRunORM(Base):
             total_llm_calls=model.total_llm_calls,
             total_tokens=model.total_tokens,
             total_duration_ms=model.total_duration_ms,
-            metadata_json=model.metadata
+            metadata_json=model.metadata,
         )
 
 
@@ -276,13 +291,13 @@ class GraphCheckpointWriteORM(Base):
 
 # ==================== PostgreSQL 存储服务 ====================
 
+
 class PostgresArtifactStore:
     """PostgreSQL 存储服务"""
 
-    def __init__(self, database_url: Optional[str] = None):
+    def __init__(self, database_url: str | None = None):
         self.database_url = database_url or os.getenv(
-            "DATABASE_URL",
-            "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
+            "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
         )
         self.engine = create_async_engine(self.database_url, echo=False)
         self.async_session = async_sessionmaker(
@@ -314,8 +329,8 @@ class PostgresArtifactStore:
         content: Any,
         workflow_run_id: str,
         node_run_id: str,
-        parent_version_id: Optional[str] = None,
-        metadata: dict = None
+        parent_version_id: str | None = None,
+        metadata: dict = None,
     ) -> Artifact:
         """创建新的 Artifact 版本"""
         import hashlib
@@ -355,7 +370,7 @@ class PostgresArtifactStore:
                 workflow_run_id=workflow_run_id,
                 node_run_id=node_run_id,
                 parent_version=parent_version_id,
-                metadata=metadata
+                metadata=metadata,
             )
 
             # 持久化
@@ -365,17 +380,15 @@ class PostgresArtifactStore:
 
             return artifact
 
-    async def get_artifact(self, artifact_id: str) -> Optional[Artifact]:
+    async def get_artifact(self, artifact_id: str) -> Artifact | None:
         """获取指定 Artifact"""
         await self._ensure_initialized()
         async with self.async_session() as session:
-            result = await session.execute(
-                select(ArtifactORM).where(ArtifactORM.id == artifact_id)
-            )
+            result = await session.execute(select(ArtifactORM).where(ArtifactORM.id == artifact_id))
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
 
-    async def get_version_history(self, artifact_id: str) -> List[Artifact]:
+    async def get_version_history(self, artifact_id: str) -> list[Artifact]:
         """获取 Artifact 的完整版本历史链"""
         history = []
         current = await self.get_artifact(artifact_id)
@@ -402,9 +415,7 @@ class PostgresArtifactStore:
         """更新节点运行记录"""
         await self._ensure_initialized()
         async with self.async_session() as session:
-            result = await session.execute(
-                select(NodeRunORM).where(NodeRunORM.id == node_run.id)
-            )
+            result = await session.execute(select(NodeRunORM).where(NodeRunORM.id == node_run.id))
             orm = result.scalar_one_or_none()
             if orm:
                 # 更新字段
@@ -414,21 +425,21 @@ class PostgresArtifactStore:
                 orm.error_message = node_run.error_message
                 orm.output_artifact_ids = node_run.output_artifact_ids
                 orm.llm_calls = [call.model_dump() for call in node_run.llm_calls]
-                orm.human_decision = node_run.human_decision.model_dump() if node_run.human_decision else None
+                orm.human_decision = (
+                    node_run.human_decision.model_dump() if node_run.human_decision else None
+                )
                 await session.commit()
             return node_run
 
-    async def get_node_run(self, node_run_id: str) -> Optional[NodeRun]:
+    async def get_node_run(self, node_run_id: str) -> NodeRun | None:
         """获取节点运行记录"""
         await self._ensure_initialized()
         async with self.async_session() as session:
-            result = await session.execute(
-                select(NodeRunORM).where(NodeRunORM.id == node_run_id)
-            )
+            result = await session.execute(select(NodeRunORM).where(NodeRunORM.id == node_run_id))
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
 
-    async def get_node_runs_by_workflow(self, workflow_run_id: str) -> List[NodeRun]:
+    async def get_node_runs_by_workflow(self, workflow_run_id: str) -> list[NodeRun]:
         """获取工作流的所有节点运行记录"""
         await self._ensure_initialized()
         async with self.async_session() as session:
@@ -440,7 +451,7 @@ class PostgresArtifactStore:
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
-    async def get_latest_node_run(self, workflow_run_id: str) -> Optional[NodeRun]:
+    async def get_latest_node_run(self, workflow_run_id: str) -> NodeRun | None:
         """获取工作流最近一次节点运行。"""
         await self._ensure_initialized()
         async with self.async_session() as session:
@@ -484,7 +495,7 @@ class PostgresArtifactStore:
                 await session.commit()
             return workflow_run
 
-    async def get_workflow_run(self, workflow_run_id: str) -> Optional[WorkflowRun]:
+    async def get_workflow_run(self, workflow_run_id: str) -> WorkflowRun | None:
         """获取工作流运行记录"""
         await self._ensure_initialized()
         async with self.async_session() as session:
@@ -494,7 +505,28 @@ class PostgresArtifactStore:
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
 
-    async def get_all_workflow_runs(self) -> List[WorkflowRun]:
+    async def list_workflow_runs(
+        self,
+        *,
+        workspace_id: str,
+        user_id: str | None = None,
+    ) -> list[WorkflowRun]:
+        """按当前工作空间和用户范围返回可见的运行记录。"""
+        await self._ensure_initialized()
+        filters = [WorkflowRunORM.metadata_json["workspace_id"].as_string() == workspace_id]
+        if user_id is not None:
+            filters.append(WorkflowRunORM.metadata_json["user_id"].as_string() == user_id)
+
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(WorkflowRunORM)
+                .where(and_(*filters))
+                .order_by(WorkflowRunORM.started_at.desc())
+            )
+            orms = result.scalars().all()
+            return [orm.to_model() for orm in orms]
+
+    async def get_all_workflow_runs(self) -> list[WorkflowRun]:
         """获取所有工作流运行记录"""
         await self._ensure_initialized()
         async with self.async_session() as session:
@@ -504,7 +536,7 @@ class PostgresArtifactStore:
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
-    async def get_artifacts_by_workflow(self, workflow_run_id: str) -> List[Artifact]:
+    async def get_artifacts_by_workflow(self, workflow_run_id: str) -> list[Artifact]:
         """获取工作流的所有 Artifacts"""
         await self._ensure_initialized()
         async with self.async_session() as session:
@@ -516,9 +548,9 @@ class PostgresArtifactStore:
 
     async def get_workflow_context(
         self,
-        workflow_definition_id: Optional[str],
-        workflow_version_id: Optional[str],
-    ) -> Optional[dict]:
+        workflow_definition_id: str | None,
+        workflow_version_id: str | None,
+    ) -> dict | None:
         """加载已发布工作流上下文，供运行态恢复和回放使用。"""
         if not workflow_definition_id and not workflow_version_id:
             return None
@@ -532,9 +564,7 @@ class PostgresArtifactStore:
 
             if workflow_version_id:
                 version_result = await session.execute(
-                    select(WorkflowVersionORM).where(
-                        WorkflowVersionORM.id == workflow_version_id
-                    )
+                    select(WorkflowVersionORM).where(WorkflowVersionORM.id == workflow_version_id)
                 )
                 version = version_result.scalar_one_or_none()
 
@@ -562,7 +592,7 @@ class PostgresGraphCheckpointSaver(BaseCheckpointSaver[str]):
 
     def __init__(
         self,
-        store: Optional[PostgresArtifactStore] = None,
+        store: PostgresArtifactStore | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -580,7 +610,7 @@ class PostgresGraphCheckpointSaver(BaseCheckpointSaver[str]):
         self,
         session: AsyncSession,
         config: RunnableConfig,
-    ) -> Optional[GraphCheckpointORM]:
+    ) -> GraphCheckpointORM | None:
         thread_id: str = config["configurable"]["thread_id"]
         checkpoint_ns: str = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = get_checkpoint_id(config)
@@ -681,9 +711,7 @@ class PostgresGraphCheckpointSaver(BaseCheckpointSaver[str]):
                 if checkpoint_id:
                     query = query.where(GraphCheckpointORM.checkpoint_id == checkpoint_id)
             if before is not None and get_checkpoint_id(before):
-                query = query.where(
-                    GraphCheckpointORM.checkpoint_id < get_checkpoint_id(before)
-                )
+                query = query.where(GraphCheckpointORM.checkpoint_id < get_checkpoint_id(before))
             query = query.order_by(GraphCheckpointORM.created_at.desc())
             if limit is not None:
                 query = query.limit(limit)
@@ -794,8 +822,8 @@ class PostgresGraphCheckpointSaver(BaseCheckpointSaver[str]):
 
 
 # 全局实例
-_postgres_store: Optional[PostgresArtifactStore] = None
-_postgres_checkpoint_saver: Optional[PostgresGraphCheckpointSaver] = None
+_postgres_store: PostgresArtifactStore | None = None
+_postgres_checkpoint_saver: PostgresGraphCheckpointSaver | None = None
 
 
 def get_postgres_store() -> PostgresArtifactStore:
@@ -810,9 +838,7 @@ def get_postgres_checkpoint_saver() -> PostgresGraphCheckpointSaver:
     """获取 LangGraph PostgreSQL checkpoint saver 单例。"""
     global _postgres_checkpoint_saver
     if _postgres_checkpoint_saver is None:
-        _postgres_checkpoint_saver = PostgresGraphCheckpointSaver(
-            store=get_postgres_store()
-        )
+        _postgres_checkpoint_saver = PostgresGraphCheckpointSaver(store=get_postgres_store())
     return _postgres_checkpoint_saver
 
 

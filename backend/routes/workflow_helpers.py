@@ -3,6 +3,7 @@
 
 提供状态规范化、响应构建、Gate/Pause 状态处理等共享逻辑
 """
+
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -31,6 +32,7 @@ FactCheckDecision = Literal["confirm", "use_suggestion", "manual"]
 
 class StartWorkflowRequest(BaseModel):
     """启动工作流请求"""
+
     user_input: str
     workflow_definition_id: str | None = None
     workflow_version_id: str | None = None
@@ -38,6 +40,7 @@ class StartWorkflowRequest(BaseModel):
 
 class ApproveOutlineRequest(BaseModel):
     """提纲审批请求"""
+
     action: OutlineAction
     feedback: str | None = ""
     modified_outline: dict[str, Any] | None = None
@@ -45,27 +48,32 @@ class ApproveOutlineRequest(BaseModel):
 
 class ClarifyRequest(BaseModel):
     """澄清回答请求"""
+
     clarifications: dict[str, str]  # {field: answer}
 
 
 class ApproveFactCheckRequest(BaseModel):
     """事实核查审批请求"""
+
     decisions: dict[str, FactCheckDecision]
     manual_corrections: dict[str, str] = Field(default_factory=dict)
 
 
 class PauseWorkflowRequest(BaseModel):
     """手动暂停工作流请求"""
+
     reason: str | None = None
 
 
 class ResumeWorkflowRequest(BaseModel):
     """恢复手动暂停的工作流请求"""
+
     pass
 
 
 class RerunRequest(BaseModel):
     """重跑请求"""
+
     from_node: str
     updated_input: dict[str, Any] | None = None
     reason: str | None = ""
@@ -73,9 +81,29 @@ class RerunRequest(BaseModel):
 
 class WorkflowResponse(BaseModel):
     """工作流响应"""
+
     workflow_run_id: str
     status: WorkflowStatus
     state: dict[str, Any]
+
+
+class WorkflowRunListItem(BaseModel):
+    """控制台运行记录列表项"""
+
+    id: str
+    workflow_name: str
+    status: WorkflowStatus
+    current_node: str | None = None
+    user_input: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    total_duration_ms: int | None = None
+
+
+class WorkflowRunListResponse(BaseModel):
+    """控制台运行记录列表响应"""
+
+    runs: list[WorkflowRunListItem]
 
 
 # ==================== Gate 状态映射 ====================
@@ -121,6 +149,34 @@ def _build_workflow_response(
     )
 
 
+def _get_workflow_public_status(workflow_run: Any) -> WorkflowStatus:
+    """优先返回持久化的公开状态，避免列表页只能看到原始 running/paused。"""
+    raw_status = _get_workflow_run_status(workflow_run)
+    if raw_status in {"paused", "completed", "failed"}:
+        return _normalize_status(raw_status)
+
+    metadata = _ensure_workflow_metadata(workflow_run)
+    return _normalize_status(metadata.get("last_public_status") or raw_status)
+
+
+def _build_workflow_run_list_response(workflow_runs: list[Any]) -> WorkflowRunListResponse:
+    """构建控制台运行记录列表响应。"""
+    runs = [
+        WorkflowRunListItem(
+            id=workflow_run.id,
+            workflow_name=getattr(workflow_run, "workflow_name", "content_generation"),
+            status=_get_workflow_public_status(workflow_run),
+            current_node=getattr(workflow_run, "current_node", None),
+            user_input=getattr(workflow_run, "user_input", ""),
+            started_at=workflow_run.started_at,
+            completed_at=getattr(workflow_run, "completed_at", None),
+            total_duration_ms=getattr(workflow_run, "total_duration_ms", None),
+        )
+        for workflow_run in workflow_runs
+    ]
+    return WorkflowRunListResponse(runs=runs)
+
+
 # ==================== 运行时上下文 ====================
 
 
@@ -132,7 +188,9 @@ async def _get_workflow_run_if_exists(workflow_run_id: str) -> Any | None:
     return await store.get_workflow_run(workflow_run_id)
 
 
-async def require_workspace_permission(request: Request, resource: str, action: str) -> tuple[str, str, MemberRole]:
+async def require_workspace_permission(
+    request: Request, resource: str, action: str
+) -> tuple[str, str, MemberRole]:
     """基于当前 access token 和工作空间上下文校验权限。"""
     from db.postgres_store import get_postgres_store
     from routes.auth_routes import get_current_user
@@ -157,7 +215,9 @@ async def require_workspace_permission(request: Request, resource: str, action: 
     return user_id, workspace_id, role
 
 
-async def annotate_workflow_run_ownership(workflow_run_id: str, user_id: str, workspace_id: str) -> Any | None:
+async def annotate_workflow_run_ownership(
+    workflow_run_id: str, user_id: str, workspace_id: str
+) -> Any | None:
     """为运行记录补充最小归属信息。"""
     from services import get_artifact_store
 
@@ -241,6 +301,7 @@ async def require_artifact_access(request: Request, artifact_id: str) -> Any:
 async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, dict, WorkflowStatus]:
     """加载工作流运行时上下文（store, workflow, workflow_run, graph_state, status）"""
     from fastapi import HTTPException
+
     from graph import get_workflow
     from services import get_artifact_store
 
@@ -277,7 +338,9 @@ def _assert_status(
 # ==================== 状态简化 ====================
 
 
-def _simplify_state(state: dict, *, workflow_run: Any | None = None, status: WorkflowStatus | None = None) -> dict:
+def _simplify_state(
+    state: dict, *, workflow_run: Any | None = None, status: WorkflowStatus | None = None
+) -> dict:
     """简化状态返回，移除大型对象"""
     simplified = {}
 
@@ -294,7 +357,7 @@ def _simplify_state(state: dict, *, workflow_run: Any | None = None, status: Wor
                 simplified[key] = {
                     section_id: {
                         "preview": content[:100] + "..." if len(content) > 100 else content,
-                        "word_count": len(content)
+                        "word_count": len(content),
                     }
                     for section_id, content in value.items()
                 }
@@ -314,6 +377,9 @@ def _simplify_state(state: dict, *, workflow_run: Any | None = None, status: Wor
         simplified["current_node"] = current_node
 
     error = state.get("error")
+    if not error and workflow_run is not None:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        error = metadata.get("error")
     if error:
         simplified["error"] = error
 
@@ -382,7 +448,7 @@ def _ensure_workflow_metadata(workflow_run: Any) -> dict[str, Any]:
     if isinstance(metadata, dict):
         return metadata
     metadata = {}
-    setattr(workflow_run, "metadata", metadata)
+    workflow_run.metadata = metadata
     return metadata
 
 
@@ -572,7 +638,11 @@ def _normalize_trace_payload(
     workflow_payload = dict(trace.get("workflow") or {})
     workflow_payload["status"] = status
 
-    current_node = graph_state.get("current_node") or workflow_payload.get("current_node") or getattr(workflow_run, "current_node", None)
+    current_node = (
+        graph_state.get("current_node")
+        or workflow_payload.get("current_node")
+        or getattr(workflow_run, "current_node", None)
+    )
     if current_node:
         workflow_payload["current_node"] = current_node
 
@@ -629,7 +699,9 @@ def _enrich_timeline(
     if gate and "workflow_gate_waiting" not in event_names:
         events.append(
             {
-                "timestamp": gate.get("opened_at") or _coerce_iso(getattr(workflow_run, "started_at", None)) or _now_iso(),
+                "timestamp": gate.get("opened_at")
+                or _coerce_iso(getattr(workflow_run, "started_at", None))
+                or _now_iso(),
                 "event": "workflow_gate_waiting",
                 "gate_type": gate["gate_type"],
                 "questions": gate.get("questions", []),

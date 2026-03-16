@@ -1,10 +1,12 @@
 # Auth & Access Contract
 
-## 0. Current Baseline (`dev@df88a42`)
+## 0. Current Baseline (`dev@c396a48`)
 
 - `viewer` 现在已经具备 `workflow.read` + `workflow.execute`，可运行已发布工作流并处理自己的 Gate。
 - 运行态、trace、artifact 访问现在同时校验 `workspace_id` 与 `user_id` 归属；`admin` / `owner` 才能跨用户查看同工作空间数据。
 - 当前工作空间级“暂停访问”通过 membership role 编码实现，是 workspace-scoped 行为，不再直接依赖全局 `User.status`。
+- `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 的 auth-flow 页面和接口闭环已在 `dev`。
+- 鉴权域当前剩余主线只剩 `T042` 验收闭环与 `T046` 错误路径 polish，不再是 auth-flow 缺失。
 
 ## 1. Session Transport
 
@@ -79,4 +81,5 @@
 ## 6. Compatibility Notes
 
 - `viewer` 执行权限、控制台导航守卫、成员管理页与运行态归属校验都已经进入主线。
+- 认证前端页与成功/失败态已进入主线；`T042` 只负责验证登录、菜单隔离与授权边界是否与 quickstart 一致。
 - `GET /api/me` 继续作为前端初始化身份、当前工作空间与角色菜单的权威入口。

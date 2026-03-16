@@ -72,6 +72,7 @@ PromptChain 是一个以 `Prompt Chain + LangGraph` 为核心的 AI 内容生成
 ### 2.3 前端主链路
 - 首页启动工作流：`frontend/src/app/page.tsx`
 - 工作流详情页（轮询状态 + 审批交互）：`frontend/src/app/workflow/[id]/page.tsx`
+- 认证闭环页面：`frontend/src/app/register/page.tsx`、`frontend/src/app/login/page.tsx`、`frontend/src/app/verify-email/page.tsx`、`frontend/src/app/forgot-password/page.tsx`、`frontend/src/app/reset-password/page.tsx`
 - 控制台布局与认证状态：`frontend/src/app/console/layout.tsx` + `frontend/src/contexts/AuthContext.tsx`
 - 可视化编辑器：`frontend/src/components/WorkflowEditor/*`（React Flow）
 
@@ -97,9 +98,9 @@ API 客户端集中在：
 当前内容工作流链路默认走 **PostgreSQL-backed runtime store**。只有显式设置 `RUNTIME_STORE_BACKEND=memory` 时才回退到内存实现。
 
 这意味着：
-- `dev@df88a42` 的默认基线已经具备运行态持久化
+- `dev@c396a48` 的默认基线已经具备运行态持久化
 - 内存 store 现在只是开发回退，不再是主线事实
-- 根工作区中未跟踪的 `backend/orm/` 目录不属于当前 canonical 主线结构
+- `backend/orm/*` 已进入当前仓库历史，可作为 ORM 目录事实源；本地未跟踪内容仍不应反向覆盖仓库现实
 
 ---
 
@@ -109,11 +110,17 @@ API 客户端集中在：
 - HttpOnly Cookie：`access_token` + `refresh_token`
 - Access Token 默认 15 分钟，Refresh Token 7 天
 - 注册后需邮箱验证激活账号
+- `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 的页面闭环已在 `dev@c396a48`
 
 关键文件：
 - `backend/routes/auth_routes.py`
 - `backend/services/auth_service.py`
 - `backend/services/email_service.py`
+- `frontend/src/app/register/page.tsx`
+- `frontend/src/app/login/page.tsx`
+- `frontend/src/app/verify-email/page.tsx`
+- `frontend/src/app/forgot-password/page.tsx`
+- `frontend/src/app/reset-password/page.tsx`
 
 ### 4.2 RBAC
 角色：`viewer / editor / admin / owner`
@@ -155,28 +162,97 @@ npm run dev
 本地变量：`frontend/.env.local`
 - `NEXT_PUBLIC_API_URL=http://localhost:8000`
 
+### 5.4 Spec Kit 与 Superpowers 使用约定
+
+#### Spec Kit（已全局安装）
+
+- 当前机器上 `specify` 已全局可用，可直接检查：
+
+```bash
+specify check
+```
+
+- 若需要在现有仓库中重新补齐/刷新 speckit 模板，优先使用：
+
+```bash
+specify init --here --ai codex
+```
+
+- 若当前目录非空且明确需要强制合并模板，再使用：
+
+```bash
+specify init --here --ai codex --force
+```
+
+- 在 Codex 交互环境中，speckit 命令应优先使用 **slash prompt** 形式，而不是裸 `/speckit.*`：
+  - `/prompts:speckit.constitution`
+  - `/prompts:speckit.specify`
+  - `/prompts:speckit.clarify`
+  - `/prompts:speckit.plan`
+  - `/prompts:speckit.tasks`
+  - `/prompts:speckit.analyze`
+  - `/prompts:speckit.checklist`
+  - `/prompts:speckit.implement`
+
+- Codex 中不要假设 `/speckit.specify` 这种裸命令可用；本仓库应统一使用 `/prompts:speckit.*`。
+- 若要基于 Spec-Driven Development 开新特性，推荐顺序是：
+  1. `/prompts:speckit.constitution`
+  2. `/prompts:speckit.specify`
+  3. `/prompts:speckit.clarify`
+  4. `/prompts:speckit.plan`
+  5. `/prompts:speckit.tasks`
+  6. `/prompts:speckit.analyze`
+  7. `/prompts:speckit.implement`
+
+#### Superpowers
+
+- 当前仓库默认启用 superpowers 工作流；进入任何新任务时，先按 `using-superpowers` 选择和加载合适 skill。
+- process skill 优先于 implementation skill：
+  - 设计/新功能前先 `brainstorming`
+  - 多步骤落地前先 `writing-plans`
+  - 按计划执行时用 `subagent-driven-development` 或 `executing-plans`
+  - 收尾前用 `verification-before-completion`
+  - 评审前后分别用 `requesting-code-review` / `receiving-code-review`
+- 若任务是多 agent 协作、队列规划、分支/依赖编排，优先结合：
+  - `using-superpowers`
+  - `task-coordination-strategies`
+- 若任务是 bug / 回归 /异常行为定位，优先结合：
+  - `using-superpowers`
+  - `systematic-debugging`
+  - `verification-before-completion`
+- Superpowers 的默认理念在本仓库内继续有效：
+  - 先澄清 what/why，再做 how
+  - evidence before claims
+  - KISS / YAGNI / SOLID 优先
+  - 能通过 worktree 隔离的实现，不在主工作区直接展开
+
 ---
 
-## 6. 当前实现状态评估（以 `dev@df88a42` 为准）
+## 6. 当前实现状态评估（以 `dev@c396a48` 为准）
 
 1. 运行态主链路已在主线
 - `WorkflowResponse`、pause/resume、clarify、outline approval、fact-check approval、rerun、rerun-history 都已在 `backend/routes/workflow_routes.py` 落地。
 - 运行态访问控制和 trace 归属校验已在 `backend/routes/workflow_helpers.py`、`backend/routes/trace_routes.py` 收口。
 
-2. 内容生成首页与详情页闭环已在主线
+2. auth-flow 已在主线
+- `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 页面链路已并入 `dev`。
+- `GET /api/me` 继续作为前端初始化身份、当前工作空间与角色菜单的权威入口。
+
+3. 内容生成首页与详情页闭环已在主线
 - 首页 `frontend/src/app/page.tsx` 已支持已发布工作流与版本选择，并可直接启动任务。
 - 详情页 `frontend/src/app/workflow/[id]/page.tsx` 已接通 Gate、pause/resume、trace、意图卡、提纲、终稿与事实核查审批。
 
-3. 工作流编辑/发布闭环已在主线
+4. 工作流编辑/发布闭环已在主线
 - `backend/routes/workflow_definition_routes.py`、`backend/routes/workflow_version_routes.py` 与 `frontend/src/app/console/workflows/*` 已支持 CRUD、validate、publish、compare、restore 和已发布状态展示。
 
-4. RBAC 与成员管理已在主线
+5. RBAC 与成员管理已在主线
 - `viewer / editor / admin / owner` 权限矩阵、控制台布局守卫、成员管理页、工作空间级运行态归属保护均已并入 `dev`。
 
-5. 当前残余缺口
-- `frontend/src/lib/api.ts` 仍未完全成为首页/运行态的唯一客户端入口；首页列表/版本/启动仍有直接 `fetch` 逻辑。
-- `frontend/src/app/console/runs/page.tsx` 仍是占位实现，US4 的总览页监控入口尚未收口。
-- 文案 audit 与错误路径 final polish 仍可继续，但不再属于“主链路缺失”。
+6. 当前剩余主线仅为四组任务
+- `T036/T037`：`frontend/src/app/console/runs/page.tsx` 仍是占位实现，US4 的总览页监控/回放入口尚未收口。
+- `T005/T011`：`frontend/src/lib/api.ts` 仍未完全成为首页/运行态的唯一客户端入口；首页列表/版本/启动仍有直接 `fetch` 逻辑。
+- `T045/T046`：中文文案与错误路径仍需最后一轮收口。
+- `T017/T024/T031/T042`：US1/US2/US3/US5 还缺可复用的验收闭环；其中 `T042` 是 auth/access 验收，不代表 auth-flow 尚未实现。
 
 ---
 
@@ -194,11 +270,11 @@ npm run dev
 - 页面层偏 `app/*`，复杂逻辑放 hooks/lib/components
 - API 访问默认 `credentials: include`（依赖 Cookie）
 - 页面元素的用户可见文本（如标题、按钮、导航、表单标签、占位提示、空状态、错误提示）默认尽量使用中文；仅在专有名词、协议字段、代码标识或必须保留英文的场景下使用英文。
-- 凡涉及 `frontend/` 下任何代码文件的新增、修改、重构、样式调整、交互实现、动画实现、页面实现、组件实现、hooks/lib 客户端实现，代码编写必须由 Gemini CLI 执行，并在 `gemini` 中使用 `/ui-ux-pro-max` 完成；这条规则同样适用于 `frontend/src/lib/api.ts`、`frontend/src/lib/auth.ts` 等前端契约与客户端代码。
-- Gemini CLI 的模型选择规则固定为：默认优先 `gemini-3.1-pro-preview`；若该模型因容量、网络或服务可用性不可用，则首推回退到 `gemini-2.5-pro`；只有当 `gemini-2.5-pro` 也不可用时，才允许继续回退到其他 Gemini 模型。每次回退都必须在共享日志或执行记录中显式说明，不得静默切换。
-- Codex 在前端任务中的职责仅限于统筹分工、定义接口约束、准备任务说明、检查 diff、做 CR、执行验收和控制合并 gate；除非用户明确推翻本规则，否则 Codex 不直接编写前端业务代码。
+- 凡涉及 `frontend/` 下任何代码文件的新增、修改、重构、样式调整、交互实现、动画实现、页面实现、组件实现、hooks/lib 客户端实现，默认工作流改为：Codex 产出可直接粘贴的任务提示词、文件边界、验收标准和 CR gate，由用户在 IDE 的智能助手中实际执行编码；这条规则同样适用于 `frontend/src/lib/api.ts`、`frontend/src/lib/auth.ts` 等前端契约与客户端代码。
+- 若用户在 IDE 智能助手中执行前端任务，Codex 不再强制要求 Gemini CLI 或固定模型顺序；Gemini CLI 仅作为可选实现渠道，不再是默认执行路径。
+- Codex 在前端任务中的职责仅限于统筹分工、定义接口约束、准备任务说明、检查 diff、做 CR、执行验收和控制合并 gate；除非用户明确推翻本规则，否则 Codex 不直接编写前端业务代码，也不直接代替用户调用 IDE 智能助手。
 - 凡涉及前端代码落地的开发任务，必须使用 `git worktree` 隔离工作区；优先进入对应已有的 `code/feat/*` 分支 worktree，如不存在则先新建 `code/feat/*` 分支与 worktree 后再开发。
-- 每个前端任务在申请评审前，必须在共享日志中记录对应 Gemini worktree、分支和执行说明；没有这条记录，不得进入 `spec-review`、`code-review` 或合并流程。
+- 每个前端任务在申请评审前，必须在共享日志中记录对应 worktree、分支、执行者（例如 IDE 智能助手）和执行说明；没有这条记录，不得进入 `spec-review`、`code-review` 或合并流程。
 
 ### 7.3 当前仓库偏好（来自项目记忆）
 - 更偏向产出总结文档
@@ -206,14 +282,14 @@ npm run dev
 - 不默认自动运行/编译
 
 ### 7.4 当前协作事实源
-- 主线事实固定以当前 `dev` 分支 head 为准；本轮文档同步基线为 `df88a42`。
+- 主线事实固定以当前 `dev` 分支 head 为准；本轮文档同步基线为 `c396a48`。
 - 多 agent 协作只认以下 canonical 文件：
   - `specs/002-content-gen-mvp1/subagent-events.jsonl`
   - `specs/002-content-gen-mvp1/subagent-locks.json`
   - `specs/002-content-gen-mvp1/gemini-executions.jsonl`
   - `specs/002-content-gen-mvp1/subagent-handoffs.jsonl`
 - `specs/002-content-gen-mvp1/subagent-tasks.md` 当前只保留“主线现状快照 + 下一轮派工入口”，不再复用旧 owner 表直接分派任务。
-- 根工作区中的 `.cunzhi-memory/*`、`backend/orm/` 等本地运行态/未跟踪内容不是主线事实源。
+- 根工作区中的 `.cunzhi-memory/*` 等本地运行态/未跟踪内容不是主线事实源；已跟踪的 `backend/orm/*` 属于当前主线结构。
 
 ---
 
@@ -221,14 +297,17 @@ npm run dev
 
 当你要继续开发时，建议按以下顺序推进：
 
-1. 先补 US4 总览页与验收闭环
-- 优先完成 `frontend/src/app/console/runs/page.tsx` 真数据接线，以及 US3/US4 的 acceptance-gap audit。
+1. 先补 `T036/T037`
+- 优先完成 `frontend/src/app/console/runs/page.tsx` 真数据接线，以及 US4 的总览页监控/回放入口。
 
-2. 再统一首页与共享运行态客户端
+2. 再补 `T005/T011`
 - 以 `frontend/src/lib/api.ts` 为目标契约，收拢首页当前的直接 `fetch`，避免双轨客户端继续漂移。
 
-3. 最后做 copy / error-path polish
-- 集中处理 `T045` / `T046` 这类中文文案与错误路径收口，而不是重复开发已经在主线的功能。
+3. 再补 `T045/T046`
+- 集中处理运行台、编辑器、成员页的中文文案与错误路径收口，而不是重复开发已经在主线的功能。
+
+4. 最后补 `T017/T024/T031/T042`
+- 把 US1/US2/US3/US5 的 quickstart 验收闭环沉淀成可复用结果；其中 `T042` 只做 auth/access 验收，不再重复实现认证页面。
 
 ---
 
@@ -244,7 +323,7 @@ npm run dev
   - Trace/Artifact API：`routes/trace_routes.py`
   - 共享模型/工具：`routes/workflow_helpers.py`
 - 服务层：`backend/services/*.py`
-- DB/ORM：`backend/db/postgres_store.py`, `backend/models/*_orm.py`
+- DB/ORM：`backend/db/postgres_store.py`, `backend/orm/*`, `backend/models/*_orm.py`
 - 前端页面：`frontend/src/app/**/*`
 - 前端组件：`frontend/src/components/**/*`
 - 前端 API：`frontend/src/lib/api.ts`, `frontend/src/lib/auth.ts`
@@ -389,7 +468,7 @@ npm run dev
 4. **知识权威性优先**：本地代码上下文优先通过语义搜索和代码检索确认；第三方库、框架、API、标准等不稳定知识优先通过官方文档或 `context7` 获取。
 5. **默认静默执行，但不牺牲闭环**：除非用户明确要求、任务完成必须验证，或上层系统要求，不主动扩展为额外文档、测试、编译、运行；但若缺少验证会导致结果不可信，则应主动补最小必要验证。
 6. **中文优先**：页面元素用户可见文本、必要注释、日志说明、交互文案默认尽量使用中文；仅在专有名词、协议字段、代码标识、第三方 API 约定或必须保留英文的场景使用英文。
-7. **前端执行权归 Gemini**：凡属 `frontend/` 目录下的代码实现任务，默认由 Gemini CLI 负责实际编码；Codex 只负责统筹、审查、验收和合并 gate，不直接代写前端代码。
+7. **前端执行权归用户的 IDE 智能助手**：凡属 `frontend/` 目录下的代码实现任务，默认由用户在 IDE 中运行智能助手完成实际编码；Codex 只负责输出可粘贴任务提示词、做统筹、审查、验收和合并 gate，不直接代写前端代码。
 
 ### 11.3 记忆协议（长期协作核心）
 
@@ -492,7 +571,7 @@ npm run dev
 - 结构化用户交互：`mcp__cunzhi__zhi`
 - 项目语义搜索：`mcp__cunzhi__sou`
 - 官方/最新文档：`mcp__context7__resolve-library-id` + `mcp__context7__query-docs`
-- 前端代码实现：Gemini CLI 中的 `/ui-ux-pro-max`
+- 前端代码实现：默认由用户在 IDE 智能助手中执行，Codex 负责给出可粘贴提示词、文件边界和验收标准
 - 前端隔离开发：`git worktree`
 - 共享实时协作文件：根仓库 `specs/002-content-gen-mvp1/` 下的 canonical 绝对路径文件
 - 本地文件编辑：优先使用补丁式修改，保持变更小而清晰
@@ -524,6 +603,10 @@ npm run dev
 ## Active Technologies
 - Python 3.14+（backend）, TypeScript 5 + React 19 + Next.js 16（frontend） + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, Next.js App Router, React, `@xyflow/react`, Radix UI (002-content-gen-mvp1)
 - 现状为 PostgreSQL（认证/工作空间/工作流定义）+ 内存 `ArtifactStore`（内容运行态）；目标为 PostgreSQL 统一承载运行态 `WorkflowRun` / `NodeRun` / `Artifact` / 会话状态，内存存储仅作开发期回退 (002-content-gen-mvp1)
+- Python 3.14+ + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, `langchain-core`, `langchain-openai`, `langchain-anthropic`, `langchain-community`, 目标新增 `langchain-google-genai` (003-provider-architecture)
+- N/A（本特性只改配置与 provider 解析，不涉及数据库或持久化模型） (003-provider-architecture)
+- Python 3.14+ + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, `langchain`, `langchain-core`, `langchain-openai`, `langchain-anthropic`, 新增 `langchain-google-genai`, `python-dotenv` (003-provider-architecture)
+- N/A（本特性不新增持久化模型；仅涉及运行时配置与 provider 构造） (003-provider-architecture)
 
 ## Recent Changes
 - 002-content-gen-mvp1: Added Python 3.14+（backend）, TypeScript 5 + React 19 + Next.js 16（frontend） + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, Next.js App Router, React, `@xyflow/react`, Radix UI

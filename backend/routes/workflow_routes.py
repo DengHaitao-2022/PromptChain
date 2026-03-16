@@ -3,10 +3,12 @@
 
 提供工作流的启动、暂停、恢复、审批、重跑等接口
 """
+
 from fastapi import APIRouter, HTTPException, Request
 
 import routes.workflow_helpers as workflow_helpers
 from routes.workflow_helpers import (
+    _GATE_STATUSES,
     ApproveFactCheckRequest,
     ApproveOutlineRequest,
     ClarifyRequest,
@@ -15,11 +17,13 @@ from routes.workflow_helpers import (
     ResumeWorkflowRequest,
     StartWorkflowRequest,
     WorkflowResponse,
+    WorkflowRunListResponse,
     _assert_status,
     _build_workflow_response,
+    _build_workflow_run_list_response,
     _ensure_workflow_metadata,
-    _GATE_STATUSES,
     _get_workflow_run_if_exists,
+    _is_admin_role,
     _load_runtime_context,
     _normalize_status,
     _now_iso,
@@ -41,7 +45,9 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
     from graph import get_workflow
 
     try:
-        user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(request, "workflow", "execute")
+        user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
+            request, "workflow", "execute"
+        )
         workflow = get_workflow()
         result = await workflow.start(
             body.user_input,
@@ -49,11 +55,14 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
             workflow_version_id=body.workflow_version_id,
         )
         workflow_run = await _get_workflow_run_if_exists(result["workflow_run_id"])
-        workflow_run = await workflow_helpers.annotate_workflow_run_ownership(
-            result["workflow_run_id"],
-            user_id,
-            workspace_id,
-        ) or workflow_run
+        workflow_run = (
+            await workflow_helpers.annotate_workflow_run_ownership(
+                result["workflow_run_id"],
+                user_id,
+                workspace_id,
+            )
+            or workflow_run
+        )
         status = _normalize_status(result["status"])
         return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
@@ -71,8 +80,12 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
 async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWorkflowRequest):
     """用户主动暂停工作流"""
     try:
-        await workflow_helpers.require_workflow_run_access(request, workflow_run_id, resource="workflow", action="execute")
-        store, workflow, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+        await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow", action="execute"
+        )
+        store, workflow, workflow_run, graph_state, status = await _load_runtime_context(
+            workflow_run_id
+        )
 
         if status in _GATE_STATUSES:
             raise HTTPException(
@@ -125,9 +138,14 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
 async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkflowRequest):
     """恢复用户手动暂停的工作流"""
     try:
-        await workflow_helpers.require_workflow_run_access(request, workflow_run_id, resource="workflow", action="execute")
-        store, workflow, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+        await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow", action="execute"
+        )
+        store, workflow, workflow_run, graph_state, status = await _load_runtime_context(
+            workflow_run_id
+        )
         from routes.workflow_helpers import _get_workflow_run_status
+
         raw_status = _get_workflow_run_status(workflow_run)
 
         if status in _GATE_STATUSES:
@@ -175,7 +193,9 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
     - regenerate: 重新生成（可提供 feedback）
     """
     try:
-        await workflow_helpers.require_workflow_run_access(request, workflow_run_id, resource="workflow", action="execute")
+        await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow", action="execute"
+        )
         _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
         _assert_status(
             status,
@@ -187,7 +207,7 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
             workflow_run_id=workflow_run_id,
             action=body.action,
             feedback=body.feedback or "",
-            modified_outline=body.modified_outline
+            modified_outline=body.modified_outline,
         )
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
         return _build_workflow_response(
@@ -206,7 +226,9 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
 async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRequest):
     """提供澄清回答"""
     try:
-        await workflow_helpers.require_workflow_run_access(request, workflow_run_id, resource="workflow", action="execute")
+        await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow", action="execute"
+        )
         _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
         _assert_status(
             status,
@@ -215,8 +237,7 @@ async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRe
             paused_detail="当前工作流已手动暂停，请先恢复后再提交澄清回答。",
         )
         result = await workflow.resume(
-            workflow_run_id=workflow_run_id,
-            user_input={"user_clarifications": body.clarifications}
+            workflow_run_id=workflow_run_id, user_input={"user_clarifications": body.clarifications}
         )
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
         return _build_workflow_response(
@@ -235,7 +256,9 @@ async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRe
 async def approve_fact_check(workflow_run_id: str, request: Request, body: ApproveFactCheckRequest):
     """处理事实核查高风险项审批"""
     try:
-        await workflow_helpers.require_workflow_run_access(request, workflow_run_id, resource="workflow", action="execute")
+        await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow", action="execute"
+        )
         _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
         _assert_status(
             status,
@@ -258,6 +281,31 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/runs", response_model=WorkflowRunListResponse)
+async def list_workflow_runs(request: Request):
+    """获取当前用户在当前工作空间可见的运行记录列表。"""
+    from services import get_artifact_store
+
+    try:
+        user_id, workspace_id, role = await workflow_helpers.require_workspace_permission(
+            request,
+            "workflow_run",
+            "read",
+        )
+        store = get_artifact_store()
+        # 静态列表接口按可见范围过滤，避免退回为全局 runs 列表。
+        visible_user_id = None if _is_admin_role(role) else user_id
+        workflow_runs = await store.list_workflow_runs(
+            workspace_id=workspace_id,
+            user_id=visible_user_id,
+        )
+        return _build_workflow_run_list_response(workflow_runs)
     except HTTPException:
         raise
     except Exception as e:
@@ -300,35 +348,34 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
 
     创建新的工作流运行，保留指定节点之前的所有 Artifact
     """
-    from services import get_rerun_service
     from graph import get_workflow
+    from services import get_rerun_service
 
     try:
-        user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(request, "workflow", "execute")
-        await workflow_helpers.require_workflow_run_access(request, workflow_run_id, resource="workflow", action="execute")
+        user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
+            request, "workflow", "execute"
+        )
+        await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow", action="execute"
+        )
         rerun_service = get_rerun_service()
 
         # 1. 准备重跑状态
         preserved_state = await rerun_service.prepare_rerun_state(
-            workflow_run_id,
-            body.from_node,
-            body.updated_input
+            workflow_run_id, body.from_node, body.updated_input
         )
 
         # 2. 创建新的 WorkflowRun
         new_workflow_run = await rerun_service.create_rerun_workflow(
-            workflow_run_id,
-            body.from_node,
-            body.reason or ""
+            workflow_run_id, body.from_node, body.reason or ""
         )
-        await workflow_helpers.annotate_workflow_run_ownership(new_workflow_run.id, user_id, workspace_id)
+        await workflow_helpers.annotate_workflow_run_ownership(
+            new_workflow_run.id, user_id, workspace_id
+        )
 
         # 3. 使用工作流执行器恢复执行
         workflow = get_workflow()
-        result = await workflow.resume(
-            new_workflow_run.id,
-            preserved_state
-        )
+        result = await workflow.resume(new_workflow_run.id, preserved_state)
 
         simplified_state = _simplify_state(result["state"])
 
@@ -337,7 +384,7 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
             "new_workflow_run_id": new_workflow_run.id,
             "rerun_from_node": body.from_node,
             "status": result["status"],
-            "state": simplified_state
+            "state": simplified_state,
         }
     except HTTPException:
         raise
