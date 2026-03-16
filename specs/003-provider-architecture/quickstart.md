@@ -1,6 +1,6 @@
 # Quickstart: Provider Architecture Upgrade
 
-本文档描述 `003-provider-architecture` 的最小验收路径。目标不是证明所有外部环境都无问题，而是确认 PromptChain 已经从“代码不支持 google provider”升级到“代码支持 google provider，剩余问题只可能来自环境或凭证有效性”。
+本文档描述 `003-provider-architecture` 的 US1 最小验收路径。目标是确认 PromptChain 已经从“代码不支持 google provider”升级到“代码支持 google provider”，而不是在本轮证明所有 provider 回归与鉴权语义都已收口。
 
 ## 1. 适用范围
 
@@ -9,7 +9,6 @@
 - Google provider 已纳入受支持列表
 - `GEMINI_API_KEY` 能被代码显式消费
 - `get_llm()`、`get_structured_llm()`、`get_current_model_info()` 调用面不变
-- openai / anthropic / ollama 未发生明显回归
 
 ## 2. 前置条件
 
@@ -77,68 +76,21 @@ PY
 - 调用方无需新增 Google 专属入口
 - 若失败，应聚焦 Google 集成包或 provider 适配，而不是节点调用面
 
-## 6. Smoke Test C：错误语义
+## 6. US1 边界说明
 
-### 不支持的 provider
+本 quickstart 不在当前 US1 范围内证明以下事项：
 
-```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
-DEFAULT_LLM_PROVIDER=foo uv run python - <<'PY'
-from services import get_llm
-get_llm()
-PY
-```
+- openai / anthropic / ollama 的自动化兼容回归
+- invalid credential / authentication failure 的明确语义区分
+- 外部网络、账号权限、配额或服务可用性问题
 
-预期结果：
+这些内容分别留给后续 US2 / US3 和独立验证流程处理。
 
-- 错误明确指出 `foo` 不受支持
-- 错误包含当前支持列表
-
-### 缺少 Google 凭证
-
-```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
-DEFAULT_LLM_PROVIDER=google GEMINI_API_KEY= uv run python - <<'PY'
-from services import get_llm
-get_llm()
-PY
-```
-
-预期结果：
-
-- 错误明确指出缺少 Google 所需凭证
-
-### 无效凭证 / 认证失败
-
-```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
-uv run python - <<'PY'
-from services import get_llm
-
-llm = get_llm(temperature=0)
-print(llm.invoke("ping"))
-PY
-```
-
-预期结果：
-
-- 若 key 无效，错误应表现为认证失败或上游拒绝，而不是“provider 不支持”或“缺少凭证”
-- 本轮不承诺消除网络、账号权限、配额等外部环境问题
-
-## 7. Regression Focus
-
-自动化验证至少覆盖：
-
-- openai / anthropic / ollama 仍可通过 registry 解析
-- `get_current_model_info()` 在现有 provider 下保持既有语义
-- 缺少凭证时的错误消息可区分 provider
-
-## 8. 完成判定
+## 7. 完成判定
 
 以下条件同时满足时，可认为本特性达成 quickstart 目标：
 
 1. `DEFAULT_LLM_PROVIDER=google` 不再触发“代码不支持 google provider”
 2. `GEMINI_API_KEY` 能被代码显式读取并用于 provider 初始化
 3. 统一调用入口保持不变
-4. 现有三类 provider 无明显回归
-5. 剩余失败仅来自外部环境、凭证有效性或服务可用性
+4. Smoke Test A / B 若失败，原因不再是“代码尚未接入 google provider”

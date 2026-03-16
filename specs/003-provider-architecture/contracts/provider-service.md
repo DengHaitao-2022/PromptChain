@@ -62,7 +62,7 @@ get_current_model_info() -> dict
 
 - 当 provider 初始化失败时，允许 `model` 回退到环境中的 `DEFAULT_MODEL_NAME`
 
-## 4. Error Semantics
+## 4. Error Semantics (US1 MVP)
 
 ### A. Unsupported Provider
 
@@ -86,17 +86,13 @@ get_current_model_info() -> dict
 - 错误消息必须指出缺少的凭证字段名
 - 错误消息必须指出是哪个 provider 初始化失败
 
-### C. Invalid Credential / Authentication Failure
+### Deferred: Invalid Credential / Authentication Failure (US3)
 
-触发时机：
+以下内容不属于当前 US1 MVP 已完成承诺，而是后续 US3 的目标：
 
-- provider 已构造成功，但首次真实请求被上游服务拒绝
-
-要求：
-
-- 错误消息必须能区分“认证失败”与“配置缺失 / provider 不支持”
-- 可以保留上游异常摘要，但必须附带 provider 上下文
-- 本轮不要求在 `get_llm()` 构造阶段增加 eager 网络校验
+- provider 已构造成功，但首次真实请求被上游服务拒绝时，后续应把“认证失败”与“配置缺失 / provider 不支持”区分开
+- 后续可保留上游异常摘要，并附带 provider 上下文
+- 当前 US1 只承诺 unsupported provider、missing credential、Google provider 纳入统一 registry，以及 helper 调用面不变
 
 ## 5. Non-Goals Bound to This Contract
 
