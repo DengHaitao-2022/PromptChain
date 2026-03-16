@@ -23,31 +23,31 @@ interface HomeWorkflowPreviewProps {
 const pipeline = [
   {
     id: 'parse_intent',
-    label: 'Parse Intent',
+    label: '意图解析',
     summary: '抽取目标、读者与约束',
     icon: ScanSearch,
   },
   {
     id: 'generate_outline',
-    label: 'Generate Outline',
+    label: '提纲生成',
     summary: '形成可审批结构',
     icon: Blocks,
   },
   {
     id: 'generate_content',
-    label: 'Generate Content',
+    label: '内容生成',
     summary: '分段生成核心内容',
     icon: Bot,
   },
   {
     id: 'check_facts',
-    label: 'Check Facts',
+    label: '事实核查',
     summary: '识别高风险声明',
     icon: FileSearch,
   },
   {
     id: 'finalize',
-    label: 'Finalize',
+    label: '结果交付',
     summary: '写入最终产物版本',
     icon: BadgeCheck,
   },
@@ -55,35 +55,35 @@ const pipeline = [
 
 const telemetry = [
   {
-    label: 'Artifacts',
-    value: 'write-once',
+    label: '产物版本',
+    value: '只写不改',
     detail: '产物按版本保留',
     icon: GitBranch,
   },
   {
-    label: 'Approvals',
-    value: 'human gate',
+    label: '人工门控',
+    value: '双重确认',
     detail: '提纲与事实双门控',
     icon: Sparkles,
   },
   {
-    label: 'Trace',
-    value: 'node-level',
+    label: '节点追踪',
+    value: '逐节点可见',
     detail: '每个节点可追踪',
     icon: Radar,
   },
 ];
 
 const statusMap = {
-  idle: '[SYSTEM_READY]',
-  launching: '[ORCHESTRATING]',
-  handoff: '[HANDOFF_READY]',
+  idle: '[系统就绪]',
+  launching: '[编排中]',
+  handoff: '[准备移交]',
 } as const;
 
 const stateLabelMap = {
-  idle: 'ready',
-  launching: 'running',
-  handoff: 'synced',
+  idle: '待命',
+  launching: '执行中',
+  handoff: '已同步',
 } as const;
 
 export function HomeWorkflowPreview({ mode, workflowId }: HomeWorkflowPreviewProps) {
@@ -94,12 +94,12 @@ export function HomeWorkflowPreview({ mode, workflowId }: HomeWorkflowPreviewPro
     >
       <div className={styles.mobileRibbon}>
         <span>{statusMap[mode]}</span>
-        <span>{mode === 'idle' ? '5-step pipeline' : 'launch feedback active'}</span>
+        <span>{mode === 'idle' ? '5 节点链路' : '启动反馈已激活'}</span>
       </div>
 
       <div className={styles.header}>
         <div>
-          <p className={styles.eyebrow}>Orchestration Matrix</p>
+          <p className={styles.eyebrow}>编排矩阵</p>
           <h2 className={styles.title}>启动前即可看见工作流编排路径</h2>
         </div>
         <span className={styles.statusPill}>{statusMap[mode]}</span>
@@ -154,7 +154,7 @@ export function HomeWorkflowPreview({ mode, workflowId }: HomeWorkflowPreviewPro
       </div>
 
       <footer className={styles.footer}>
-        <span className={styles.traceId}>TRACE_ID {workflowId ? workflowId.slice(0, 8) : 'pending'}</span>
+        <span className={styles.traceId}>TRACE_ID {workflowId ? workflowId.slice(0, 8) : '待生成'}</span>
         <span className={styles.footerNote}>首页先建立启动感知，再移交至详情页审批链路</span>
       </footer>
     </section>

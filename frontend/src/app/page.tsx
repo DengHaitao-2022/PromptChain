@@ -309,7 +309,7 @@ export default function Home() {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={styles.page} data-launch-state={launchState}>
       <header className={styles.header}>
         <div className={styles.headerContent}>
           <Link href="/" className={styles.logo}>
