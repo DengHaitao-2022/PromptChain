@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import styles from './page.module.css';
 import { HomeWorkflowPreview } from '@/components/HomeWorkflowPreview/HomeWorkflowPreview';
+import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher';
 
 type LaunchState = 'idle' | 'launching' | 'handoff';
 
@@ -398,6 +399,7 @@ export default function Home() {
                 运行历史
               </Link>
             </nav>
+            <ThemeSwitcher />
           </div>
         </div>
       </header>

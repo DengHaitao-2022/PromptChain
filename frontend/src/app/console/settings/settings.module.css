@@ -3,18 +3,18 @@
 .container {
   display: grid;
   gap: 24px;
-  --settings-surface: rgba(8, 18, 30, 0.94);
-  --settings-surface-muted: rgba(255, 255, 255, 0.03);
-  --settings-input: rgba(5, 11, 19, 0.82);
-  --settings-border: rgba(148, 163, 184, 0.12);
-  --settings-border-strong: rgba(125, 211, 252, 0.18);
-  --settings-focus-ring: rgba(125, 211, 252, 0.14);
-  --settings-text-primary: #f8fbff;
-  --settings-text-secondary: #b8cad9;
-  --settings-text-tertiary: #8ea3ba;
-  --settings-text-muted: #62768b;
-  --settings-shadow-md: 0 18px 40px rgba(0, 0, 0, 0.22);
-  --settings-shadow-lg: 0 28px 72px rgba(0, 0, 0, 0.3);
+  --settings-surface: var(--console-surface, rgba(8, 18, 30, 0.94));
+  --settings-surface-muted: var(--console-surface-muted, rgba(255, 255, 255, 0.03));
+  --settings-input: var(--console-surface-strong, rgba(5, 11, 19, 0.82));
+  --settings-border: var(--console-border, rgba(148, 163, 184, 0.12));
+  --settings-border-strong: var(--console-border-strong, rgba(125, 211, 252, 0.18));
+  --settings-focus-ring: var(--console-focus-ring, rgba(125, 211, 252, 0.14));
+  --settings-text-primary: var(--console-text-primary, #f8fbff);
+  --settings-text-secondary: var(--console-text-secondary, #b8cad9);
+  --settings-text-tertiary: var(--console-text-tertiary, #8ea3ba);
+  --settings-text-muted: var(--console-text-muted, #62768b);
+  --settings-shadow-md: var(--shadow-md);
+  --settings-shadow-lg: var(--shadow-lg);
 }
 
 .hero {
@@ -339,7 +339,7 @@
   gap: 18px;
   flex-wrap: wrap;
   padding: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  border: 1px solid var(--settings-border);
   border-radius: 22px;
   background: var(--settings-surface-muted);
 }
@@ -508,7 +508,7 @@
   display: grid;
   gap: 14px;
   padding: 20px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  border: 1px solid var(--settings-border);
   border-radius: 22px;
   background: var(--settings-surface-muted);
 }
@@ -530,7 +530,7 @@
 .linkCard:hover {
   transform: translateY(-2px);
   border-color: var(--settings-border-strong);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--settings-surface);
 }
 
 .moduleMetaRow {
@@ -541,7 +541,7 @@
 
 .tableWrap {
   overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  border: 1px solid var(--settings-border);
   border-radius: 22px;
   background: var(--settings-surface-muted);
 }
@@ -565,12 +565,12 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--settings-border);
 }
 
 .table td {
   color: var(--settings-text-primary);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  border-bottom: 1px solid var(--settings-border);
 }
 
 .table tbody tr:last-child td {

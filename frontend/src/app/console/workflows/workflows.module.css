@@ -2,17 +2,27 @@
   display: flex;
   flex-direction: column;
   gap: 22px;
+  --workflows-surface: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
+  --workflows-surface-muted: var(--console-surface-muted);
+  --workflows-border: var(--console-border);
+  --workflows-border-strong: var(--console-border-strong);
+  --workflows-text-primary: var(--console-text-primary);
+  --workflows-text-secondary: var(--console-text-secondary);
+  --workflows-text-tertiary: var(--console-text-tertiary);
+  --workflows-text-muted: var(--console-text-muted);
+  --workflows-accent: var(--console-accent);
+  --workflows-accent-soft: var(--console-accent-soft);
+  --workflows-shadow: var(--console-shadow-lg, var(--shadow-lg));
+  --workflows-focus-ring: var(--console-focus-ring);
 }
 
 .hero {
   position: relative;
   overflow: hidden;
   border-radius: 32px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.96), rgba(5, 11, 18, 0.94)),
-    rgba(8, 18, 30, 0.96);
-  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--workflows-border);
+  background: var(--workflows-surface);
+  box-shadow: var(--workflows-shadow);
 }
 
 .hero::before {
@@ -93,9 +103,9 @@
   width: fit-content;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(125, 211, 252, 0.18);
-  background: rgba(125, 211, 252, 0.08);
-  color: #7dd3fc;
+  border: 1px solid var(--workflows-border-strong);
+  background: var(--workflows-accent-soft);
+  color: var(--workflows-accent);
   font-size: 0.72rem;
   font-family: var(--font-mono);
   letter-spacing: 0.12em;
@@ -105,7 +115,7 @@
 .title {
   margin: 0;
   max-width: 13ch;
-  color: #f8fbff;
+  color: var(--workflows-text-primary);
   font-size: clamp(2.2rem, 4vw, 3.4rem);
   line-height: 0.98;
   letter-spacing: -0.05em;
@@ -114,7 +124,7 @@
 .subtitle {
   margin: 0;
   max-width: 48rem;
-  color: #b8cad9;
+  color: var(--workflows-text-secondary);
   font-size: 1rem;
   line-height: 1.8;
 }
@@ -149,9 +159,9 @@
 
 .secondaryAction,
 .editLink {
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  background: rgba(125, 211, 252, 0.08);
-  color: #d8ebfb;
+  border: 1px solid var(--workflows-border-strong);
+  background: var(--workflows-accent-soft);
+  color: var(--workflows-text-secondary);
 }
 
 .primaryAction:hover,
@@ -166,12 +176,12 @@
   gap: 18px;
   padding: 22px;
   border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--workflows-border);
+  background: var(--workflows-surface-muted);
 }
 
 .heroSignalLabel {
-  color: #8fa4ba;
+  color: var(--workflows-text-tertiary);
   font-size: 0.76rem;
   font-family: var(--font-mono);
   letter-spacing: 0.12em;
@@ -179,7 +189,7 @@
 }
 
 .heroSignalValue {
-  color: #f8fbff;
+  color: var(--workflows-text-primary);
   font-size: 2.8rem;
   line-height: 1;
   letter-spacing: -0.06em;
@@ -187,7 +197,7 @@
 
 .heroSignalText {
   margin: 0;
-  color: #c8d8e6;
+  color: var(--workflows-text-secondary);
   line-height: 1.8;
 }
 
@@ -203,17 +213,17 @@
   gap: 8px;
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--workflows-border);
+  background: var(--workflows-surface-muted);
 }
 
 .heroSignalItem span {
-  color: #8ea3ba;
+  color: var(--workflows-text-tertiary);
   font-size: 0.84rem;
 }
 
 .heroSignalItem strong {
-  color: #f8fbff;
+  color: var(--workflows-text-primary);
   font-size: 1.32rem;
 }
 
@@ -229,10 +239,8 @@
   gap: 14px;
   padding: 18px;
   border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
-    rgba(8, 18, 30, 0.94);
+  border: 1px solid var(--workflows-border);
+  background: var(--workflows-surface);
 }
 
 .summaryIcon,
@@ -243,16 +251,16 @@
   align-items: center;
   justify-content: center;
   border-radius: 14px;
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  background: rgba(125, 211, 252, 0.08);
-  color: #7dd3fc;
+  border: 1px solid var(--workflows-border-strong);
+  background: var(--workflows-accent-soft);
+  color: var(--workflows-accent);
   flex-shrink: 0;
 }
 
 .toneNeutral .summaryIcon {
-  border-color: rgba(125, 211, 252, 0.16);
-  background: rgba(125, 211, 252, 0.08);
-  color: #7dd3fc;
+  border-color: var(--workflows-border-strong);
+  background: var(--workflows-accent-soft);
+  color: var(--workflows-accent);
 }
 
 .toneSuccess .summaryIcon {
@@ -274,12 +282,12 @@
 }
 
 .summaryLabel {
-  color: #8ea3ba;
+  color: var(--workflows-text-tertiary);
   font-size: 0.84rem;
 }
 
 .summaryValue {
-  color: #f8fbff;
+  color: var(--workflows-text-primary);
   font-size: 1.44rem;
   line-height: 1;
 }
@@ -292,10 +300,8 @@
   gap: 12px;
   padding: 22px;
   border-radius: 28px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
-    rgba(8, 18, 30, 0.94);
+  border: 1px solid var(--workflows-border);
+  background: var(--workflows-surface);
 }
 
 .errorBanner {
@@ -307,7 +313,7 @@
 }
 
 .errorBanner strong {
-  color: #f8fbff;
+  color: var(--workflows-text-primary);
 }
 
 .workflowGrid,
@@ -324,10 +330,8 @@
   gap: 18px;
   padding: 22px;
   border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
-    rgba(8, 18, 30, 0.94);
+  border: 1px solid var(--workflows-border);
+  background: var(--workflows-surface);
 }
 
 .cardHeader {
@@ -344,13 +348,13 @@
 
 .cardTitle {
   margin: 0;
-  color: #f8fbff;
+  color: var(--workflows-text-primary);
   font-size: 1.1rem;
 }
 
 .cardDescription {
   margin: 0;
-  color: #8fa4ba;
+  color: var(--workflows-text-tertiary);
   line-height: 1.7;
 }
 
@@ -415,11 +419,11 @@
   gap: 8px;
   padding: 14px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--workflows-surface-muted);
 }
 
 .metaItem dt {
-  color: #7f96ac;
+  color: var(--workflows-text-muted);
   font-size: 0.76rem;
   font-family: var(--font-mono);
   letter-spacing: 0.08em;
@@ -428,7 +432,7 @@
 
 .metaItem dd {
   margin: 0;
-  color: #f8fbff;
+  color: var(--workflows-text-primary);
 }
 
 .cardFooter {
@@ -439,7 +443,7 @@
 }
 
 .runState {
-  color: #8ea3ba;
+  color: var(--workflows-text-tertiary);
   line-height: 1.7;
 }
 
@@ -450,13 +454,13 @@
 
 .emptyState h3 {
   margin: 0;
-  color: #f8fbff;
+  color: var(--workflows-text-primary);
 }
 
 .emptyState p {
   margin: 0;
   max-width: 420px;
-  color: #8ea3ba;
+  color: var(--workflows-text-tertiary);
   line-height: 1.8;
 }
 
@@ -494,7 +498,7 @@
 .secondaryAction:focus-visible,
 .editLink:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.14);
+  box-shadow: 0 0 0 4px var(--workflows-focus-ring);
 }
 
 @keyframes floatPrimary {

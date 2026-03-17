@@ -3,6 +3,18 @@
   flex-direction: column;
   gap: 16px;
   min-height: calc(100vh - 140px);
+  --editor-surface: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
+  --editor-surface-muted: var(--console-surface-muted);
+  --editor-border: var(--console-border);
+  --editor-border-strong: var(--console-border-strong);
+  --editor-text-primary: var(--console-text-primary);
+  --editor-text-secondary: var(--console-text-secondary);
+  --editor-text-tertiary: var(--console-text-tertiary);
+  --editor-text-muted: var(--console-text-muted);
+  --editor-accent: var(--console-accent);
+  --editor-accent-soft: var(--console-accent-soft);
+  --editor-focus-ring: var(--console-focus-ring);
+  --editor-shadow: var(--console-shadow-lg, var(--shadow-lg));
 }
 
 .header {
@@ -11,11 +23,9 @@
   gap: 20px;
   padding: 20px 24px;
   border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.96), rgba(5, 11, 18, 0.94)),
-    rgba(8, 18, 30, 0.96);
-  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  box-shadow: var(--editor-shadow);
 }
 
 .headerInfo {
@@ -79,16 +89,16 @@
 .fieldLabel {
   font-size: 0.84rem;
   font-weight: 700;
-  color: #d8ebfb;
+  color: var(--editor-text-secondary);
 }
 
 .nameInput,
 .descriptionInput {
   width: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--editor-border);
   border-radius: 16px;
-  background: rgba(5, 11, 19, 0.82);
-  color: #f8fbff;
+  background: var(--pc-semantic-bg-input);
+  color: var(--editor-text-primary);
   padding: 12px 14px;
   font: inherit;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
@@ -96,15 +106,15 @@
 
 .nameInput::placeholder,
 .descriptionInput::placeholder {
-  color: #62768b;
+  color: var(--editor-text-muted);
 }
 
 .nameInput:focus,
 .descriptionInput:focus {
   outline: none;
-  background: rgba(7, 15, 25, 0.94);
-  border-color: rgba(125, 211, 252, 0.28);
-  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.12);
+  background: var(--console-surface-strong);
+  border-color: var(--editor-border-strong);
+  box-shadow: 0 0 0 4px var(--editor-focus-ring);
 }
 
 .descriptionInput {
@@ -115,7 +125,7 @@
 .timestamp {
   margin: 0;
   font-size: 0.8rem;
-  color: #8ea3ba;
+  color: var(--editor-text-tertiary);
 }
 
 .actionGroup {
@@ -153,9 +163,9 @@
 }
 
 .secondaryButton {
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  background: rgba(125, 211, 252, 0.08);
-  color: #d8ebfb;
+  border: 1px solid var(--editor-border-strong);
+  background: var(--editor-accent-soft);
+  color: var(--editor-text-secondary);
 }
 
 .saveButton {
@@ -173,11 +183,9 @@
 .feedbackPanel {
   padding: 18px 20px;
   border-radius: 22px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
-    rgba(8, 18, 30, 0.94);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--editor-border);
+  background: var(--editor-surface);
+  box-shadow: var(--shadow-md);
 }
 
 .statusMessage {
@@ -200,20 +208,20 @@
 
 .validationColumn {
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--editor-surface-muted);
   padding: 16px;
 }
 
 .validationColumn h3 {
   margin: 0 0 12px;
   font-size: 0.9rem;
-  color: #f8fbff;
+  color: var(--editor-text-primary);
 }
 
 .validationList {
   margin: 0;
   padding-left: 18px;
-  color: #b9cad9;
+  color: var(--editor-text-secondary);
 }
 
 .validationList li + li {
@@ -222,7 +230,7 @@
 
 .emptyValidation {
   margin: 0;
-  color: #8ea3ba;
+  color: var(--editor-text-tertiary);
   font-size: 0.82rem;
 }
 
@@ -232,10 +240,8 @@
   min-height: 0;
   border-radius: 28px;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
-    rgba(8, 18, 30, 0.94);
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: var(--editor-surface);
+  border: 1px solid var(--editor-border);
 }
 
 .canvas {
@@ -244,38 +250,38 @@
   min-height: 0;
   background:
     radial-gradient(circle at top left, rgba(125, 211, 252, 0.06), transparent 24%),
-    linear-gradient(180deg, #07111b, #05080f);
+    linear-gradient(180deg, var(--console-bg), var(--pc-primitive-slate-950));
 }
 
 .canvasHint {
   border-radius: 999px;
   padding: 8px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(8, 18, 30, 0.88);
-  color: #d8ebfb;
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--editor-border);
+  background: var(--console-dropdown-bg);
+  color: var(--editor-text-secondary);
+  box-shadow: var(--shadow-sm);
 }
 
 :global(.react-flow__controls) {
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  border: 1px solid var(--editor-border);
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+  box-shadow: var(--shadow-sm);
 }
 
 :global(.react-flow__controls-button) {
-  background: rgba(8, 18, 30, 0.94);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  color: #d8ebfb;
+  background: var(--console-surface);
+  border-bottom: 1px solid var(--editor-border);
+  color: var(--editor-text-secondary);
 }
 
 :global(.react-flow__controls-button:hover) {
-  background: rgba(125, 211, 252, 0.12);
+  background: var(--editor-accent-soft);
 }
 
 :global(.react-flow__minimap) {
-  background: rgba(8, 18, 30, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: var(--console-surface);
+  border: 1px solid var(--editor-border);
   border-radius: 16px;
 }
 

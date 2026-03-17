@@ -1,13 +1,88 @@
 /* 控制台统一壳体样式 */
 
 .layout {
-  min-height: 100vh;
-  display: flex;
-  background:
+  --console-bg:
     radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 24%),
     radial-gradient(circle at top right, rgba(245, 158, 11, 0.06), transparent 18%),
     linear-gradient(180deg, #04070d 0%, #07111b 48%, #05080f 100%);
-  color: #f8fbff;
+  --console-sidebar-bg:
+    linear-gradient(180deg, rgba(4, 11, 18, 0.9), rgba(5, 12, 21, 0.82)),
+    rgba(5, 10, 16, 0.82);
+  --console-topbar-bg: rgba(5, 12, 20, 0.72);
+  --console-surface: rgba(8, 18, 30, 0.94);
+  --console-surface-strong: rgba(10, 20, 32, 0.92);
+  --console-surface-alt: rgba(10, 18, 29, 0.92);
+  --console-surface-muted: rgba(255, 255, 255, 0.02);
+  --console-nav-bg: rgba(255, 255, 255, 0.02);
+  --console-nav-hover-bg: rgba(125, 211, 252, 0.08);
+  --console-nav-active-bg:
+    linear-gradient(135deg, rgba(125, 211, 252, 0.12), rgba(245, 158, 11, 0.08)),
+    rgba(9, 20, 33, 0.92);
+  --console-border: rgba(148, 163, 184, 0.12);
+  --console-border-subtle: rgba(148, 163, 184, 0.1);
+  --console-border-strong: rgba(125, 211, 252, 0.18);
+  --console-focus-ring: rgba(125, 211, 252, 0.14);
+  --console-text-primary: #f8fbff;
+  --console-text-secondary: #d7e4f0;
+  --console-text-muted: #9fb1c3;
+  --console-text-tertiary: #6f879f;
+  --console-text-quaternary: #7a91a8;
+  --console-accent: #7dd3fc;
+  --console-accent-soft: rgba(125, 211, 252, 0.08);
+  --console-accent-shadow: rgba(125, 211, 252, 0.08);
+  --console-avatar-gradient: linear-gradient(135deg, #f59e0b, #fbbf24);
+  --console-avatar-text: #081019;
+  --console-dropdown-bg: rgba(8, 18, 30, 0.96);
+  --console-loading-bg:
+    linear-gradient(180deg, rgba(9, 20, 33, 0.96), rgba(6, 13, 21, 0.96)),
+    rgba(9, 18, 28, 0.96);
+  --console-shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.36);
+  --console-inset-line: rgba(255, 255, 255, 0.02);
+
+  min-height: 100vh;
+  display: flex;
+  background: var(--console-bg);
+  color: var(--console-text-primary);
+}
+
+:global(html[data-theme='light']) .layout {
+  --console-bg:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.1), transparent 24%),
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 18%),
+    linear-gradient(180deg, #f8fbfd 0%, #edf3f9 48%, #f4f7fb 100%);
+  --console-sidebar-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(245, 248, 252, 0.94)),
+    rgba(255, 255, 255, 0.92);
+  --console-topbar-bg: rgba(255, 255, 255, 0.78);
+  --console-surface: rgba(255, 255, 255, 0.92);
+  --console-surface-strong: rgba(255, 255, 255, 0.96);
+  --console-surface-alt: rgba(248, 251, 254, 0.96);
+  --console-surface-muted: rgba(255, 255, 255, 0.72);
+  --console-nav-bg: rgba(255, 255, 255, 0.52);
+  --console-nav-hover-bg: rgba(2, 132, 199, 0.08);
+  --console-nav-active-bg:
+    linear-gradient(135deg, rgba(2, 132, 199, 0.12), rgba(217, 119, 6, 0.08)),
+    rgba(255, 255, 255, 0.94);
+  --console-border: rgba(15, 23, 42, 0.1);
+  --console-border-subtle: rgba(15, 23, 42, 0.08);
+  --console-border-strong: rgba(2, 132, 199, 0.18);
+  --console-focus-ring: rgba(2, 132, 199, 0.14);
+  --console-text-primary: #07111b;
+  --console-text-secondary: #334155;
+  --console-text-muted: #475569;
+  --console-text-tertiary: #64748b;
+  --console-text-quaternary: #64748b;
+  --console-accent: #0369a1;
+  --console-accent-soft: rgba(2, 132, 199, 0.08);
+  --console-accent-shadow: rgba(2, 132, 199, 0.12);
+  --console-avatar-gradient: linear-gradient(135deg, #f59e0b, #fbbf24);
+  --console-avatar-text: #081019;
+  --console-dropdown-bg: rgba(255, 255, 255, 0.96);
+  --console-loading-bg:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 248, 252, 0.96)),
+    rgba(255, 255, 255, 0.96);
+  --console-shadow-lg: 0 24px 60px rgba(15, 23, 42, 0.16);
+  --console-inset-line: rgba(15, 23, 42, 0.04);
 }
 
 .main {
@@ -28,11 +103,9 @@
   display: flex;
   flex-direction: column;
   padding: 24px 18px;
-  border-right: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(4, 11, 18, 0.9), rgba(5, 12, 21, 0.82)),
-    rgba(5, 10, 16, 0.82);
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.02);
+  border-right: 1px solid var(--console-border);
+  background: var(--console-sidebar-bg);
+  box-shadow: inset -1px 0 0 var(--console-inset-line);
   backdrop-filter: blur(24px);
 }
 
@@ -44,7 +117,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  color: #f8fbff;
+  color: var(--console-text-primary);
   text-decoration: none;
 }
 
@@ -55,10 +128,10 @@
   align-items: center;
   justify-content: center;
   border-radius: 14px;
-  border: 1px solid rgba(125, 211, 252, 0.18);
-  background: rgba(125, 211, 252, 0.08);
-  color: #7dd3fc;
-  box-shadow: 0 0 24px rgba(125, 211, 252, 0.08);
+  border: 1px solid var(--console-border-strong);
+  background: var(--console-accent-soft);
+  color: var(--console-accent);
+  box-shadow: 0 0 24px var(--console-accent-shadow);
 }
 
 .logoCopy {
@@ -74,7 +147,7 @@
 }
 
 .logoSubtext {
-  color: #6d8299;
+  color: var(--console-text-tertiary);
   font-size: 0.74rem;
   font-family: var(--font-mono);
   letter-spacing: 0.12em;
@@ -96,7 +169,7 @@
 
 .sectionLabel {
   padding: 0 12px;
-  color: #6f879f;
+  color: var(--console-text-tertiary);
   font-size: 0.72rem;
   font-family: var(--font-mono);
   letter-spacing: 0.12em;
@@ -111,27 +184,25 @@
   padding: 0 14px;
   border-radius: 16px;
   border: 1px solid transparent;
-  color: #9fb1c3;
+  color: var(--console-text-muted);
   text-decoration: none;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--console-nav-bg);
   transition: border-color 180ms ease, background 180ms ease, color 180ms ease, transform 180ms ease;
   cursor: pointer;
 }
 
 .navItem:hover {
   transform: translateY(-1px);
-  border-color: rgba(125, 211, 252, 0.18);
-  background: rgba(125, 211, 252, 0.08);
-  color: #f8fbff;
+  border-color: var(--console-border-strong);
+  background: var(--console-nav-hover-bg);
+  color: var(--console-text-primary);
 }
 
 .navItem.active {
-  border-color: rgba(125, 211, 252, 0.18);
-  background:
-    linear-gradient(135deg, rgba(125, 211, 252, 0.12), rgba(245, 158, 11, 0.08)),
-    rgba(9, 20, 33, 0.92);
-  color: #f8fbff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  border-color: var(--console-border-strong);
+  background: var(--console-nav-active-bg);
+  color: var(--console-text-primary);
+  box-shadow: inset 0 1px 0 var(--console-inset-line);
 }
 
 .navGroup {
@@ -158,13 +229,13 @@
 
 .arrow {
   flex-shrink: 0;
-  color: #6f879f;
+  color: var(--console-text-tertiary);
   transition: transform 180ms ease, color 180ms ease;
 }
 
 .navItem:hover .arrow,
 .navItem.active .arrow {
-  color: #dce9f5;
+  color: var(--console-text-secondary);
 }
 
 .arrowOpen {
@@ -194,8 +265,8 @@
   justify-content: space-between;
   gap: 16px;
   padding: 16px 24px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-  background: rgba(5, 12, 20, 0.72);
+  border-bottom: 1px solid var(--console-border-subtle);
+  background: var(--console-topbar-bg);
   backdrop-filter: blur(22px);
 }
 
@@ -206,7 +277,7 @@
 }
 
 .topbarEyebrow {
-  color: #7dd3fc;
+  color: var(--console-accent);
   font-size: 0.72rem;
   font-family: var(--font-mono);
   letter-spacing: 0.12em;
@@ -215,7 +286,7 @@
 
 .topbarHint {
   margin: 0;
-  color: #d7e4f0;
+  color: var(--console-text-secondary);
   font-size: 0.96rem;
 }
 
@@ -223,6 +294,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .workspaceSelector {
@@ -235,17 +308,17 @@
   min-height: 44px;
   padding: 0 14px;
   border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(10, 20, 32, 0.92);
-  color: #f8fbff;
+  border: 1px solid var(--console-border);
+  background: var(--console-surface-strong);
+  color: var(--console-text-primary);
   font-size: 0.92rem;
   cursor: pointer;
 }
 
 .workspaceSelect:focus {
   outline: none;
-  border-color: rgba(125, 211, 252, 0.28);
-  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.12);
+  border-color: var(--console-border-strong);
+  box-shadow: 0 0 0 4px var(--console-focus-ring);
 }
 
 .userMenu {
@@ -259,16 +332,16 @@
   min-height: 48px;
   padding: 6px 12px 6px 8px;
   border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(10, 18, 29, 0.92);
-  color: #f8fbff;
+  border: 1px solid var(--console-border);
+  background: var(--console-surface-alt);
+  color: var(--console-text-primary);
   cursor: pointer;
   transition: border-color 180ms ease, background 180ms ease;
 }
 
 .userButton:hover {
-  border-color: rgba(125, 211, 252, 0.18);
-  background: rgba(11, 22, 36, 0.96);
+  border-color: var(--console-border-strong);
+  background: var(--console-surface-strong);
 }
 
 .avatar {
@@ -278,8 +351,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 12px;
-  background: linear-gradient(135deg, #f59e0b, #fbbf24);
-  color: #081019;
+  background: var(--console-avatar-gradient);
+  color: var(--console-avatar-text);
   font-weight: 800;
   font-size: 0.95rem;
   text-transform: uppercase;
@@ -293,12 +366,12 @@
 }
 
 .userName {
-  color: #f8fbff;
+  color: var(--console-text-primary);
   font-size: 0.9rem;
 }
 
 .userRole {
-  color: #7a91a8;
+  color: var(--console-text-quaternary);
   font-size: 0.74rem;
   font-family: var(--font-mono);
   letter-spacing: 0.08em;
@@ -311,26 +384,26 @@
   right: 0;
   min-width: 220px;
   border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(8, 18, 30, 0.96);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.36);
+  border: 1px solid var(--console-border);
+  background: var(--console-dropdown-bg);
+  box-shadow: var(--console-shadow-lg);
   overflow: hidden;
 }
 
 .dropdownHeader {
   padding: 14px 16px;
-  color: #f8fbff;
+  color: var(--console-text-primary);
 }
 
 .dropdownEmail {
   margin-top: 4px;
-  color: #91a6ba;
+  color: var(--console-text-muted);
   font-size: 0.8rem;
 }
 
 .dropdownRole {
   margin-top: 6px;
-  color: #7dd3fc;
+  color: var(--console-accent);
   font-size: 0.72rem;
   font-family: var(--font-mono);
   letter-spacing: 0.08em;
@@ -339,7 +412,7 @@
 
 .dropdownDivider {
   height: 1px;
-  background: rgba(148, 163, 184, 0.12);
+  background: var(--console-border);
 }
 
 .dropdownItem {
@@ -348,7 +421,7 @@
   padding: 0 16px;
   border: none;
   background: transparent;
-  color: #f3f8fd;
+  color: var(--console-text-primary);
   font-size: 0.92rem;
   text-align: left;
   cursor: pointer;
@@ -356,8 +429,8 @@
 }
 
 .dropdownItem:hover {
-  background: rgba(125, 211, 252, 0.08);
-  color: #f8fbff;
+  background: var(--console-nav-hover-bg);
+  color: var(--console-text-primary);
 }
 
 .loading {
@@ -369,23 +442,21 @@
   gap: 16px;
   padding: 48px 24px;
   border-radius: 28px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(9, 20, 33, 0.96), rgba(6, 13, 21, 0.96)),
-    rgba(9, 18, 28, 0.96);
+  border: 1px solid var(--console-border);
+  background: var(--console-loading-bg);
 }
 
 .loading p {
   margin: 0;
-  color: #bdd0e0;
+  color: var(--console-text-secondary);
 }
 
 .spinner {
   width: 42px;
   height: 42px;
   border-radius: 999px;
-  border: 3px solid rgba(148, 163, 184, 0.16);
-  border-top-color: #7dd3fc;
+  border: 3px solid var(--console-border);
+  border-top-color: var(--console-accent);
   animation: spin 0.8s linear infinite;
 }
 
@@ -395,7 +466,7 @@
 .userButton:focus-visible,
 .dropdownItem:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.14);
+  box-shadow: 0 0 0 4px var(--console-focus-ring);
 }
 
 @keyframes spin {
@@ -413,7 +484,7 @@
     width: auto;
     padding: 16px;
     border-right: none;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    border-bottom: 1px solid var(--console-border);
   }
 
   .nav {

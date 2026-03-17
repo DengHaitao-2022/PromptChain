@@ -2,17 +2,27 @@
   display: flex;
   flex-direction: column;
   gap: 22px;
+  --runs-surface: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
+  --runs-surface-muted: var(--console-surface-muted);
+  --runs-border: var(--console-border);
+  --runs-border-strong: var(--console-border-strong);
+  --runs-text-primary: var(--console-text-primary);
+  --runs-text-secondary: var(--console-text-secondary);
+  --runs-text-tertiary: var(--console-text-tertiary);
+  --runs-text-muted: var(--console-text-muted);
+  --runs-accent: var(--console-accent);
+  --runs-accent-soft: var(--console-accent-soft);
+  --runs-shadow: var(--console-shadow-lg, var(--shadow-lg));
+  --runs-focus-ring: var(--console-focus-ring);
 }
 
 .hero {
   position: relative;
   overflow: hidden;
   border-radius: 32px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.96), rgba(5, 11, 18, 0.94)),
-    rgba(8, 18, 30, 0.96);
-  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--runs-border);
+  background: var(--runs-surface);
+  box-shadow: var(--runs-shadow);
 }
 
 .hero::before {
@@ -93,9 +103,9 @@
   width: fit-content;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(125, 211, 252, 0.18);
-  background: rgba(125, 211, 252, 0.08);
-  color: #7dd3fc;
+  border: 1px solid var(--runs-border-strong);
+  background: var(--runs-accent-soft);
+  color: var(--runs-accent);
   font-size: 0.72rem;
   font-family: var(--font-mono);
   letter-spacing: 0.12em;
@@ -105,7 +115,7 @@
 .title {
   margin: 0;
   max-width: 12ch;
-  color: #f8fbff;
+  color: var(--runs-text-primary);
   font-size: clamp(2.2rem, 4vw, 3.4rem);
   line-height: 0.98;
   letter-spacing: -0.05em;
@@ -114,7 +124,7 @@
 .description {
   margin: 0;
   max-width: 48rem;
-  color: #b8cad9;
+  color: var(--runs-text-secondary);
   font-size: 1rem;
   line-height: 1.8;
 }
@@ -150,9 +160,9 @@
 
 .secondaryAction,
 .detailLink {
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  background: rgba(125, 211, 252, 0.08);
-  color: #d8ebfb;
+  border: 1px solid var(--runs-border-strong);
+  background: var(--runs-accent-soft);
+  color: var(--runs-text-secondary);
 }
 
 .primaryAction:hover,
@@ -167,8 +177,8 @@
   gap: 18px;
   padding: 22px;
   border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--runs-border);
+  background: var(--runs-surface-muted);
 }
 
 .heroSignalHeader {
@@ -179,7 +189,7 @@
 }
 
 .heroSignalLabel {
-  color: #8fa4ba;
+  color: var(--runs-text-tertiary);
   font-size: 0.76rem;
   font-family: var(--font-mono);
   letter-spacing: 0.12em;
@@ -187,7 +197,7 @@
 }
 
 .heroSignalValue {
-  color: #f8fbff;
+  color: var(--runs-text-primary);
   font-size: 2.4rem;
   line-height: 1;
   letter-spacing: -0.05em;
@@ -195,7 +205,7 @@
 
 .heroSignalText {
   margin: 0;
-  color: #c8d8e6;
+  color: var(--runs-text-secondary);
   line-height: 1.8;
 }
 
@@ -211,17 +221,17 @@
   gap: 8px;
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--runs-border);
+  background: var(--runs-surface-muted);
 }
 
 .heroSignalItem span {
-  color: #8ea3ba;
+  color: var(--runs-text-tertiary);
   font-size: 0.84rem;
 }
 
 .heroSignalItem strong {
-  color: #f8fbff;
+  color: var(--runs-text-primary);
   font-size: 1.32rem;
 }
 
@@ -237,10 +247,8 @@
   gap: 14px;
   padding: 18px;
   border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
-    rgba(8, 18, 30, 0.94);
+  border: 1px solid var(--runs-border);
+  background: var(--runs-surface);
 }
 
 .metricIcon,
@@ -253,9 +261,9 @@
   align-items: center;
   justify-content: center;
   border-radius: 14px;
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  background: rgba(125, 211, 252, 0.08);
-  color: #7dd3fc;
+  border: 1px solid var(--runs-border-strong);
+  background: var(--runs-accent-soft);
+  color: var(--runs-accent);
   flex-shrink: 0;
 }
 
@@ -266,12 +274,12 @@
 }
 
 .metricLabel {
-  color: #8ea3ba;
+  color: var(--runs-text-tertiary);
   font-size: 0.84rem;
 }
 
 .metricValue {
-  color: #f8fbff;
+  color: var(--runs-text-primary);
   font-size: 1.44rem;
   line-height: 1;
 }
@@ -295,10 +303,8 @@
   gap: 18px;
   padding: 22px;
   border-radius: 28px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
-    rgba(8, 18, 30, 0.94);
+  border: 1px solid var(--runs-border);
+  background: var(--runs-surface);
 }
 
 .panelHeader,
@@ -311,7 +317,7 @@
 .panelTitle,
 .sidePanelTitle {
   margin: 0;
-  color: #f8fbff;
+  color: var(--runs-text-primary);
   font-size: 1.32rem;
   letter-spacing: -0.03em;
 }
@@ -319,7 +325,7 @@
 .panelDescription,
 .sidePanelDescription {
   margin: 0;
-  color: #8ea3ba;
+  color: var(--runs-text-tertiary);
   line-height: 1.7;
 }
 
@@ -336,8 +342,8 @@
 .errorState,
 .insightItem {
   border-radius: 22px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--runs-border);
+  background: var(--runs-surface-muted);
 }
 
 .skeletonCard {
@@ -396,13 +402,13 @@
 
 .runTitle {
   margin: 0;
-  color: #f8fbff;
+  color: var(--runs-text-primary);
   font-size: 1.08rem;
 }
 
 .runPrompt {
   margin: 0;
-  color: #8fa4ba;
+  color: var(--runs-text-tertiary);
   line-height: 1.7;
 }
 
@@ -456,11 +462,11 @@
   gap: 8px;
   padding: 14px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--runs-surface-muted);
 }
 
 .metaLabel {
-  color: #7f96ac;
+  color: var(--runs-text-muted);
   font-size: 0.76rem;
   font-family: var(--font-mono);
   letter-spacing: 0.08em;
@@ -468,7 +474,7 @@
 }
 
 .metaItem strong {
-  color: #f8fbff;
+  color: var(--runs-text-primary);
   line-height: 1.6;
 }
 
@@ -488,14 +494,14 @@
 .emptyTitle,
 .errorState h3 {
   margin: 0;
-  color: #f8fbff;
+  color: var(--runs-text-primary);
   font-size: 1.2rem;
 }
 
 .emptyDescription,
 .errorState p {
   margin: 0;
-  color: #9ab0c5;
+  color: var(--runs-text-tertiary);
   line-height: 1.8;
 }
 
@@ -519,11 +525,11 @@
 }
 
 .insightCopy strong {
-  color: #f8fbff;
+  color: var(--runs-text-primary);
 }
 
 .insightCopy span {
-  color: #8ea3ba;
+  color: var(--runs-text-tertiary);
   font-size: 0.88rem;
   line-height: 1.7;
 }
@@ -532,7 +538,7 @@
 .secondaryAction:focus-visible,
 .detailLink:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.14);
+  box-shadow: 0 0 0 4px var(--runs-focus-ring);
 }
 
 @keyframes floatPrimary {

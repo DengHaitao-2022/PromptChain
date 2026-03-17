@@ -3,6 +3,14 @@
   flex-direction: column;
   gap: 20px;
   padding: 24px;
+  --edit-surface: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
+  --edit-surface-muted: var(--console-surface-muted);
+  --edit-border: var(--console-border);
+  --edit-text-primary: var(--console-text-primary);
+  --edit-text-secondary: var(--console-text-secondary);
+  --edit-text-tertiary: var(--console-text-tertiary);
+  --edit-accent: var(--console-accent);
+  --edit-shadow: var(--console-shadow-lg, var(--shadow-lg));
 }
 
 .pageHeader {
@@ -12,37 +20,35 @@
   align-items: flex-start;
   padding: 24px;
   border-radius: 28px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.96), rgba(5, 11, 18, 0.94)),
-    rgba(8, 18, 30, 0.96);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+  border: 1px solid var(--edit-border);
+  background: var(--edit-surface);
+  box-shadow: var(--edit-shadow);
 }
 
 .backLink {
   display: inline-flex;
   margin-bottom: 12px;
-  color: #7dd3fc;
+  color: var(--edit-accent);
   font-size: 0.9rem;
   font-weight: 700;
   text-decoration: none;
 }
 
 .backLink:hover {
-  color: #d8ebfb;
+  color: var(--edit-text-secondary);
 }
 
 .title {
   margin: 0 0 10px;
   font-size: clamp(2rem, 4vw, 3rem);
-  color: #f8fbff;
+  color: var(--edit-text-primary);
   letter-spacing: -0.04em;
 }
 
 .subtitle {
   margin: 0;
   max-width: 640px;
-  color: #b8cad9;
+  color: var(--edit-text-secondary);
   line-height: 1.7;
 }
 
@@ -53,26 +59,26 @@
   gap: 8px;
   padding: 18px 20px;
   border-radius: 22px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--edit-border);
+  background: var(--edit-surface-muted);
 }
 
 .summaryCard strong {
-  color: #f8fbff;
+  color: var(--edit-text-primary);
   font-size: 1.2rem;
 }
 
 .summaryLabel {
   font-size: 0.76rem;
   font-weight: 700;
-  color: #8fa4ba;
+  color: var(--edit-text-tertiary);
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
 .summaryHint {
-  color: #8ea3ba;
+  color: var(--edit-text-tertiary);
   font-size: 0.88rem;
   line-height: 1.6;
 }
@@ -81,11 +87,9 @@
 .loadingCard {
   padding: 18px 20px;
   border-radius: 22px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 30, 0.94), rgba(6, 12, 21, 0.94)),
-    rgba(8, 18, 30, 0.94);
-  color: #d8ebfb;
+  border: 1px solid var(--edit-border);
+  background: var(--edit-surface);
+  color: var(--edit-text-secondary);
   font-weight: 700;
 }
 

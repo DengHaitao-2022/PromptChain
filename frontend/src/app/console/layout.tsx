@@ -23,6 +23,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher';
 import { getAccessibleConsoleFallback, getRoleLabel } from '@/lib/auth';
 import styles from './console.module.css';
 
@@ -255,6 +256,8 @@ function TopBar() {
       </div>
 
       <div className={styles.topbarActions}>
+        <ThemeSwitcher />
+
         <div className={styles.workspaceSelector}>
           <select
             value={workspace?.id || ''}

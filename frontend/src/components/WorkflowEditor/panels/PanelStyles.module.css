@@ -5,27 +5,25 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(6, 13, 22, 0.96), rgba(5, 10, 18, 0.94)),
-    rgba(6, 13, 22, 0.96);
+  border-right: 1px solid var(--console-border);
+  background: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
 }
 
 .libraryHeader {
   padding: 16px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--console-border);
 }
 
 .libraryHeader h3 {
   margin: 0;
   font-size: 1rem;
   font-weight: 700;
-  color: #f8fbff;
+  color: var(--console-text-primary);
 }
 
 .hint {
   font-size: 0.76rem;
-  color: #8ea3ba;
+  color: var(--console-text-tertiary);
 }
 
 .nodeList {
@@ -42,8 +40,8 @@
   align-items: center;
   gap: 12px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: var(--console-surface-muted);
+  border: 1px solid var(--console-border);
   border-left: 4px solid;
   border-radius: 14px;
   cursor: grab;
@@ -52,8 +50,8 @@
 
 .nodeTemplate:hover {
   transform: translateY(-1px);
-  background: rgba(125, 211, 252, 0.08);
-  border-color: rgba(125, 211, 252, 0.18);
+  background: var(--console-accent-soft);
+  border-color: var(--console-border-strong);
 }
 
 .nodeTemplate:active {
@@ -66,9 +64,9 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  background: rgba(8, 18, 30, 0.96);
+  background: var(--console-surface);
   border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  border: 1px solid var(--console-border);
 }
 
 .templateInfo {
@@ -78,12 +76,12 @@
 .templateLabel {
   font-size: 0.9rem;
   font-weight: 600;
-  color: #f8fbff;
+  color: var(--console-text-primary);
 }
 
 .templateDesc {
   font-size: 0.76rem;
-  color: #8ea3ba;
+  color: var(--console-text-tertiary);
   margin-top: 2px;
 }
 
@@ -92,10 +90,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-left: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(6, 13, 22, 0.96), rgba(5, 10, 18, 0.94)),
-    rgba(6, 13, 22, 0.96);
+  border-left: 1px solid var(--console-border);
+  background: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
 }
 
 .panelHeader {
@@ -103,14 +99,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--console-border);
 }
 
 .panelHeader h3 {
   margin: 0;
   font-size: 1rem;
   font-weight: 700;
-  color: #f8fbff;
+  color: var(--console-text-primary);
 }
 
 .closeButton {
@@ -122,14 +118,14 @@
   background: transparent;
   border: none;
   border-radius: 10px;
-  color: #8ea3ba;
+  color: var(--console-text-tertiary);
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease;
 }
 
 .closeButton:hover {
-  background: rgba(125, 211, 252, 0.08);
-  color: #f8fbff;
+  background: var(--console-accent-soft);
+  color: var(--console-text-primary);
 }
 
 .panelContent {
@@ -146,7 +142,7 @@
   display: block;
   font-size: 0.82rem;
   font-weight: 600;
-  color: #d8ebfb;
+  color: var(--console-text-secondary);
   margin-bottom: 6px;
 }
 
@@ -155,18 +151,18 @@
   width: 100%;
   padding: 10px 12px;
   font-size: 0.9rem;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid var(--console-border);
   border-radius: 10px;
-  background: rgba(5, 11, 19, 0.82);
-  color: #f8fbff;
+  background: var(--pc-semantic-bg-input);
+  color: var(--console-text-primary);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .configInput:focus,
 .configSelect:focus {
   outline: none;
-  border-color: rgba(125, 211, 252, 0.28);
-  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.12);
+  border-color: var(--console-border-strong);
+  box-shadow: 0 0 0 4px var(--console-focus-ring);
 }
 
 .configSelect {

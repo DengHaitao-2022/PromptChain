@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Waypoints,
 } from 'lucide-react';
+import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher';
 import styles from './AuthShell.module.css';
 
 interface AuthShellProps {
@@ -79,6 +80,7 @@ export const AuthShell: React.FC<AuthShellProps> = ({
             </NextLink>
 
             {eyebrow ? <span className={styles.eyebrow}>{eyebrow}</span> : null}
+            <ThemeSwitcher />
           </header>
 
           <div className={styles.asideContent}>
@@ -119,7 +121,10 @@ export const AuthShell: React.FC<AuthShellProps> = ({
             </span>
             <span className={styles.logoText}>PromptChain</span>
           </NextLink>
-          {eyebrow ? <span className={styles.mobileEyebrow}>{eyebrow}</span> : null}
+          <div className={styles.mobileBrandActions}>
+            {eyebrow ? <span className={styles.mobileEyebrow}>{eyebrow}</span> : null}
+            <ThemeSwitcher />
+          </div>
         </div>
 
         <div className={styles.cardContainer}>

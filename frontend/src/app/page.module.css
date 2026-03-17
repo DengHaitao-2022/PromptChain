@@ -17,6 +17,8 @@
   --page-accent: #f59e0b;
   --page-accent-strong: #fbbf24;
   --page-accent-soft: rgba(245, 158, 11, 0.16);
+  --page-header-bg: rgba(4, 9, 15, 0.72);
+  --page-pill-bg: rgba(255, 255, 255, 0.03);
   --page-heading: var(--font-space-grotesk), var(--font-sans);
   --page-mono: var(--font-mono);
   --page-heading-gradient: linear-gradient(135deg, #f8fbff 0%, #d8e4ef 56%, #9eb9cf 100%);
@@ -31,6 +33,34 @@
     radial-gradient(circle at 14% 18%, rgba(56, 189, 248, 0.12), transparent 28%),
     radial-gradient(circle at 84% 8%, rgba(14, 165, 233, 0.1), transparent 24%),
     linear-gradient(180deg, #05080f 0%, #07111c 42%, #05080f 100%);
+}
+
+:global(html[data-theme='light']) .page {
+  --page-bg: #f4f7fb;
+  --page-bg-alt: #e7eef6;
+  --page-surface: rgba(255, 255, 255, 0.84);
+  --page-surface-strong: rgba(255, 255, 255, 0.96);
+  --page-surface-soft: rgba(255, 255, 255, 0.68);
+  --page-border: rgba(15, 23, 42, 0.12);
+  --page-border-strong: rgba(2, 132, 199, 0.22);
+  --page-border-soft: rgba(15, 23, 42, 0.06);
+  --page-text: #07111b;
+  --page-muted: #5d7388;
+  --page-muted-strong: #334155;
+  --page-highlight: #0284c7;
+  --page-highlight-strong: #0369a1;
+  --page-highlight-soft: rgba(2, 132, 199, 0.12);
+  --page-accent: #d97706;
+  --page-accent-strong: #b45309;
+  --page-accent-soft: rgba(217, 119, 6, 0.12);
+  --page-header-bg: rgba(255, 255, 255, 0.78);
+  --page-pill-bg: rgba(255, 255, 255, 0.72);
+  --page-heading-gradient: linear-gradient(135deg, #07111b 0%, #1e293b 58%, #3f5568 100%);
+  --page-shell-shadow: 0 26px 72px rgba(15, 23, 42, 0.16);
+  background:
+    radial-gradient(circle at 14% 18%, rgba(14, 165, 233, 0.12), transparent 28%),
+    radial-gradient(circle at 84% 8%, rgba(245, 158, 11, 0.08), transparent 24%),
+    linear-gradient(180deg, #f8fbfd 0%, #edf3f9 42%, #f4f7fb 100%);
 }
 
 .page [data-pointer-glow] {
@@ -183,7 +213,7 @@
   top: 0;
   z-index: 30;
   backdrop-filter: blur(16px);
-  background: rgba(4, 9, 15, 0.72);
+  background: var(--page-header-bg);
   border-bottom: 1px solid var(--page-border);
 }
 
@@ -214,8 +244,8 @@
   align-items: center;
   justify-content: center;
   color: var(--page-highlight-strong);
-  background: rgba(56, 189, 248, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.18);
+  background: var(--page-highlight-soft);
+  border: 1px solid var(--page-border-strong);
   box-shadow: 0 0 18px rgba(56, 189, 248, 0.12);
 }
 
@@ -233,6 +263,8 @@
   display: flex;
   align-items: center;
   gap: 24px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .headerBadge {
@@ -242,7 +274,7 @@
   padding: 0 14px;
   border-radius: 999px;
   border: 1px solid var(--page-border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--page-pill-bg);
   color: var(--page-muted-strong);
   font-size: 0.7rem;
   font-family: var(--page-mono);
