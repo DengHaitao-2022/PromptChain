@@ -61,3 +61,6 @@ backend/
 
 `graph/__init__.py` 重新导出所有符号，外部 `from graph import get_workflow` 无需修改。
 `content_generation_graph.py` 保留为向后兼容 shim。
+- 前端协同开发的新模式：coordinator 先做 worktree/sync audit 和范围定义，再直接输出 paste-ready 派工提示词；执行证据通过 subagent-events.jsonl 或用户回报记录，不再把 Gemini CLI 执行记录作为新任务的默认 gate。历史 gemini-executions.jsonl 保留为既往事实，不强制用于新前端任务。
+- PromptChain 默认采用 Superpowers 工作流：任务开始先 using-superpowers；新功能/行为修改先 brainstorming；多步骤任务先 writing-plans；按计划执行用 subagent-driven-development 或 executing-plans；完成前必须 verification-before-completion；送审前后分别使用 requesting-code-review 和 receiving-code-review；多 agent 规划优先结合 task-coordination-strategies。
+- 前端全局主题系统采用 Design Token 分层：primitive -> semantic -> legacy alias。CSS Variables 集中维护在 frontend/src/app/globals.css；运行时主题状态由 frontend/src/lib/theme.ts 与 frontend/src/contexts/ThemeContext.tsx 统一管理；根布局通过 html[data-theme] / data-theme-preference 和首屏 init script 完成 light/dark 切换、系统偏好兜底与 localStorage 持久化。新增页面和组件优先消费语义 token，避免继续散落硬编码颜色值或自建平行主题状态。

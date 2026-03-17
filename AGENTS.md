@@ -337,6 +337,8 @@ specify init --here --ai codex --force
 ### 10.1 流程与协作
 - `using-superpowers`：会话起始时用于识别并调用合适 skill（规范流程入口）。
   - 文件：`/Users/hi/.agents/skills/using-superpowers/SKILL.md`
+- `collaborative-code`：用于 PromptChain 仓库内的协同开发编排，覆盖 intake、spec、planning、tasking、implementation、review、PR/CI-CD 与 handoff，并固化 DAG 派工、worktree/scope 管控、review gate 和 PR gate。
+  - 文件：`/Users/hi/Developer/03-personal/PromptChain/skills/collaborative-code/SKILL.md`
 - `brainstorming`：在功能设计/行为变更前先完成需求澄清与方案比较。
   - 文件：`/Users/hi/.agents/skills/brainstorming/SKILL.md`
 - `writing-plans`：有明确需求后产出可执行的多步骤实施计划。
