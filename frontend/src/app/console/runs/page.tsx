@@ -20,17 +20,7 @@ import {
   Waypoints,
 } from 'lucide-react';
 import styles from './runs.module.css';
-
-interface WorkflowRun {
-  id: string;
-  workflow_name: string;
-  status: string;
-  current_node: string | null;
-  user_input: string;
-  started_at: string;
-  completed_at: string | null;
-  total_duration_ms: number | null;
-}
+import { workflowApi, WorkflowRunSummary } from '@/lib/api';
 
 interface InsightItem {
   icon: LucideIcon;
@@ -115,7 +105,7 @@ function summarizeInput(text: string) {
 }
 
 export default function RunsPage() {
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [runs, setRuns] = useState<WorkflowRunSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -124,8 +114,9 @@ export default function RunsPage() {
 
     const fetchRuns = async () => {
       try {
+        const response = await workflowApi.getRuns();
         if (active) {
-          setRuns([]);
+          setRuns(response.runs || []);
         }
       } catch {
         if (active) {
