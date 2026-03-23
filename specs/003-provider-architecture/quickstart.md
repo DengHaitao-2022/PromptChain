@@ -36,7 +36,7 @@ DEFAULT_MODEL_NAME=gemini-2.5-flash
 目标：确认代码层已支持 `google`，且无需改调用面。
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 uv sync
 uv run python - <<'PY'
 from services import get_current_model_info, get_llm
@@ -58,7 +58,7 @@ PY
 目标：确认 `get_structured_llm()` 在 Google provider 下仍可构造。
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 uv run python - <<'PY'
 from pydantic import BaseModel
 from services import get_structured_llm
