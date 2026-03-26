@@ -173,7 +173,7 @@ export interface WorkflowDefinition {
 export interface WorkflowVersion {
   id: string;
   version: number;
-  change_log: string;
+  change_log?: string | null;
 }
 
 export interface WorkflowRunSummary {
