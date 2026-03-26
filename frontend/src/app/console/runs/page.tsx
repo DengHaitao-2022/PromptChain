@@ -20,7 +20,8 @@ import {
   Waypoints,
 } from 'lucide-react';
 import styles from './runs.module.css';
-import { workflowApi, WorkflowRunSummary } from '@/lib/api';
+import { workflowApi } from '@/lib/api';
+import type { WorkflowRunSummary } from '@/lib/api';
 
 interface InsightItem {
   icon: LucideIcon;
