@@ -217,14 +217,42 @@ async function request<T>(
   return response.json();
 }
 
+// 统一 Result 包装类型
+type ApiResult<T> = {
+  code: number;
+  message: string;
+  data: T | null;
+};
+
+// 针对统一 Result 返回格式的请求函数
+async function requestResult<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const result = await request<ApiResult<T>>(endpoint, options);
+
+  if (result.code !== 0) {
+    throw new Error(result.message || 'Request failed');
+  }
+
+  if (result.data == null) {
+    throw new Error(result.message || 'Request returned empty data');
+  }
+
+  return result.data;
+}
+
 // 工作流定义 API
 export const workflowDefinitionApi = {
-  // 获取工作流列表
-  list: () => request<{ data: { workflows: WorkflowDefinition[] } }>('/api/workflows'),
+  // 获取工作流列表（使用统一 Result 包装）
+  list: () =>
+    requestResult<{ workflows: WorkflowDefinition[] }>('/api/workflows'),
 
-  // 获取特定工作流的版本
+  // 获取特定工作流的版本（使用统一 Result 包装）
   getVersions: (workflowId: string) =>
-    request<{ data: { versions: WorkflowVersion[] } }>(`/api/workflows/${workflowId}/versions`),
+    requestResult<{ versions: WorkflowVersion[] }>(
+      `/api/workflows/${workflowId}/versions`
+    ),
 };
 
 // 工作流 API
