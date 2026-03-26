@@ -269,7 +269,7 @@ export const workflowApi = {
     }),
 
   // 获取运行记录列表
-  getRuns: () => request<{ data: { runs: WorkflowRunSummary[] } }>('/api/workflow/runs'),
+  getRuns: () => request<{ runs: WorkflowRunSummary[] }>('/api/workflow/runs'),
 
   // 获取工作流状态
   getStatus: (workflowRunId: string) =>

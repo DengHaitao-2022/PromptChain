@@ -159,7 +159,7 @@ export default function RunsPage() {
             <span className={styles.eyebrow}>运行总览</span>
             <h1 className={styles.title}>把每一次生成放进可值守的监控面板</h1>
             <p className={styles.description}>
-              运行记录页会收拢工作流执行、当前节点、异常状态和回看入口。当前先完成页面视觉与状态层，等待列表接口接入真实数据。
+              运行记录页会集中展示工作流状态、当前节点、累计耗时和详情入口，方便值守、回看与排障。
             </p>
 
             <div className={styles.heroActions}>
@@ -179,7 +179,7 @@ export default function RunsPage() {
               <span className={styles.heroSignalLabel}>监控信号</span>
               <span className={styles.heroSignalValue}>{runs.length}</span>
             </div>
-            <p className={styles.heroSignalText}>本页当前优先收口空态、错误态、加载态和运行卡片语言。</p>
+            <p className={styles.heroSignalText}>计数会随运行记录实时变化，便于快速判断当前活跃度与失败情况。</p>
             <div className={styles.heroSignalGrid}>
               <div className={styles.heroSignalItem}>
                 <span>活跃运行</span>
@@ -241,12 +241,13 @@ export default function RunsPage() {
           <div className={styles.panelHeader}>
             <div>
               <h2 className={styles.panelTitle}>运行流</h2>
-              <p className={styles.panelDescription}>真实接口接入后，这里将按时间倒序显示每一次工作流运行。</p>
+              <p className={styles.panelDescription}>按时间倒序展示每一次运行，方便快速定位状态、节点和详情入口。</p>
             </div>
           </div>
 
           {loading ? (
             <div className={styles.loadingState}>
+              <p aria-live="polite">正在加载运行记录…</p>
               {Array.from({ length: 3 }).map((_, index) => (
                 <div key={index} className={styles.skeletonCard} aria-hidden="true">
                   <div className={styles.skeletonLineWide} />
@@ -310,7 +311,7 @@ export default function RunsPage() {
               <span className={styles.emptyIcon} aria-hidden="true">
                 <Waypoints size={22} strokeWidth={1.9} />
               </span>
-              <h3 className={styles.emptyTitle}>运行记录尚未出现</h3>
+              <h3 className={styles.emptyTitle}>还没有运行记录</h3>
               <p className={styles.emptyDescription}>
                 启动工作流后，这里会依次展示运行状态、当前节点、累计耗时与详情入口，用于回看和排障。
               </p>
@@ -333,7 +334,7 @@ export default function RunsPage() {
           <section className={styles.sidePanel}>
             <div className={styles.sidePanelHeader}>
               <h2 className={styles.sidePanelTitle}>监控焦点</h2>
-              <p className={styles.sidePanelDescription}>先把值守语言建立起来，再接入真实运行数据。</p>
+              <p className={styles.sidePanelDescription}>聚焦当前状态、异常信号和回看入口，方便快速值守。</p>
             </div>
 
             <div className={styles.insightList}>

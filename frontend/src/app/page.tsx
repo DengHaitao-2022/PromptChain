@@ -20,9 +20,10 @@ import {
 import styles from './page.module.css';
 import { HomeWorkflowPreview } from '@/components/HomeWorkflowPreview/HomeWorkflowPreview';
 import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher';
-import { workflowDefinitionApi, workflowApi, WorkflowDefinition, WorkflowVersion } from '@/lib/api';
+import { workflowDefinitionApi, workflowApi } from '@/lib/api';
 
 type LaunchState = 'idle' | 'launching' | 'handoff';
+type HomeErrorKind = 'workflows' | 'versions' | 'launch';
 
 interface FeatureCard {
   icon: LucideIcon;
@@ -48,6 +49,12 @@ interface WorkflowVersion {
   id: string;
   version: number;
   change_log: string;
+}
+
+interface HomeErrorState {
+  kind: HomeErrorKind;
+  title: string;
+  message: string;
 }
 
 const examplePrompts = [
@@ -87,7 +94,7 @@ const features: FeatureCard[] = [
   },
   {
     icon: Sparkles,
-    title: '自我精炼 (Self-Refine) 优化',
+    title: '自我精炼优化',
     description: '生成、反馈、精炼形成闭环，让内容质量提升成为可重复的流程步骤。',
     tag: '优化闭环',
   },
@@ -99,7 +106,7 @@ const features: FeatureCard[] = [
   },
   {
     icon: Radar,
-    title: 'Trace 可视化',
+    title: '执行追踪可视化',
     description: '完整记录节点输入、输出、耗时与决策，让 AI 工作流具备工程化可观测性。',
     tag: '执行追踪',
   },
@@ -128,6 +135,37 @@ const sleep = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
+// 将网络层或接口层异常收口为首页可读的中文提示，避免直接暴露英文或底层状态码。
+function normalizeHomeErrorMessage(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message.trim() : '';
+
+  if (!message) {
+    return fallback;
+  }
+
+  if (/[\u4e00-\u9fff]/.test(message)) {
+    return message;
+  }
+
+  if (
+    message === 'Unknown error' ||
+    message === 'Request failed' ||
+    message === 'Request returned empty data'
+  ) {
+    return fallback;
+  }
+
+  if (message === 'Failed to fetch' || message === 'NetworkError when attempting to fetch resource.') {
+    return '网络连接失败，请检查服务是否可用后重试。';
+  }
+
+  if (/^HTTP\s+\d+$/i.test(message)) {
+    return `请求暂时失败（${message}），请稍后重试。`;
+  }
+
+  return fallback;
+}
+
 export default function Home() {
   const router = useRouter();
   const pageRef = useRef<HTMLDivElement | null>(null);
@@ -135,7 +173,9 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<HomeErrorState | null>(null);
+  const [isWorkflowsLoading, setIsWorkflowsLoading] = useState(true);
+  const [isVersionsLoading, setIsVersionsLoading] = useState(false);
 
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [versions, setVersions] = useState<WorkflowVersion[]>([]);
@@ -250,9 +290,10 @@ export default function Home() {
   useEffect(() => {
     const fetchWorkflows = async () => {
       try {
-        setError(null);
+        setIsWorkflowsLoading(true);
+        setErrorState(null);
         const response = await workflowDefinitionApi.list();
-        const workflowData = response.data.workflows || [];
+        const workflowData = response.workflows || [];
 
         const hasPublished = workflowData.some((w: WorkflowDefinition) => 'is_published' in w);
         const displayableWorkflows = hasPublished
@@ -260,17 +301,30 @@ export default function Home() {
           : workflowData;
 
         if (!hasPublished) {
-          setPublishedCompatibilityMessage('当前接口未显式暴露发布态，因此展示版本候选，需手动选择版本。');
+          setPublishedCompatibilityMessage('当前列表暂未区分发布状态，请结合版本说明选择要启动的版本。');
         } else {
           setPublishedCompatibilityMessage(null);
         }
 
         setWorkflows(displayableWorkflows);
         if (displayableWorkflows.length > 0) {
+          setVersions([]);
+          setSelectedVersion('');
+          setIsVersionsLoading(true);
           setSelectedWorkflow(displayableWorkflows[0].id);
+        } else {
+          setSelectedWorkflow('');
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载工作流失败');
+        setWorkflows([]);
+        setSelectedWorkflow('');
+        setErrorState({
+          kind: 'workflows',
+          title: '工作流加载失败',
+          message: normalizeHomeErrorMessage(err, '暂时无法加载工作流列表，请稍后重试。'),
+        });
+      } finally {
+        setIsWorkflowsLoading(false);
       }
     };
     fetchWorkflows();
@@ -280,14 +334,16 @@ export default function Home() {
     if (!selectedWorkflow) {
       setVersions([]);
       setSelectedVersion('');
+      setIsVersionsLoading(false);
       return;
     }
 
     const fetchVersions = async () => {
       try {
-        setError(null);
+        setIsVersionsLoading(true);
+        setErrorState((current) => (current?.kind === 'launch' ? current : null));
         const response = await workflowDefinitionApi.getVersions(selectedWorkflow);
-        const versionData = response.data.versions || [];
+        const versionData = response.versions || [];
         setVersions(versionData);
         if (versionData.length > 0) {
           setSelectedVersion(versionData[0].id);
@@ -295,7 +351,15 @@ export default function Home() {
           setSelectedVersion('');
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载版本失败');
+        setVersions([]);
+        setSelectedVersion('');
+        setErrorState({
+          kind: 'versions',
+          title: '版本加载失败',
+          message: normalizeHomeErrorMessage(err, '暂时无法加载当前工作流版本，请稍后重试。'),
+        });
+      } finally {
+        setIsVersionsLoading(false);
       }
     };
     fetchVersions();
@@ -305,7 +369,7 @@ export default function Home() {
     if (!userInput.trim() || !selectedWorkflow || !selectedVersion || isLoading) return;
 
     setIsLoading(true);
-    setError(null);
+    setErrorState(null);
     setLaunchState('launching');
 
     try {
@@ -318,7 +382,11 @@ export default function Home() {
     } catch (err) {
       setLaunchState('idle');
       setWorkflowRunId(null);
-      setError(err instanceof Error ? err.message : '工作流启动失败');
+      setErrorState({
+        kind: 'launch',
+        title: '启动失败',
+        message: normalizeHomeErrorMessage(err, '工作流启动失败，请稍后重试。'),
+      });
     } finally {
       setIsLoading(false);
     }
@@ -326,21 +394,37 @@ export default function Home() {
 
   const fillExample = (example: string) => {
     setUserInput(example);
-    setError(null);
+    setErrorState(null);
   };
 
-  const isLaunchDisabled = !userInput.trim() || isLoading || workflows.length === 0 || versions.length === 0;
+  const isLaunchDisabled =
+    !userInput.trim() ||
+    isLoading ||
+    isWorkflowsLoading ||
+    isVersionsLoading ||
+    workflows.length === 0 ||
+    versions.length === 0;
 
-  let currentLaunchHint = launchState === 'launching'
-      ? '正在依次编排意图解析、提纲生成与事实核查节点。'
-      : launchState === 'handoff'
-        ? `工作流 ${workflowRunId?.slice(0, 8) ?? '准备中'} 已建立，准备进入详情页。`
-        : '点击后会先完成首页启动反馈，再跳转到工作流详情。';
+  let currentLaunchHint = '点击后会先完成首页启动反馈，再跳转到工作流详情。';
 
-  if (workflows.length === 0) {
-    currentLaunchHint = '没有可用的工作流，请联系管理员配置。';
+  if (isWorkflowsLoading) {
+    currentLaunchHint = '正在加载可用工作流…';
+  } else if (errorState?.kind === 'workflows') {
+    currentLaunchHint = '工作流列表暂时不可用，请稍后刷新重试。';
+  } else if (workflows.length === 0) {
+    currentLaunchHint = '当前工作空间还没有可启动的工作流。';
+  } else if (isVersionsLoading) {
+    currentLaunchHint = '正在加载当前工作流版本…';
+  } else if (errorState?.kind === 'versions') {
+    currentLaunchHint = '版本列表暂时不可用，请重新选择工作流或稍后重试。';
   } else if (versions.length === 0) {
-    currentLaunchHint = '当前工作流没有可用版本，请联系管理员配置。';
+    currentLaunchHint = '当前工作流还没有可启动版本。';
+  } else if (errorState?.kind === 'launch') {
+    currentLaunchHint = '启动失败后可调整输入或稍后重试。';
+  } else if (launchState === 'launching') {
+    currentLaunchHint = '正在依次编排意图解析、提纲生成与事实核查节点。';
+  } else if (launchState === 'handoff') {
+    currentLaunchHint = `工作流 ${workflowRunId?.slice(0, 8) ?? '准备中'} 已建立，准备进入详情页。`;
   }
 
   return (
@@ -441,11 +525,22 @@ export default function Home() {
                         id="workflow-select"
                         className={styles.customSelect}
                         value={selectedWorkflow}
-                        onChange={(e) => setSelectedWorkflow(e.target.value)}
-                        disabled={isLoading || workflows.length === 0}
+                        onChange={(e) => {
+                          setVersions([]);
+                          setSelectedVersion('');
+                          setIsVersionsLoading(true);
+                          setSelectedWorkflow(e.target.value);
+                        }}
+                        disabled={isLoading || isWorkflowsLoading || workflows.length === 0}
                       >
                         {workflows.length === 0 ? (
-                          <option value="">没有可用工作流</option>
+                          <option value="">
+                            {isWorkflowsLoading
+                              ? '正在加载工作流…'
+                              : errorState?.kind === 'workflows'
+                                ? '工作流加载失败'
+                                : '没有可用工作流'}
+                          </option>
                         ) : (
                           workflows.map((workflow) => (
                             <option key={workflow.id} value={workflow.id}>
@@ -462,10 +557,16 @@ export default function Home() {
                         className={styles.customSelect}
                         value={selectedVersion}
                         onChange={(e) => setSelectedVersion(e.target.value)}
-                        disabled={isLoading || versions.length === 0}
+                        disabled={isLoading || isVersionsLoading || versions.length === 0}
                       >
                         {versions.length === 0 ? (
-                          <option value="">没有可用版本</option>
+                          <option value="">
+                            {isVersionsLoading
+                              ? '正在加载版本…'
+                              : errorState?.kind === 'versions'
+                                ? '版本加载失败'
+                                : '没有可用版本'}
+                          </option>
                         ) : (
                           versions.map((version) => (
                             <option key={version.id} value={version.id}>
@@ -524,10 +625,10 @@ export default function Home() {
                   </div>
                 </div>
 
-                {error ? (
+                {errorState ? (
                   <div className={styles.errorCard} role="alert">
-                    <strong>启动失败</strong>
-                    <span>{error}</span>
+                    <strong>{errorState.title}</strong>
+                    <span>{errorState.message}</span>
                   </div>
                 ) : null}
               </div>
