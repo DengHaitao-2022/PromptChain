@@ -3,7 +3,7 @@
 /**
  * 运行记录总览页。
  *
- * 当前列表接口尚未接入，先交付完整的监控页面状态层与视觉骨架。
+ * 当前页面通过 workflowApi.getRuns() 读取真实运行记录，并负责列表态展示与详情跳转入口。
  */
 
 import { useEffect, useState } from 'react';
