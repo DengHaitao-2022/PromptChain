@@ -20,7 +20,7 @@ import {
 import styles from './page.module.css';
 import { HomeWorkflowPreview } from '@/components/HomeWorkflowPreview/HomeWorkflowPreview';
 import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher';
-import { workflowDefinitionApi, workflowApi } from '@/lib/api';
+import { workflowDefinitionApi, workflowApi, WorkflowDefinition, WorkflowVersion } from '@/lib/api';
 
 type LaunchState = 'idle' | 'launching' | 'handoff';
 
