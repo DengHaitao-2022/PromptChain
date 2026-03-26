@@ -163,6 +163,30 @@ export interface WorkflowGateWaitingEvent {
   };
 }
 
+export interface WorkflowDefinition {
+  id: string;
+  name: string;
+  description?: string | null;
+  is_published?: boolean;
+}
+
+export interface WorkflowVersion {
+  id: string;
+  version: number;
+  change_log?: string | null;
+}
+
+export interface WorkflowRunSummary {
+  id: string;
+  workflow_name: string;
+  status: WorkflowStatus | string;
+  current_node: string | null;
+  user_input: string;
+  started_at: string;
+  completed_at: string | null;
+  total_duration_ms: number | null;
+}
+
 export type WorkflowRealtimeEvent =
   | WorkflowConnectedEvent
   | WorkflowNodeEvent
@@ -193,14 +217,59 @@ async function request<T>(
   return response.json();
 }
 
+// 统一 Result 包装类型
+type ApiResult<T> = {
+  code: number;
+  message: string;
+  data: T | null;
+};
+
+// 针对统一 Result 返回格式的请求函数
+async function requestResult<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const result = await request<ApiResult<T>>(endpoint, options);
+
+  if (result.code !== 0) {
+    throw new Error(result.message || 'Request failed');
+  }
+
+  if (result.data == null) {
+    throw new Error(result.message || 'Request returned empty data');
+  }
+
+  return result.data;
+}
+
+// 工作流定义 API
+export const workflowDefinitionApi = {
+  // 获取工作流列表（使用统一 Result 包装）
+  list: () =>
+    requestResult<{ workflows: WorkflowDefinition[] }>('/api/workflows'),
+
+  // 获取特定工作流的版本（使用统一 Result 包装）
+  getVersions: (workflowId: string) =>
+    requestResult<{ versions: WorkflowVersion[] }>(
+      `/api/workflows/${workflowId}/versions`
+    ),
+};
+
 // 工作流 API
 export const workflowApi = {
   // 启动新工作流
-  start: (userInput: string) =>
+  start: (userInput: string, workflowDefinitionId?: string, workflowVersionId?: string) =>
     request<WorkflowResponse>('/api/workflow/start', {
       method: 'POST',
-      body: JSON.stringify({ user_input: userInput }),
+      body: JSON.stringify({
+        user_input: userInput,
+        workflow_definition_id: workflowDefinitionId,
+        workflow_version_id: workflowVersionId,
+      }),
     }),
+
+  // 获取运行记录列表
+  getRuns: () => request<{ data: { runs: WorkflowRunSummary[] } }>('/api/workflow/runs'),
 
   // 获取工作流状态
   getStatus: (workflowRunId: string) =>
