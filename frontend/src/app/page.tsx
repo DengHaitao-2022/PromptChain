@@ -37,23 +37,32 @@ interface TrustSignal {
   description: string;
 }
 
-interface WorkflowDefinition {
-  id: string;
-  name: string;
+interface ExamplePrompt {
+  icon: LucideIcon;
+  title: string;
   description: string;
-  is_published?: boolean;
+  prompt: string;
 }
 
-interface WorkflowVersion {
-  id: string;
-  version: number;
-  change_log: string;
-}
-
-const examplePrompts = [
-  '写一篇关于 AI Agent 技术架构的深度文章，面向技术开发者，2000 字左右',
-  '生成一份面向投资人的智能客服 SaaS 商业计划书，突出市场和护城河',
-  '输出一篇关于量子计算应用边界的科普稿，要求论证严谨并标注高风险事实',
+const examplePrompts: ExamplePrompt[] = [
+  {
+    icon: ScrollText,
+    title: '技术深度长文',
+    description: '适合工程实践、架构分析和风险拆解类内容起稿。',
+    prompt: '写一篇关于 AI Agent 技术架构的深度文章，面向技术开发者，2000 字左右',
+  },
+  {
+    icon: GitBranch,
+    title: '商业方案提案',
+    description: '适合商业计划书、增长策略和竞争壁垒型表达。',
+    prompt: '生成一份面向投资人的智能客服 SaaS 商业计划书，突出市场和护城河',
+  },
+  {
+    icon: ShieldCheck,
+    title: '高风险科普稿',
+    description: '适合需要审慎论证、标注风险和事实约束的主题。',
+    prompt: '输出一篇关于量子计算应用边界的科普稿，要求论证严谨并标注高风险事实',
+  },
 ];
 
 const workflowChain = [
@@ -131,11 +140,15 @@ const sleep = (ms: number) =>
 export default function Home() {
   const router = useRouter();
   const pageRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSuggestionPanelOpen, setIsSuggestionPanelOpen] = useState(false);
+  const [activePromptIndex, setActivePromptIndex] = useState(0);
 
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [versions, setVersions] = useState<WorkflowVersion[]>([]);
@@ -301,6 +314,28 @@ export default function Home() {
     fetchVersions();
   }, [selectedWorkflow]);
 
+  useEffect(() => {
+    if (!isSuggestionPanelOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (composerRef.current?.contains(target)) {
+        return;
+      }
+
+      setIsSuggestionPanelOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isSuggestionPanelOpen]);
+
   const handleSubmit = async () => {
     if (!userInput.trim() || !selectedWorkflow || !selectedVersion || isLoading) return;
 
@@ -324,9 +359,57 @@ export default function Home() {
     }
   };
 
-  const fillExample = (example: string) => {
-    setUserInput(example);
+  const fillExample = (example: ExamplePrompt) => {
+    setUserInput(example.prompt);
     setError(null);
+    setIsSuggestionPanelOpen(false);
+    setActivePromptIndex(0);
+
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      const length = example.prompt.length;
+      textareaRef.current?.setSelectionRange(length, length);
+    });
+  };
+
+  const isSuggestionPanelVisible = isSuggestionPanelOpen && !isLoading && !userInput.trim();
+
+  const handleTextareaFocus = () => {
+    if (isLoading) {
+      return;
+    }
+
+    setIsSuggestionPanelOpen(true);
+    setActivePromptIndex(0);
+  };
+
+  const handleTextareaKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!isSuggestionPanelVisible || event.nativeEvent.isComposing) {
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActivePromptIndex((current) => (current + 1) % examplePrompts.length);
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActivePromptIndex((current) => (current - 1 + examplePrompts.length) % examplePrompts.length);
+      return;
+    }
+
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      fillExample(examplePrompts[activePromptIndex]);
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setIsSuggestionPanelOpen(false);
+    }
   };
 
   const isLaunchDisabled = !userInput.trim() || isLoading || workflows.length === 0 || versions.length === 0;
@@ -345,6 +428,86 @@ export default function Home() {
 
   return (
     <div ref={pageRef} className={styles.page} data-launch-state={launchState}>
+      <div className={styles.backgroundCanvas} aria-hidden="true">
+        <svg className={styles.backgroundSvg} viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <linearGradient id="home-fluid-a" x1="112" y1="744" x2="1080" y2="120" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stopColor="var(--page-fluid-a-deep)" />
+              <stop offset="0.48" stopColor="var(--page-fluid-a-mid)" />
+              <stop offset="1" stopColor="var(--page-fluid-a-light)" />
+            </linearGradient>
+            <linearGradient id="home-fluid-b" x1="604" y1="24" x2="1380" y2="660" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stopColor="var(--page-fluid-b-light)" />
+              <stop offset="0.44" stopColor="var(--page-fluid-b-mid)" />
+              <stop offset="1" stopColor="var(--page-fluid-b-deep)" />
+            </linearGradient>
+            <radialGradient id="home-fluid-c" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1158 236) rotate(134.842) scale(544.44 392.65)">
+              <stop offset="0" stopColor="var(--page-fluid-c-core)" />
+              <stop offset="0.54" stopColor="var(--page-fluid-c-mid)" />
+              <stop offset="1" stopColor="var(--page-fluid-c-fade)" />
+            </radialGradient>
+            <linearGradient id="home-rim-primary" x1="430" y1="310" x2="1000" y2="278" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stopColor="transparent" />
+              <stop offset="0.5" stopColor="var(--page-fluid-rim)" />
+              <stop offset="1" stopColor="transparent" />
+            </linearGradient>
+            <linearGradient id="home-rim-secondary" x1="868" y1="282" x2="1320" y2="428" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stopColor="transparent" />
+              <stop offset="0.48" stopColor="var(--page-fluid-rim-alt)" />
+              <stop offset="1" stopColor="transparent" />
+            </linearGradient>
+            <linearGradient id="home-shadow-plane" x1="164" y1="702" x2="1262" y2="510" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stopColor="var(--page-fluid-shadow)" stopOpacity="0.68" />
+              <stop offset="0.56" stopColor="var(--page-fluid-shadow)" stopOpacity="0.18" />
+              <stop offset="1" stopColor="transparent" />
+            </linearGradient>
+            <filter id="home-depth-shadow" x="-12%" y="-12%" width="124%" height="124%">
+              <feDropShadow dx="0" dy="36" stdDeviation="32" floodColor="var(--page-fluid-shadow)" floodOpacity="0.36" />
+            </filter>
+            <filter id="home-soft-shadow" x="-10%" y="-10%" width="120%" height="120%">
+              <feDropShadow dx="0" dy="20" stdDeviation="22" floodColor="var(--page-fluid-shadow)" floodOpacity="0.22" />
+            </filter>
+          </defs>
+
+          <path
+            d="M-184 758C22 660 206 598 346 542C524 470 640 432 782 420C958 404 1132 430 1476 548V940H-184V758Z"
+            fill="url(#home-shadow-plane)"
+            filter="url(#home-depth-shadow)"
+            opacity="0.76"
+          />
+          <path
+            d="M-184 736C-38 594 104 502 270 456C466 402 646 450 822 382C1008 310 1178 166 1476 52V602C1302 690 1138 736 972 748C782 760 608 710 430 702C224 692 44 724 -184 836V736Z"
+            fill="url(#home-fluid-a)"
+            filter="url(#home-soft-shadow)"
+          />
+          <path
+            d="M430 -110C598 -60 722 18 832 126C930 222 1048 278 1180 318C1294 352 1388 374 1476 438V-110H430Z"
+            fill="url(#home-fluid-b)"
+            filter="url(#home-soft-shadow)"
+            opacity="0.94"
+          />
+          <path
+            d="M720 104C862 154 980 228 1080 316C1150 378 1248 446 1476 564V96C1378 116 1292 144 1194 204C1070 280 950 286 868 248C808 220 772 174 720 104Z"
+            fill="url(#home-fluid-c)"
+            opacity="0.92"
+          />
+          <path
+            d="M346 394C488 332 626 330 768 316C888 304 972 258 1098 188"
+            fill="none"
+            stroke="url(#home-rim-primary)"
+            strokeWidth="4"
+            strokeLinecap="round"
+          />
+          <path
+            d="M856 252C986 274 1082 326 1186 360C1270 388 1350 404 1476 442"
+            fill="none"
+            stroke="url(#home-rim-secondary)"
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+        </svg>
+      </div>
+
       <div className={styles.backgroundMotion} aria-hidden="true">
         <span className={styles.backgroundOrbPrimary} />
         <span className={styles.backgroundOrbSecondary} />
@@ -405,6 +568,7 @@ export default function Home() {
 
             <section
               className={styles.composer}
+              ref={composerRef}
               data-pointer-glow
               aria-labelledby="launch-composer-title"
             >
@@ -425,10 +589,13 @@ export default function Home() {
                 </div>
 
                 <textarea
+                  ref={textareaRef}
                   className={styles.mainTextarea}
                   placeholder="描述你要产出的内容、目标读者、口吻和约束条件。&#10;&#10;例如：写一篇关于 AI Agent 技术架构的深度文章，面向技术开发者，2000 字左右，需要包含工程实践与风险说明。"
                   value={userInput}
                   onChange={(event) => setUserInput(event.target.value)}
+                  onFocus={handleTextareaFocus}
+                  onKeyDown={handleTextareaKeyDown}
                   disabled={isLoading}
                   aria-label="工作流输入"
                 />
@@ -478,24 +645,51 @@ export default function Home() {
                   </div>
 
                   {publishedCompatibilityMessage && (
-                    <div style={{ color: '#ffcc00', fontSize: '0.8rem', opacity: 0.9 }}>
+                    <div className={styles.compatibilityNote}>
                       {publishedCompatibilityMessage}
                     </div>
                   )}
 
-                  <div className={styles.inputHints}>
-                    {examplePrompts.map((prompt) => (
-                      <button
-                        key={prompt}
-                        type="button"
-                        className={styles.hintTag}
-                        onClick={() => fillExample(prompt)}
-                        disabled={isLoading}
-                      >
-                        {prompt}
-                      </button>
-                    ))}
-                  </div>
+                  {isSuggestionPanelVisible ? (
+                    <div className={styles.inputHints} role="region" aria-label="快捷提示模板">
+                      <div className={styles.inputHintsHeader}>
+                        <div>
+                          <p className={styles.inputHintsLabel}>快速起稿</p>
+                          <p className={styles.inputHintsTitle}>从一个成熟模板开始，再继续细化目标、约束和口吻。</p>
+                        </div>
+                        <span className={styles.inputHintsMeta}>↑↓ 选择 · Enter 填充</span>
+                      </div>
+
+                      <div className={styles.inputHintGrid}>
+                        {examplePrompts.map((prompt, index) => {
+                          const Icon = prompt.icon;
+                          const isActive = index === activePromptIndex;
+
+                          return (
+                            <button
+                              key={prompt.title}
+                              type="button"
+                              className={`${styles.hintTag} ${isActive ? styles.hintTagActive : ''}`}
+                              onClick={() => fillExample(prompt)}
+                              onMouseEnter={() => setActivePromptIndex(index)}
+                              disabled={isLoading}
+                            >
+                              <span className={styles.hintTagIcon}>
+                                <Icon size={16} aria-hidden="true" />
+                              </span>
+                              <span className={styles.hintTagCopy}>
+                                <strong>{prompt.title}</strong>
+                                <span>{prompt.description}</span>
+                              </span>
+                              <span className={styles.hintTagShortcut}>
+                                {isActive ? '回车填充' : '示例模板'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className={styles.actionArea}>
                     <p className={styles.launchHint} aria-live="polite">

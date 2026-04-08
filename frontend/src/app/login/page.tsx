@@ -3,6 +3,7 @@
 import React, { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { Eye, EyeOff } from 'lucide-react';
 import { login } from '@/lib/auth';
 import { AuthShell } from '@/components/AuthShell/AuthShell';
 import styles from './login.module.css';
@@ -15,6 +16,8 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -27,7 +30,7 @@ export default function LoginPage() {
       await login({ email, password });
       router.push('/console');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败，请检查您的凭据');
+      setError(err instanceof Error ? err.message : '登录失败，请检查邮箱和密码是否正确');
     } finally {
       setIsLoading(false);
     }
@@ -35,14 +38,12 @@ export default function LoginPage() {
 
   return (
     <AuthShell
-      title="欢迎回来"
-      description="登录后继续查看运行状态、审批节点和版本化产物。"
-      eyebrow="认证入口"
-      asideHeadline="进入可追踪的 AI 工作流控制台"
-      asideBody="从首页启动，到运行态审批、事实核查和内容交付，所有关键节点都保持可见。"
-      footerPrompt="还没有账号？"
-      footerLink="立即注册"
-      footerHref="/register"
+      title="登录控制台"
+      description="使用企业账号继续访问工作区"
+      eyebrow="AI Workflow Platform"
+      asideHeadline={'让 AI 工作流\n可追踪、可审批、\n可交付'}
+      asideBody="从任务发起到运行审查，统一管理关键节点，保障流程透明、版本可控。"
+      footerPrompt="没有访问权限？联系管理员"
       statusSlot={
         error && (
           <div className={styles.errorBanner} role="alert">
@@ -62,7 +63,7 @@ export default function LoginPage() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="name@company.com"
+            placeholder="请输入企业邮箱"
             className={styles.input}
             required
             autoComplete="email"
@@ -72,23 +73,47 @@ export default function LoginPage() {
 
         <div className={styles.field}>
           <label htmlFor="password" className={styles.label}>
-            访问密码
+            登录密码
           </label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="请输入登录密码"
-            className={styles.input}
-            required
-            autoComplete="current-password"
-            disabled={isLoading}
-          />
+          <div className={styles.inputWrap}>
+            <input
+              id="password"
+              type={isPasswordVisible ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="请输入登录密码"
+              className={`${styles.input} ${styles.inputWithAction}`}
+              required
+              autoComplete="current-password"
+              disabled={isLoading}
+            />
+            <button
+              type="button"
+              className={styles.inputAction}
+              aria-label={isPasswordVisible ? '隐藏密码' : '显示密码'}
+              aria-pressed={isPasswordVisible}
+              onClick={() => setIsPasswordVisible((visible) => !visible)}
+              disabled={isLoading}
+            >
+              {isPasswordVisible ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
+            </button>
+          </div>
         </div>
 
-        <div className={styles.actionsRow}>
-          <Link href="/forgot-password" className={styles.forgotLink}>
+        <div className={styles.helperRow}>
+          <label className={styles.rememberToggle}>
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className={styles.checkboxInput}
+              disabled={isLoading}
+            />
+            <span className={styles.checkboxBox} aria-hidden="true" />
+            <span className={styles.checkboxLabel}>记住我</span>
+          </label>
+
+          <Link href="/forgot-password" className={styles.metaLink}>
             忘记密码？
           </Link>
         </div>
@@ -98,7 +123,7 @@ export default function LoginPage() {
           className={styles.submitButton}
           disabled={isLoading}
         >
-          {isLoading ? '正在验证身份...' : '进入控制台'}
+          {isLoading ? '登录中...' : '登录控制台'}
         </button>
       </form>
     </AuthShell>

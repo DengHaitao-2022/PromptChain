@@ -4,14 +4,14 @@
   height: 100%;
   padding: 24px;
   border-radius: 30px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--page-preview-border, rgba(71, 85, 105, 0.5));
   background:
-    radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 30%),
-    radial-gradient(circle at bottom right, rgba(245, 158, 11, 0.1), transparent 28%),
-    linear-gradient(180deg, rgba(8, 18, 31, 0.96), rgba(7, 16, 27, 0.9));
+    radial-gradient(circle at top left, var(--page-highlight-soft, rgba(56, 189, 248, 0.16)), transparent 30%),
+    radial-gradient(circle at bottom right, var(--page-accent-soft, rgba(245, 158, 11, 0.1)), transparent 28%),
+    var(--page-preview-bg, linear-gradient(180deg, rgba(8, 18, 31, 0.96), rgba(7, 16, 27, 0.9)));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 32px 72px rgba(0, 0, 0, 0.32);
+    inset 0 1px 0 var(--page-border-soft, rgba(255, 255, 255, 0.04)),
+    var(--page-preview-shell-shadow, 0 32px 72px rgba(0, 0, 0, 0.32));
   overflow: hidden;
 }
 
@@ -25,8 +25,8 @@
 .container::before {
   inset: 0;
   background-image:
-    linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+    linear-gradient(var(--page-preview-grid-line, rgba(148, 163, 184, 0.05)) 1px, transparent 1px),
+    linear-gradient(90deg, var(--page-preview-grid-line, rgba(148, 163, 184, 0.05)) 1px, transparent 1px);
   background-size: 22px 22px;
   opacity: 0.32;
 }
@@ -36,7 +36,7 @@
   width: 16rem;
   height: 16rem;
   border-radius: 999px;
-  background: radial-gradient(circle, rgba(56, 189, 248, 0.12), transparent 70%);
+  background: radial-gradient(circle, var(--page-highlight-soft, rgba(56, 189, 248, 0.12)), transparent 70%);
   filter: blur(18px);
 }
 
@@ -88,9 +88,9 @@
   min-height: 34px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(245, 158, 11, 0.18);
-  background: rgba(245, 158, 11, 0.08);
-  color: #ffe1ac;
+  border: 1px solid var(--page-border-strong, rgba(245, 158, 11, 0.18));
+  background: var(--page-preview-pill-bg, rgba(245, 158, 11, 0.08));
+  color: var(--page-preview-pill-text, #ffe1ac);
   font-size: 0.72rem;
   font-family: var(--font-mono);
   text-transform: uppercase;
@@ -118,7 +118,7 @@
   top: 10px;
   bottom: 10px;
   width: 2px;
-  background: rgba(71, 85, 105, 0.7);
+  background: var(--page-preview-line, rgba(71, 85, 105, 0.7));
   border-radius: 999px;
   overflow: hidden;
 }
@@ -151,8 +151,8 @@
   min-height: 74px;
   padding: 14px 14px 14px 18px;
   border-radius: 20px;
-  border: 1px solid rgba(71, 85, 105, 0.5);
-  background: rgba(8, 18, 30, 0.76);
+  border: 1px solid var(--page-preview-border, rgba(71, 85, 105, 0.5));
+  background: var(--page-preview-card-bg, rgba(8, 18, 30, 0.76));
   backdrop-filter: blur(16px);
   transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
@@ -160,8 +160,8 @@
 .idle .node:first-of-type,
 .launching .node,
 .handoff .node {
-  border-color: rgba(56, 189, 248, 0.2);
-  background: rgba(9, 21, 34, 0.9);
+  border-color: var(--page-border-strong, rgba(56, 189, 248, 0.2));
+  background: var(--page-preview-card-bg-strong, rgba(9, 21, 34, 0.9));
 }
 
 .launching .node,
@@ -173,8 +173,8 @@
 .handoff .node,
 .handoff .telemetryCard {
   box-shadow:
-    0 0 0 1px rgba(56, 189, 248, 0.06),
-    0 16px 28px rgba(0, 0, 0, 0.22);
+    0 0 0 1px var(--page-highlight-soft, rgba(56, 189, 248, 0.06)),
+    var(--page-preview-card-shadow, 0 16px 28px rgba(0, 0, 0, 0.22));
 }
 
 .nodeIcon,
@@ -202,12 +202,12 @@
 }
 
 .nodeCopy span {
-  color: var(--page-muted, #8ea3ba);
+  color: var(--page-muted-strong, #8ea3ba);
   font-size: 0.8rem;
 }
 
 .nodeState {
-  color: var(--page-highlight-strong, #7dd3fc);
+  color: var(--page-preview-pill-text, var(--page-highlight-strong, #7dd3fc));
   font-size: 0.7rem;
   font-family: var(--font-mono);
   text-transform: uppercase;
@@ -224,8 +224,8 @@
   min-height: 110px;
   padding: 16px;
   border-radius: 20px;
-  border: 1px solid rgba(71, 85, 105, 0.5);
-  background: rgba(8, 18, 30, 0.72);
+  border: 1px solid var(--page-preview-border, rgba(71, 85, 105, 0.5));
+  background: var(--page-preview-card-bg, rgba(8, 18, 30, 0.72));
 }
 
 .telemetryLabel {
@@ -247,7 +247,7 @@
 
 .telemetryCard p {
   margin: 8px 0 0;
-  color: var(--page-muted, #8ea3ba);
+  color: var(--page-muted-strong, #8ea3ba);
   font-size: 0.8rem;
   line-height: 1.65;
 }
@@ -259,7 +259,7 @@
   justify-content: space-between;
   gap: 16px;
   padding-top: 18px;
-  border-top: 1px solid rgba(71, 85, 105, 0.4);
+  border-top: 1px solid var(--page-divider, rgba(71, 85, 105, 0.4));
 }
 
 .traceId,
@@ -312,8 +312,8 @@
     margin-bottom: 16px;
     padding: 10px 12px;
     border-radius: 999px;
-    border: 1px solid rgba(71, 85, 105, 0.56);
-    background: rgba(8, 18, 30, 0.82);
+    border: 1px solid var(--page-preview-border, rgba(71, 85, 105, 0.56));
+    background: var(--page-preview-card-bg, rgba(8, 18, 30, 0.82));
     color: var(--page-muted-strong, #c5d3e1);
     font-size: 0.72rem;
     font-family: var(--font-mono);

@@ -38,15 +38,27 @@ function getResolvedThemeLabel(resolvedTheme: 'light' | 'dark') {
   return resolvedTheme === 'light' ? '浅色生效' : '深色生效';
 }
 
-export function ThemeSwitcher({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+interface ThemeSwitcherProps extends HTMLAttributes<HTMLDivElement> {
+  showStatus?: boolean;
+  compact?: boolean;
+}
+
+export function ThemeSwitcher({
+  className,
+  showStatus = true,
+  compact = false,
+  ...props
+}: ThemeSwitcherProps) {
   const { themePreference, resolvedTheme, setThemePreference } = useTheme();
   const rootClassName = className ? `${styles.root} ${className}` : styles.root;
 
   return (
-    <div className={rootClassName} {...props}>
-      <span className={styles.status}>
-        {themePreference === 'system' ? `系统 · ${getResolvedThemeLabel(resolvedTheme)}` : getResolvedThemeLabel(resolvedTheme)}
-      </span>
+    <div className={rootClassName} data-compact={compact} {...props}>
+      {showStatus ? (
+        <span className={styles.status}>
+          {themePreference === 'system' ? `系统 · ${getResolvedThemeLabel(resolvedTheme)}` : getResolvedThemeLabel(resolvedTheme)}
+        </span>
+      ) : null}
 
       <div className={styles.segment} role="group" aria-label="主题切换">
         {THEME_OPTIONS.map((option) => {

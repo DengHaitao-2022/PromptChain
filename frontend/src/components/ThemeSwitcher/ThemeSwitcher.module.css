@@ -10,6 +10,21 @@
   box-shadow: var(--shadow-sm);
 }
 
+.root[data-compact='true'] {
+  gap: 0;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border-color: #e2e8f0;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+}
+
+:global(html[data-theme='dark']) .root[data-compact='true'] {
+  background: rgba(15, 23, 42, 0.72);
+  border-color: rgba(148, 163, 184, 0.18);
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.24);
+}
+
 .status {
   color: var(--color-text-secondary);
   font-size: 0.74rem;
@@ -27,6 +42,13 @@
   border-radius: 999px;
   border: 1px solid var(--color-border);
   background: var(--color-bg-primary);
+}
+
+.root[data-compact='true'] .segment {
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .button {
@@ -49,9 +71,31 @@
     transform var(--transition-fast);
 }
 
+.root[data-compact='true'] .button {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #64748b;
+}
+
+:global(html[data-theme='dark']) .root[data-compact='true'] .button {
+  color: #94a3b8;
+}
+
 .button:hover {
   color: var(--color-text-primary);
   background: var(--color-bg-secondary);
+}
+
+.root[data-compact='true'] .button:hover {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+:global(html[data-theme='dark']) .root[data-compact='true'] .button:hover {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .button[data-active='true'] {
@@ -59,6 +103,20 @@
   border-color: var(--color-border-hover);
   background: var(--pc-semantic-brand-soft);
   box-shadow: 0 0 0 1px var(--color-border-hover);
+}
+
+.root[data-compact='true'] .button[data-active='true'] {
+  color: #0f172a;
+  border-color: #d6e0ea;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+:global(html[data-theme='dark']) .root[data-compact='true'] .button[data-active='true'] {
+  color: #f8fafc;
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.28);
 }
 
 .button:focus-visible {
