@@ -11,9 +11,9 @@ import {
     useWorkflowApi,
     type ValidationResult,
     type WorkflowDefinition,
-    type WorkflowEdge,
-    type WorkflowNode,
 } from '@/components/WorkflowEditor/hooks/useWorkflowApi';
+import { serializeNodes, serializeEdges } from '@/components/WorkflowEditor/domain/serializer';
+import { deserializeNodes, deserializeEdges } from '@/components/WorkflowEditor/domain/deserializer';
 import styles from './page.module.css';
 
 export default function WorkflowEditPage() {
@@ -65,8 +65,8 @@ export default function WorkflowEditPage() {
 
     const applyWorkflowAll = useCallback((workflow: WorkflowDefinition) => {
         applyWorkflowMeta(workflow);
-        setInitialNodes(toEditorNodes(workflow.nodes));
-        setInitialEdges(toEditorEdges(workflow.edges));
+        setInitialNodes(deserializeNodes(workflow.nodes));
+        setInitialEdges(deserializeEdges(workflow.edges));
     }, [applyWorkflowMeta]);
 
     useEffect(() => {
@@ -149,8 +149,8 @@ export default function WorkflowEditPage() {
             const payload = {
                 name: name.trim(),
                 description: description.trim(),
-                nodes: toApiNodes(nodes),
-                edges: toApiEdges(edges),
+                nodes: serializeNodes(nodes),
+                edges: serializeEdges(edges),
                 change_log: '编辑器保存草稿',
             };
 
@@ -388,50 +388,4 @@ export default function WorkflowEditPage() {
             />
         </main>
     );
-}
-
-function toEditorNodes(nodes: WorkflowNode[]): Node[] {
-    return nodes.map((node) => ({
-        ...node,
-        data: { ...node.data },
-    }));
-}
-
-function toEditorEdges(edges: WorkflowEdge[]): Edge[] {
-    return edges.map((edge) => ({
-        ...edge,
-        data: edge.data ? { ...edge.data } : undefined,
-    }));
-}
-
-function toApiNodes(nodes: Node[]): WorkflowNode[] {
-    return nodes.map((node) => ({
-        id: node.id,
-        type: String(node.type ?? 'process'),
-        position: node.position,
-        data: {
-            label: String(node.data?.label ?? ''),
-            config: isRecord(node.data?.config) ? node.data.config : undefined,
-        },
-    }));
-}
-
-function toApiEdges(edges: Edge[]): WorkflowEdge[] {
-    return edges.map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        type: edge.type,
-        data: isRecord(edge.data)
-            ? {
-                  condition:
-                      typeof edge.data.condition === 'string' ? edge.data.condition : undefined,
-                  label: typeof edge.data.label === 'string' ? edge.data.label : undefined,
-              }
-            : undefined,
-    }));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
