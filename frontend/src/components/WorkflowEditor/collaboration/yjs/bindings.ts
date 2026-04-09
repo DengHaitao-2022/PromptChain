@@ -6,18 +6,22 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
-import { yNodes, yEdges, ydoc } from './ydoc';
-import { initProvider, destroyProvider, provider } from './provider';
+import { useEffect, useRef, useState } from 'react';
+import type { WebsocketProvider } from 'y-websocket';
+import { yNodes, yEdges, ydoc, resetSharedDocument } from './ydoc';
+import { initProvider, destroyProvider } from './provider';
 import { useWorkflowStoreInstance } from '../../provider/WorkflowProvider';
 import { getNodesArray, getEdgesArray } from './sync';
 
-export function useYjsBindings(workflowId: string, initialNodes?: any[], initialEdges?: any[]) {
+export function useYjsBindings(workflowId?: string, initialNodes?: any[], initialEdges?: any[]) {
     const store = useWorkflowStoreInstance();
     const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+    const [providerInstance, setProviderInstance] = useState<WebsocketProvider | null>(null);
+    const draftRoomRef = useRef(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
 
     useEffect(() => {
-        const docId = workflowId || 'new-draft';
+        const docId = workflowId || draftRoomRef.current;
+        resetSharedDocument();
 
         // 生成临时用户信息（如果有 AuthContext 可以传进来，目前生成随机数做演示）
         const randomId = String(Math.floor(Math.random() * 10000));
@@ -27,6 +31,7 @@ export function useYjsBindings(workflowId: string, initialNodes?: any[], initial
             name: `User ${randomId}`,
             color: colors[Math.floor(Math.random() * colors.length)]
         });
+        setProviderInstance(p);
 
         p.on('status', (event: { status: string }) => {
             setStatus(event.status as any);
@@ -79,8 +84,10 @@ export function useYjsBindings(workflowId: string, initialNodes?: any[], initial
             yNodes.unobserve(updateZustand);
             yEdges.unobserve(updateZustand);
             destroyProvider();
+            setProviderInstance(null);
+            setStatus('disconnected');
         };
     }, [workflowId, store, initialNodes, initialEdges]);
 
-    return { status };
+    return { status, provider: providerInstance };
 }

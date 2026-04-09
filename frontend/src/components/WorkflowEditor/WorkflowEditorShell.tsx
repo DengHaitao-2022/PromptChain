@@ -24,6 +24,7 @@ import { UserPresenceAvatarStack } from './collaboration/components/UserPresence
 import { RemoteSelectionHighlight } from './collaboration/components/RemoteSelectionHighlight';
 import { ConflictHintToast } from './collaboration/components/ConflictHintToast';
 import { getDefaultLabel } from './domain/schema';
+import { registry } from './registry';
 import styles from './WorkflowEditor.module.css';
 import type { WorkflowEditorProps } from './index';
 
@@ -49,7 +50,7 @@ const selectedNode = useWorkflowContext(selectSelectedNode);
 const readOnly = useWorkflowContext(selectReadOnly);
 
     const actions = useWorkflowActions();
-    const { status: yjsStatus } = useYjsBindings(workflowId ?? 'new-draft', initialNodes, initialEdges);
+    const { status: yjsStatus, provider: yjsProvider } = useYjsBindings(workflowId, initialNodes, initialEdges);
 
     const busy = Boolean(
         actionState?.isSaving || actionState?.isValidating || actionState?.isPublishing,
@@ -91,7 +92,10 @@ const readOnly = useWorkflowContext(selectReadOnly);
                 id: `${type}-${Date.now()}`,
                 type,
                 position,
-                data: { label: getDefaultLabel(type) },
+                data: {
+                    label: getDefaultLabel(type),
+                    ...(registry.get(type)?.defaultData ?? {}),
+                },
             };
 
             actions.addNode(newNode);
@@ -152,7 +156,7 @@ const readOnly = useWorkflowContext(selectReadOnly);
                     ) : null}
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginLeft: '12px' }}>
-                        <UserPresenceAvatarStack />
+                        <UserPresenceAvatarStack provider={yjsProvider} />
                         <ConnectionStatusBadge status={yjsStatus} />
                     </div>
                 </div>
@@ -252,14 +256,14 @@ const readOnly = useWorkflowContext(selectReadOnly);
                         <Panel position="top-right" className={styles.canvasHint}>
                             {readOnly ? '当前为只读模式' : '拖拽节点、配置参数并发布'}
                         </Panel>
-                        <RemoteSelectionHighlight />
+                        <RemoteSelectionHighlight provider={yjsProvider} />
                         <CanvasToolbar />
                     </ReactFlow>
                 </div>
 
                 {selectedNode ? (
                     <div style={{ position: 'absolute', right: 24, top: 24, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
-                        <ConflictHintToast />
+                        <ConflictHintToast provider={yjsProvider} />
                         <PropertiesPanel
                             node={selectedNode}
                             onClose={() => actions.setSelectedNode(null)}

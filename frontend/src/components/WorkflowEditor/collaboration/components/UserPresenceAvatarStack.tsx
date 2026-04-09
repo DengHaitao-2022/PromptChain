@@ -1,16 +1,24 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { provider } from '../yjs/provider';
+import type { WebsocketProvider } from 'y-websocket';
 import type { AwarenessState } from '../yjs/awareness';
 import styles from './CollaborationStyles.module.css';
 
-export function UserPresenceAvatarStack() {
+interface UserPresenceAvatarStackProps {
+    provider: WebsocketProvider | null;
+}
+
+export function UserPresenceAvatarStack({ provider }: UserPresenceAvatarStackProps) {
     const [states, setStates] = useState<Map<number, AwarenessState>>(new Map());
     const [localClientId, setLocalClientId] = useState<number | null>(null);
 
     useEffect(() => {
-        if (!provider) return;
+        if (!provider) {
+            setStates(new Map());
+            setLocalClientId(null);
+            return;
+        }
 
         setLocalClientId(provider.awareness.clientID);
 
@@ -28,7 +36,7 @@ export function UserPresenceAvatarStack() {
                 provider.awareness.off('change', updateStates);
             }
         };
-    }, []);
+    }, [provider]);
 
     // 过滤掉自己
     const remoteUsers = Array.from(states.entries())

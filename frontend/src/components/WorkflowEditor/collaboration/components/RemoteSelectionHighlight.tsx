@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { provider } from '../yjs/provider';
+import type { WebsocketProvider } from 'y-websocket';
 import { getRemoteSelections, type UserPresence } from '../yjs/awareness';
 import styles from './CollaborationStyles.module.css';
 
@@ -10,12 +10,19 @@ import styles from './CollaborationStyles.module.css';
  * 远程选择高亮 / 软锁提示层
  * 获取所有远程客户端的选中态，并在对应的节点上方绘制带颜色的边框和昵称 tag
  */
-export function RemoteSelectionHighlight() {
+interface RemoteSelectionHighlightProps {
+    provider: WebsocketProvider | null;
+}
+
+export function RemoteSelectionHighlight({ provider }: RemoteSelectionHighlightProps) {
     const { getNodes } = useReactFlow();
     const [selections, setSelections] = useState<Map<string, UserPresence[]>>(new Map());
 
     useEffect(() => {
-        if (!provider) return;
+        if (!provider) {
+            setSelections(new Map());
+            return;
+        }
 
         const updateSelections = () => {
             if (!provider) return;
@@ -32,7 +39,7 @@ export function RemoteSelectionHighlight() {
                 provider.awareness.off('change', updateSelections);
             }
         };
-    }, []);
+    }, [provider]);
 
     if (selections.size === 0) {
         return null;

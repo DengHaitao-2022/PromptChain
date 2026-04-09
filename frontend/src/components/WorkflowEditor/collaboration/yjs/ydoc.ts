@@ -17,3 +17,13 @@ export const ySettings = ydoc.getMap<any>('settings');
 
 // 接入 Y.UndoManager 管理撤销重做（只监听需要撤销的图形变化，不监听 viewport/selection）
 export const undoManager = new Y.UndoManager([yNodes, yEdges]);
+
+export function resetSharedDocument() {
+    ydoc.transact(() => {
+        yNodes.clear();
+        yEdges.clear();
+        yMeta.clear();
+        ySettings.clear();
+    }, 'reset');
+    undoManager.clear();
+}

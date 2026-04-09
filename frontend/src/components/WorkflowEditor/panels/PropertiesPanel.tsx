@@ -60,6 +60,7 @@ export default function PropertiesPanel({ node, onClose, onChange }: PropertiesP
 
                 {nodeDef?.formSchema ? (
                     <SchemaFormRenderer
+                        key={`${node.id}:${node.type}`}
                         schema={nodeDef.formSchema}
                         defaultValues={(node.data.config as Record<string, unknown>) || {}}
                         onChange={handleConfigChange}

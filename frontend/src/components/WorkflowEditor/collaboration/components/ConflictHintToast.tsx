@@ -3,7 +3,7 @@
 import { useWorkflowContext } from '../../provider/WorkflowProvider';
 import { selectSelectedNode } from '../../store/selectors';
 import { useEffect, useState } from 'react';
-import { provider } from '../yjs/provider';
+import type { WebsocketProvider } from 'y-websocket';
 import { getRemoteSelections } from '../yjs/awareness';
 import { AlertCircle } from 'lucide-react';
 import styles from './CollaborationStyles.module.css';
@@ -12,7 +12,11 @@ import styles from './CollaborationStyles.module.css';
  * 冲突提示软锁
  * 当用户选中一个正在被他人选中的节点时，给出提示。不阻断其继续编辑（软锁），但提示覆盖风险。
  */
-export function ConflictHintToast() {
+interface ConflictHintToastProps {
+    provider: WebsocketProvider | null;
+}
+
+export function ConflictHintToast({ provider }: ConflictHintToastProps) {
     const selectedNode = useWorkflowContext(selectSelectedNode);
     const [conflictUsers, setConflictUsers] = useState<string[]>([]);
 
@@ -38,7 +42,7 @@ export function ConflictHintToast() {
                 provider.awareness.off('change', checkConflicts);
             }
         };
-    }, [selectedNode]);
+    }, [provider, selectedNode]);
 
     if (conflictUsers.length === 0) return null;
 
