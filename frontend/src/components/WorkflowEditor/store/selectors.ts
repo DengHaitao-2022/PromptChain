@@ -13,3 +13,4 @@ export const selectReadOnly = (state: WorkflowState) => state.readOnly;
 export const selectViewport = (state: WorkflowState) => state.viewport;
 export const selectPanelTab = (state: WorkflowState) => state.panelTab;
 export const selectLayoutDirection = (state: WorkflowState) => state.layoutDirection;
+export const selectIsLayouting = (state: WorkflowState) => state.isLayouting;

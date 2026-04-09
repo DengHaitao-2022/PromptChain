@@ -7,6 +7,8 @@ import { useMemo } from 'react';
 import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
 import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect, Viewport } from '@xyflow/react';
 import { useWorkflowStoreInstance } from '../provider/WorkflowProvider';
+import { layoutGraph } from '../layout/elk/elk';
+import type { ElkLayoutOptions } from '../layout/elk/config';
 
 export function useWorkflowActions() {
     const store = useWorkflowStoreInstance();
@@ -73,7 +75,7 @@ export function useWorkflowActions() {
         setPanelTab(panelTab: string) {
             store.setState({ panelTab });
         },
-        setLayoutDirection(layoutDirection: 'TB' | 'LR') {
+        setLayoutDirection(layoutDirection: 'DOWN' | 'LEFT' | 'TOP' | 'RIGHT') {
             store.setState({ layoutDirection });
         },
         reset() {
@@ -83,8 +85,40 @@ export function useWorkflowActions() {
                 selectedNode: null,
                 viewport: { x: 0, y: 0, zoom: 1 },
                 isDirty: false,
+                isLayouting: false,
                 panelTab: 'config',
-                layoutDirection: 'TB',
+                layoutDirection: 'RIGHT',
+            });
+        },
+        async autoLayout(options: Partial<ElkLayoutOptions> = {}, filterIds?: string[]) {
+            store.setState({ isLayouting: true });
+            const { nodes, edges, layoutDirection } = store.getState();
+
+            // 默认沿用当前的 direction
+            const finalOptions = {
+                direction: layoutDirection,
+                ...options
+            };
+
+            const newNodes = await layoutGraph(nodes, edges, finalOptions as Partial<ElkLayoutOptions>, filterIds);
+
+            store.setState({
+                nodes: newNodes,
+                isDirty: true,
+                isLayouting: false
+            });
+        },
+        togglePinNode(nodeId: string) {
+            store.setState((state) => {
+                const nextNodes = state.nodes.map(n =>
+                    n.id === nodeId
+                        ? { ...n, data: { ...n.data, isPinned: !n.data.isPinned } }
+                        : n
+                );
+                const nextSelected = state.selectedNode?.id === nodeId
+                    ? { ...state.selectedNode, data: { ...state.selectedNode.data, isPinned: !state.selectedNode.data.isPinned } }
+                    : state.selectedNode;
+                return { nodes: nextNodes, selectedNode: nextSelected, isDirty: true };
             });
         }
     }), [store]);

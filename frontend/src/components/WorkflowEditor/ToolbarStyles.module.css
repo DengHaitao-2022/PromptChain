@@ -1,0 +1,70 @@
+.canvasToolbar {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface-overlay);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    gap: 8px;
+    box-shadow: var(--shadow-sm);
+    z-index: 10;
+}
+
+.toolButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-full);
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+/* 44x44 可点击热区增强 (Accessibility) */
+.toolButton::after {
+    content: '';
+    position: absolute;
+    width: 44px;
+    height: 44px;
+    background: transparent;
+}
+
+.toolButton:hover:not(:disabled) {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.toolButton:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.toolButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border-subtle);
+    margin: 0 4px;
+}
+
+.selectionIcon {
+    opacity: 0.8;
+    color: var(--primary);
+}
+
+.pinnedActive {
+    background: var(--surface-active);
+    color: var(--primary);
+}

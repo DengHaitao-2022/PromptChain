@@ -17,6 +17,7 @@ import { selectNodes, selectEdges, selectSelectedNode, selectReadOnly } from './
 import { nodeTypes } from './nodes';
 import NodeLibrary from './panels/NodeLibrary';
 import PropertiesPanel from './panels/PropertiesPanel';
+import CanvasToolbar from './CanvasToolbar';
 import { getDefaultLabel } from './domain/schema';
 import styles from './WorkflowEditor.module.css';
 import type { WorkflowEditorProps } from './index';
@@ -238,6 +239,7 @@ export function WorkflowEditorShell({
                         <Panel position="top-right" className={styles.canvasHint}>
                             {readOnly ? '当前为只读模式' : '拖拽节点、配置参数并发布'}
                         </Panel>
+                        <CanvasToolbar />
                     </ReactFlow>
                 </div>
 

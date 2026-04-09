@@ -13,8 +13,9 @@ export interface WorkflowState {
     selectedNode: Node | null;
     viewport: Viewport;
     isDirty: boolean;
+    isLayouting: boolean;
     panelTab: string;
-    layoutDirection: 'TB' | 'LR';
+    layoutDirection: 'DOWN' | 'LEFT' | 'TOP' | 'RIGHT';
     readOnly: boolean;
 }
 
@@ -27,8 +28,9 @@ export const createWorkflowStore = (initialProps?: Partial<WorkflowState>) => {
         selectedNode: null,
         viewport: { x: 0, y: 0, zoom: 1 },
         isDirty: false,
+        isLayouting: false,
         panelTab: 'config',
-        layoutDirection: 'TB',
+        layoutDirection: 'RIGHT',
         readOnly: false,
         ...initialProps,
     }));
