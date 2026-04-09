@@ -10,75 +10,118 @@ import { useWorkflowStoreInstance } from '../provider/WorkflowProvider';
 import { layoutGraph } from '../layout/elk/elk';
 import type { ElkLayoutOptions } from '../layout/elk/config';
 
-export function useWorkflowActions() {
-    const store = useWorkflowStoreInstance();
+import { ydoc, yNodes, undoManager } from '../collaboration/yjs/ydoc';
+import { applyNodeChangesToYjs, applyEdgeChangesToYjs, setNodesToYjs, setEdgesToYjs } from '../collaboration/yjs/sync';
+import { updateSelection } from '../collaboration/yjs/awareness';
 
-    return useMemo(() => ({
-        setNodes(nodesOrUpdater: Node[] | ((current: Node[]) => Node[])) {
-            store.setState((state) => {
-                const nextNodes = typeof nodesOrUpdater === 'function' ? nodesOrUpdater(state.nodes) : nodesOrUpdater;
-                return { nodes: nextNodes, isDirty: true };
+export function useWorkflowActions() {
+const store = useWorkflowStoreInstance();
+
+return useMemo(() => ({
+setNodes(nodesOrUpdater: Node[] | ((current: Node[]) => Node[])) {
+    const currentNodes = store.getState().nodes;
+    const nextNodes = typeof nodesOrUpdater === 'function' ? nodesOrUpdater(currentNodes) : nodesOrUpdater;
+
+ydoc.transact(() => {
+setNodesToYjs(nextNodes);
+}, 'local');
+    store.setState({ isDirty: true });
+},
+setEdges(edgesOrUpdater: Edge[] | ((current: Edge[]) => Edge[])) {
+const currentEdges = store.getState().edges;
+const nextEdges = typeof edgesOrUpdater === 'function' ? edgesOrUpdater(currentEdges) : edgesOrUpdater;
+
+    ydoc.transact(() => {
+        setEdgesToYjs(nextEdges);
+}, 'local');
+store.setState({ isDirty: true });
+},
+onNodesChange: ((changes) => {
+    // Apply layout/data changes to Yjs
+    ydoc.transact(() => {
+    applyNodeChangesToYjs(changes);
+}, 'local');
+
+// Only 'select' and 'dimensions' changes are handled entirely by Zustand locally
+    // ('dimensions' are synced to Yjs above, but 'select' is excluded, so we must compute the result array)
+    // Actually `applyNodeChanges` works well on local state. We still need it to compute selection bounds/state
+// Let's just apply it to our local cache completely, to instantly reflect selection and dragging.
+    store.setState((state) => ({
+        nodes: applyNodeChanges(changes, state.nodes),
+    isDirty: true,
+}));
+
+// Sync selection status to Awareness
+const currentSelected = store.getState().nodes.filter(n => n.selected).map(n => n.id);
+updateSelection(currentSelected);
+}) as OnNodesChange,
+onEdgesChange: ((changes) => {
+ydoc.transact(() => {
+applyEdgeChangesToYjs(changes);
+}, 'local');
+
+    store.setState((state) => ({
+    edges: applyEdgeChanges(changes, state.edges),
+isDirty: true,
+}));
+}) as OnEdgesChange,
+onConnect: ((connection) => {
+    ydoc.transact(() => {
+    const state = store.getState();
+        const newEdges = addEdge(connection, state.edges);
+        setEdgesToYjs(newEdges);
+}, 'local');
+    store.setState({ isDirty: true });
+}) as OnConnect,
+setSelectedNode(node: Node | null) {
+    store.setState({ selectedNode: node });
+    updateSelection(node ? [node.id] : []);
+},
+updateNodeData(nodeId: string, newData: Record<string, unknown>) {
+    ydoc.transact(() => {
+    const node = yNodes.get(nodeId);
+if (node) {
+    yNodes.set(nodeId, {
+        ...node,
+        data: { ...node.data, ...newData }
+    });
+}
+}, 'local');
+
+// local UI sync for quick feedback
+    store.setState((state) => {
+        const nextNodes = state.nodes.map((n) =>
+        n.id === nodeId
+            ? { ...n, data: { ...n.data, ...newData } }
+            : n
+    );
+    const nextSelected = state.selectedNode?.id === nodeId
+    ? { ...state.selectedNode, data: { ...state.selectedNode.data, ...newData } }
+    : state.selectedNode;
+    return { nodes: nextNodes, selectedNode: nextSelected, isDirty: true };
             });
-        },
-        setEdges(edgesOrUpdater: Edge[] | ((current: Edge[]) => Edge[])) {
-            store.setState((state) => {
-                const nextEdges = typeof edgesOrUpdater === 'function' ? edgesOrUpdater(state.edges) : edgesOrUpdater;
-                return { edges: nextEdges, isDirty: true };
-            });
-        },
-        onNodesChange: ((changes) => {
-            store.setState((state) => ({
-                nodes: applyNodeChanges(changes, state.nodes),
-                isDirty: true,
-            }));
-        }) as OnNodesChange,
-        onEdgesChange: ((changes) => {
-            store.setState((state) => ({
-                edges: applyEdgeChanges(changes, state.edges),
-                isDirty: true,
-            }));
-        }) as OnEdgesChange,
-        onConnect: ((connection) => {
-            store.setState((state) => ({
-                edges: addEdge(connection, state.edges),
-                isDirty: true,
-            }));
-        }) as OnConnect,
-        setSelectedNode(node: Node | null) {
-            store.setState({ selectedNode: node });
-        },
-        updateNodeData(nodeId: string, newData: Record<string, unknown>) {
-            store.setState((state) => {
-                const nextNodes = state.nodes.map((node) =>
-                    node.id === nodeId
-                        ? { ...node, data: { ...node.data, ...newData } }
-                        : node
-                );
-                const nextSelected = state.selectedNode?.id === nodeId
-                    ? { ...state.selectedNode, data: { ...state.selectedNode.data, ...newData } }
-                    : state.selectedNode;
-                return { nodes: nextNodes, selectedNode: nextSelected, isDirty: true };
-            });
-        },
-        addNode(node: Node) {
-            store.setState((state) => ({
-                nodes: state.nodes.concat(node),
-                isDirty: true,
-            }));
-        },
-        setViewport(viewport: Viewport) {
-            store.setState({ viewport });
-        },
-        setIsDirty(isDirty: boolean) {
-            store.setState({ isDirty });
-        },
-        setPanelTab(panelTab: string) {
-            store.setState({ panelTab });
-        },
-        setLayoutDirection(layoutDirection: 'DOWN' | 'LEFT' | 'TOP' | 'RIGHT') {
-            store.setState({ layoutDirection });
-        },
-        reset() {
+},
+addNode(node: Node) {
+ydoc.transact(() => {
+yNodes.set(node.id, node);
+}, 'local');
+store.setState({ isDirty: true });
+},
+setViewport(viewport: Viewport) {
+    store.setState({ viewport });
+},
+setIsDirty(isDirty: boolean) {
+store.setState({ isDirty });
+},
+setPanelTab(panelTab: string) {
+store.setState({ panelTab });
+},
+setLayoutDirection(layoutDirection: 'DOWN' | 'LEFT' | 'TOP' | 'RIGHT') {
+store.setState({ layoutDirection });
+},
+reset() {
+    // Because 'reset' resets everything, including Yjs doc if we want, but actually it's just for editor unmount.
+        // Let's only clear the local state, bindings handle Yjs unobserve
             store.setState({
                 nodes: [],
                 edges: [],
@@ -94,7 +137,6 @@ export function useWorkflowActions() {
             store.setState({ isLayouting: true });
             const { nodes, edges, layoutDirection } = store.getState();
 
-            // 默认沿用当前的 direction
             const finalOptions = {
                 direction: layoutDirection,
                 ...options
@@ -102,24 +144,33 @@ export function useWorkflowActions() {
 
             const newNodes = await layoutGraph(nodes, edges, finalOptions as Partial<ElkLayoutOptions>, filterIds);
 
+            // Push layout changes to Yjs
+            ydoc.transact(() => {
+                setNodesToYjs(newNodes);
+            }, 'local');
+
             store.setState({
-                nodes: newNodes,
                 isDirty: true,
                 isLayouting: false
             });
         },
         togglePinNode(nodeId: string) {
-            store.setState((state) => {
-                const nextNodes = state.nodes.map(n =>
-                    n.id === nodeId
-                        ? { ...n, data: { ...n.data, isPinned: !n.data.isPinned } }
-                        : n
-                );
-                const nextSelected = state.selectedNode?.id === nodeId
-                    ? { ...state.selectedNode, data: { ...state.selectedNode.data, isPinned: !state.selectedNode.data.isPinned } }
-                    : state.selectedNode;
-                return { nodes: nextNodes, selectedNode: nextSelected, isDirty: true };
-            });
+            ydoc.transact(() => {
+                const node = yNodes.get(nodeId);
+                if (node) {
+                    yNodes.set(nodeId, {
+                        ...node,
+                        data: { ...node.data, isPinned: !node.data.isPinned }
+                    });
+                }
+            }, 'local');
+            store.setState({ isDirty: true });
+        },
+        undo() {
+            undoManager.undo();
+        },
+        redo() {
+            undoManager.redo();
         }
     }), [store]);
 }

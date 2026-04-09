@@ -18,30 +18,38 @@ import { nodeTypes } from './nodes';
 import NodeLibrary from './panels/NodeLibrary';
 import PropertiesPanel from './panels/PropertiesPanel';
 import CanvasToolbar from './CanvasToolbar';
+import { useYjsBindings } from './collaboration/yjs/bindings';
+import { ConnectionStatusBadge } from './collaboration/components/ConnectionStatusBadge';
+import { UserPresenceAvatarStack } from './collaboration/components/UserPresenceAvatarStack';
+import { RemoteSelectionHighlight } from './collaboration/components/RemoteSelectionHighlight';
+import { ConflictHintToast } from './collaboration/components/ConflictHintToast';
 import { getDefaultLabel } from './domain/schema';
 import styles from './WorkflowEditor.module.css';
 import type { WorkflowEditorProps } from './index';
 
 export function WorkflowEditorShell({
-    workflowId,
-    name,
-    description,
-    onNameChange,
-    onDescriptionChange,
-    isPublished = false,
-    publishedVersion,
-    publishedAt,
-    onSave,
-    onValidate,
+workflowId,
+initialNodes,
+initialEdges,
+name,
+description,
+onNameChange,
+onDescriptionChange,
+isPublished = false,
+publishedVersion,
+publishedAt,
+onSave,
+onValidate,
     onPublish,
-    actionState,
+actionState,
 }: WorkflowEditorProps) {
-    const nodes = useWorkflowContext(selectNodes);
-    const edges = useWorkflowContext(selectEdges);
-    const selectedNode = useWorkflowContext(selectSelectedNode);
-    const readOnly = useWorkflowContext(selectReadOnly);
+const nodes = useWorkflowContext(selectNodes);
+const edges = useWorkflowContext(selectEdges);
+const selectedNode = useWorkflowContext(selectSelectedNode);
+const readOnly = useWorkflowContext(selectReadOnly);
 
     const actions = useWorkflowActions();
+    const { status: yjsStatus } = useYjsBindings(workflowId ?? 'new-draft', initialNodes, initialEdges);
 
     const busy = Boolean(
         actionState?.isSaving || actionState?.isValidating || actionState?.isPublishing,
@@ -142,6 +150,11 @@ export function WorkflowEditorShell({
                     {publishedAt ? (
                         <p className={styles.timestamp}>最近发布时间：{formatDateTime(publishedAt)}</p>
                     ) : null}
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginLeft: '12px' }}>
+                        <UserPresenceAvatarStack />
+                        <ConnectionStatusBadge status={yjsStatus} />
+                    </div>
                 </div>
 
                 <div className={styles.actionGroup}>
@@ -239,16 +252,20 @@ export function WorkflowEditorShell({
                         <Panel position="top-right" className={styles.canvasHint}>
                             {readOnly ? '当前为只读模式' : '拖拽节点、配置参数并发布'}
                         </Panel>
+                        <RemoteSelectionHighlight />
                         <CanvasToolbar />
                     </ReactFlow>
                 </div>
 
                 {selectedNode ? (
-                    <PropertiesPanel
-                        node={selectedNode}
-                        onClose={() => actions.setSelectedNode(null)}
-                        onChange={onNodeConfigChange}
-                    />
+                    <div style={{ position: 'absolute', right: 24, top: 24, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+                        <ConflictHintToast />
+                        <PropertiesPanel
+                            node={selectedNode}
+                            onClose={() => actions.setSelectedNode(null)}
+                            onChange={onNodeConfigChange}
+                        />
+                    </div>
                 ) : null}
             </div>
         </div>
