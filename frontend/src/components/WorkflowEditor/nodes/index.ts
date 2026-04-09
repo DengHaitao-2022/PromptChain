@@ -1,34 +1,20 @@
-// 节点组件统一导入
-import InputNode from './InputNode';
-import ProcessNode from './ProcessNode';
-import GateNode from './GateNode';
-import CheckerNode from './CheckerNode';
-import OutputNode from './OutputNode';
+/**
+ * 节点列表统一导出
+ * 为什么这样分层：原先这里是硬编码的对象映射，现在改为基于 registry 动态导出。
+ * 对外依然输出 nodeTypes 以兼容 ReactFlow 的 api。
+ */
 
-// 节点组件统一导出
-export { InputNode, ProcessNode, GateNode, CheckerNode, OutputNode };
+import { registerDefaultNodes } from '../registry/nodeFactories';
+import { registry } from '../registry';
 
-// 节点数据类型导出
+// 首次加载模块时注册所有默认节点
+registerDefaultNodes();
+
+// 导出生成的 nodeTypes 供给 ReactFlow 使用
+export const nodeTypes = registry.getNodeTypes();
+
 export type { InputNodeData } from './InputNode';
 export type { ProcessNodeData } from './ProcessNode';
 export type { GateNodeData } from './GateNode';
 export type { CheckerNodeData } from './CheckerNode';
 export type { OutputNodeData } from './OutputNode';
-
-/**
- * 节点类型映射 - 用于 ReactFlow nodeTypes
- *
- * 映射规则:
- * - input:  用户意图解析 (Blue)
- * - process: 内容生成 / 任务执行 (Green)
- * - gate:    人工审批 / 逻辑分流 (Orange)
- * - checker: 事实核查 / 质量自检 (Purple)
- * - output:  最终成果交付 (Gray)
- */
-export const nodeTypes = {
-  input: InputNode,
-  process: ProcessNode,
-  gate: GateNode,
-  checker: CheckerNode,
-  output: OutputNode,
-} as const;

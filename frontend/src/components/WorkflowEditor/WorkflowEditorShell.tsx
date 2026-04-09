@@ -16,7 +16,7 @@ import { useWorkflowActions } from './store/actions';
 import { selectNodes, selectEdges, selectSelectedNode, selectReadOnly } from './store/selectors';
 import { nodeTypes } from './nodes';
 import NodeLibrary from './panels/NodeLibrary';
-import NodeConfigPanel from './panels/NodeConfigPanel';
+import PropertiesPanel from './panels/PropertiesPanel';
 import { getDefaultLabel } from './domain/schema';
 import styles from './WorkflowEditor.module.css';
 import type { WorkflowEditorProps } from './index';
@@ -242,7 +242,7 @@ export function WorkflowEditorShell({
                 </div>
 
                 {selectedNode ? (
-                    <NodeConfigPanel
+                    <PropertiesPanel
                         node={selectedNode}
                         onClose={() => actions.setSelectedNode(null)}
                         onChange={onNodeConfigChange}

@@ -4,6 +4,7 @@
  */
 
 import { type NodeType } from './types';
+import { registry } from '../registry';
 
 export const SUPPORTED_NODE_TYPES: NodeType[] = [
     'input',
@@ -18,12 +19,6 @@ export function isSupportedNodeType(type: string): type is NodeType {
 }
 
 export function getDefaultLabel(type: string): string {
-    const labels: Record<string, string> = {
-        input: '输入节点',
-        process: '处理节点',
-        gate: '门控节点',
-        checker: '核查节点',
-        output: '输出节点',
-    };
-    return labels[type] || '未知节点';
+    const def = registry.get(type);
+    return def?.title || '未知节点';
 }
