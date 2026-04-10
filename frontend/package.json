@@ -22,7 +22,7 @@
     "@xyflow/react": "^12.10.0",
     "elkjs": "^0.11.1",
     "lucide-react": "^0.562.0",
-    "next": "16.0.10",
+    "next": "^16.2.3",
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "react-hook-form": "^7.72.1",
