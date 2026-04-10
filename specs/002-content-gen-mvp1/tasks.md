@@ -12,26 +12,36 @@
 - **[Story]**: 对应 `spec.md` 中的用户故事标签
 - 所有任务描述都包含精确文件路径
 
-## Current Status Snapshot (`dev@c396a48`)
+## Current Status Snapshot (`dev@6caaa24`)
 
 说明：
 - 本节才是当前派工事实源；下方 Phase/Task 原表保留为规划痕迹，不再直接代表主线进度。
-- “已在 dev”表示代码或文档结果已经进入 `dev@c396a48`。
-- “部分已在 dev”表示主体能力已进入主线，但仍有共享客户端、页面接线、错误路径或验收残口。
-- “未进入主线”表示当前还不能把该任务视为已收口结果，下一轮派工应优先从这些项继续。
-- 下方原表中的文件路径反映的是规划阶段的修改落点；若当前代码结构已迁移，以 `dev@c396a48` 的真实目录结构为准。
+- “已在 dev”表示代码或文档结果已经进入 `dev@6caaa24`。
+- “静态通过”表示主线代码已合入，或已完成 review / 契约核对，但当前 `dev` 尚未补 live smoke 证据。
+- “验收基线已回填”表示 quickstart/tasks 已按当前 `dev` 更新，可直接作为 acceptance review 基线；完成签收仍需人工 smoke。
+- 下方原表中的文件路径反映的是规划阶段的修改落点；若当前代码结构已迁移，以 `dev@6caaa24` 的真实目录结构为准。
 
 | 状态 | Task IDs | 当前说明 |
 |---|---|---|
 | 历史基线已在 `dev` | `T001`, `T002`, `T003` | 环境示例、启动说明、初始化 SQL 已存在于主线，后续仅在环境契约漂移时再改 |
-| 已在 `dev` | `T004`, `T006`, `T007`, `T008`, `T009`, `T010`, `T012`, `T013`, `T014`, `T015`, `T016`, `T018`, `T019`, `T020`, `T021`, `T022`, `T023`, `T025`, `T026`, `T027`, `T028`, `T029`, `T030`, `T032`, `T033`, `T034`, `T035`, `T038`, `T039`, `T040`, `T041` | 运行态契约/持久化、Gate、首页与详情页主链路、工作流发布闭环、RBAC 与成员管理已经并入主线；`c396a48` 进一步确认 auth-flow 已进入 `dev` |
-| 当前剩余主线：运行记录总览页 | `T036`, `T037` | 详情页内 trace/progress 已可用，但 `frontend/src/app/console/runs/page.tsx` 仍未接真实数据，不能当作 US4 主验收入口 |
-| 当前剩余主线：共享客户端与首页启动 | `T005`, `T011` | 共享类型与 Gate/pause API 已有，但首页仍直接 `fetch` 工作流列表/版本/启动接口，尚未完全收拢到统一客户端 |
-| 当前剩余主线：中文文案与错误路径 | `T045`, `T046` | 主要能力已经在 `dev`，但运行台/编辑器/成员页的中文文案与错误路径仍需最后收口 |
-| 当前剩余主线：验收闭环 | `T017`, `T024`, `T031`, `T042` | 这些项主要缺系统化验收结果；`T042` 是 auth/access 验收，不代表 auth-flow 缺实现 |
-| 本轮文档同步已回填 | `T043`, `T044`, `T047`, `T048` | 契约、协作方式、入口结构与 quickstart 已按 `dev@c396a48` 回写 |
+| 已在 `dev` | `T004`, `T005`, `T006`, `T007`, `T008`, `T009`, `T010`, `T011`, `T012`, `T013`, `T014`, `T015`, `T016`, `T018`, `T019`, `T020`, `T021`, `T022`, `T023`, `T025`, `T026`, `T027`, `T028`, `T029`, `T030`, `T032`, `T033`, `T034`, `T035`, `T036`, `T038`, `T039`, `T040`, `T041`, `T045`, `T046` | 运行态契约/持久化、Gate、首页与详情页主链路、工作流发布闭环、RBAC 与成员管理、Google provider、homepage runtime client、console/runs 真列表，以及本轮默认前置的中文文案/错误路径收口都已进入主线 |
+| 静态通过，待 runtime smoke | `T037` | `console/runs`、trace、artifact history 与 rerun 入口都已在 `dev`，但当前 `dev` 的监控/回放/重跑 smoke 尚未重新执行 |
+| 验收基线已回填，待人工 smoke | `T017`, `T024`, `T031`, `T042` | 这些任务当前缺的是真机验收证据，而不是功能实现；`T042` 只覆盖 auth/access 验收闭环，不代表 auth-flow 缺实现 |
+| 文档/契约已同步 latest dev | `T043`, `T044`, `T047`, `T048` | 契约、协作方式、入口结构与 quickstart 已按 `dev@6caaa24` 回写，可直接用于 acceptance review 准备 |
 
-补充事实：`register / verify-email / forgot-password / reset-password / login` 的 auth-flow 已在 `dev@c396a48`；下一轮如果继续派工，优先从 `T036/T037`、`T005/T011`、`T045/T046` 与 `T017/T024/T031/T042` 继续，而不是重复派发已经吸收进 `dev` 的实现任务。
+补充事实：
+- latest `dev` 已包含 Google provider 支持，以及首页 runtime client 与 `console/runs` 真数据接线；不再把 `T005 / T011 / T036` 视为实现残口。
+- 当前不再存在“先补实现才能做 US1 / US2 / US3 / US5 验收”的已知 blocker；剩余工作是人工 smoke 证据。
+- 下一轮如继续推进，优先执行 `quickstart.md` 中的 Smoke D / E / F / A / B / C 与必要的越权 API 负向校验，不要重新打开实现任务。
+
+### Acceptance Closure Snapshot
+
+| Story | Task | 当前归类 | 当前说明 |
+|---|---|---|---|
+| US1 | `T017` | 验收基线已回填，待 current-dev smoke | 首页 workflow/version client、详情页关键产物展示与 Google provider 支持均已在 `dev`；需带有效 LLM 环境跑标准生成链路 |
+| US2 | `T024` | 验收基线已回填，待 current-dev smoke | Gate 与 pause/resume API/UI 已在 `dev`；需在当前 `dev` 触发至少 1 条真实 Gate 路径并验证暂停/恢复 |
+| US3 | `T031` | 验收基线已回填，待 current-dev smoke | save / validate / publish / published-only visibility 已在 `dev`；需 editor/viewer 双角色 smoke |
+| US5 | `T042` | auth-flow 有历史 smoke 证据，当前 `dev` 仍待 access smoke | 认证页面和 `/api/me` 已在 `dev`；当前只需 auth/access 回归与越权边界验证，不再重复实现认证功能 |
 
 ## Phase 1: Setup (Shared Infrastructure)
 
