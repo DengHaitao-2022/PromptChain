@@ -2,6 +2,9 @@
 
 本文档用于 `dev@6caaa24` 的 MVP1 验收基线，重点收口 US1 / US2 / US3 / US5 的 quickstart、smoke 与 access 验证边界。本文只记录当前主线事实、外部依赖和下一轮必须执行的人工 smoke，不把“代码已合入”或“静态 review 通过”误记为“集成完成”。
 
+补充说明：2026-04-10 已执行一次 current-dev 验收回归。用户口述的 latest local `dev` 为 `cb79009`，但本工作区实际执行基线为 `dev@698b80d`。本次 live 证据与 blocked 结论统一记录在 [`specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md)。
+2026-04-12 又在候选分支 `fix-homepage-mvp1@e994c86` 上执行了一轮 homepage 专项 live smoke，结果记录在 [`specs/002-content-gen-mvp1/acceptance/fix-homepage-mvp1-2026-04-12.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/fix-homepage-mvp1-2026-04-12.md)。该轮验证确认首页入口最后一个已知代码 blocker 已解除。
+
 ## 0. 当前主线快照（`dev@6caaa24`）
 
 - 已在当前 `dev` 合入并可作为验收前提复用：
@@ -317,18 +320,69 @@ curl -b cookies.txt "$API/api/workflow/<workflow_run_id>"
 curl -b viewer-cookies.txt "$API/api/trace/<other_users_workflow_run_id>"
 ```
 
-## 11. Acceptance Review Gate
+## 11. Current-dev 验收执行结果（2026-04-10，`dev@698b80d`）
 
-本轮文档回填后，US1 / US2 / US3 / US5 不再存在“需要先补实现才能开始验收”的已知 blocker。剩余未完成项是人工 smoke 证据，而不是功能开发。
+### 结果摘要
+
+| Smoke | 状态 | 类型 | 当前结论 |
+|---|---|---|---|
+| Smoke A | blocked | 静态通过 + 运行阻塞 | `/register` 页面可达，但 `POST /api/auth/register` 因 PostgreSQL `Connection refused` 返回 `500` |
+| Smoke B | blocked | 静态通过 + 运行阻塞 | `/forgot-password` 页面可达，但 `POST /api/auth/forgot-password` 同样因 PostgreSQL 不可达返回 `500` |
+| Smoke C | blocked | 静态通过 | `/api/me` 未登录返回 `401` 正常，但无法建立任意已验证会话，角色/越权 smoke 未执行 |
+| Smoke D | blocked | 静态通过 | 无法建立 editor 会话，也无法访问工作流持久化链路 |
+| Smoke E | blocked | 静态通过 | PostgreSQL 不可达；同时当前默认 provider 指向 `anthropic` 且无有效 key |
+| Smoke F | blocked | 静态通过 | 依赖 Smoke E 的长任务无法启动 |
+
+### Story 状态
+
+| Story | current-dev 状态 | 当前结论 |
+|---|---|---|
+| US1 / `T017` | blocked | 标准生成链路未跑通；保留主线覆盖事实，不能签收 |
+| US2 / `T024` | blocked | Gate 与 pause/resume 未进入 live smoke；不能签收 |
+| US3 / `T031` | blocked | 草稿/校验/发布未进入 live smoke；不能签收 |
+| US5 / `T042` | blocked | auth/access 回归未完成；不能签收 |
+
+### 当前 blocker
+
+- 基础设施 blocker：`docker compose ps` 返回 `Cannot connect to the Docker daemon`，调试后端日志进一步确认 DB 访问落到 `localhost:5432 Connection refused`
+- LLM blocker：`backend/.env` 中 `DEFAULT_LLM_PROVIDER=anthropic` 且 `ANTHROPIC_API_KEY` 为空；虽然 `GEMINI_API_KEY` 已配置，但当前默认 provider 未切到 `google`
+- 详细证据、命令回显与日志摘录见 [`specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md)
+
+## 12. Acceptance Review Gate
+
+本轮 current-dev smoke 已执行，但 `US1 / US2 / US3 / US5` 仍存在明确环境 blocker，因此当前状态是“可进入 acceptance review 的阻塞审查”，不是“可直接签收”。
+
+## 13. Homepage 候选修复复核（2026-04-12，`fix-homepage-mvp1@e994c86`）
+
+### 结果摘要
+
+| 检查项 | 状态 | 当前结论 |
+|---|---|---|
+| viewer 可见已发布工作流 | pass | 候选后端 `GET /api/workflows` 返回 1 条已发布 workflow |
+| viewer 可获取版本列表 | pass | 候选后端 `GET /versions` 返回当前版本 |
+| 版本列表只暴露当前已发布版本 | pass | viewer 只看到 `snapshot_type=publish` 的当前版本 |
+| 首页可正常启动工作流 | pass | 候选首页点击“启动工作流”后跳转至 `/workflow/<id>` |
+| 不再出现 `Cannot read properties of undefined (reading 'workflows')` | pass | 候选浏览器自动化记录 `WORKFLOWS_ERROR_COUNT = 0` |
+
+### 补充观察
+
+- 浏览器侧仍有 `ThemeSwitcher` hydration mismatch 观察项，但它未阻止 workflow 列表渲染、版本列表渲染或首页启动动作
+- 这条观察项不回退 homepage blocker 解除结论
+
+### 结论
+
+- 首页工作流入口最后一个已确认代码 blocker 已解除
+- `US1 / US2` 从“首页入口待复核”推进为“可进入最终 sign-off 候选”
+- 详细证据见 [`specs/002-content-gen-mvp1/acceptance/fix-homepage-mvp1-2026-04-12.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/fix-homepage-mvp1-2026-04-12.md)
 
 ### 已归档的结论
 
-- US1：标准生成链路、首页 runtime client、详情页关键产物展示和 Google provider 支持均已在 `dev`；`T017` 现在缺的是真机 smoke，不是实现
-- US2：Gate + pause/resume 的接口和页面闭环已在 `dev`；`T024` 现在缺的是真机 smoke，不是实现
-- US3：save / validate / publish / published-only visibility 已在 `dev`；`T031` 现在缺的是真机 smoke，不是实现
-- US5：auth-flow 页面闭环已在 `dev`，且历史上已有 smoke 记录；`T042` 当前只剩 auth/access 回归与越权边界 smoke
+- US1：实现仍在 `dev`，但 2026-04-10 的 current-dev smoke 因环境阻塞未执行到 live 生成链路，当前不能签收
+- US2：实现仍在 `dev`，但 Gate 与 pause/resume 未进入 live smoke，当前不能签收
+- US3：实现仍在 `dev`，但草稿/校验/发布未进入 live smoke，当前不能签收
+- US5：auth-flow 页面与 `/api/me` 仍在 `dev`，但 auth/access 回归被数据库 blocker 截断，当前不能签收
 
-### 下一轮必须执行的 smoke 清单
+### 环境恢复后必须重跑的 smoke 清单
 
 1. 先跑 Smoke D，确保存在一个当前 `dev` 下新建并成功发布的最小工作流版本
 2. 跑 Smoke E 的标准主链路任务，验证 US1 在有效 LLM 环境下可从首页跑到终稿
@@ -340,5 +394,6 @@ curl -b viewer-cookies.txt "$API/api/trace/<other_users_workflow_run_id>"
 ### 记录规则
 
 - 若某项因缺少邮件、工作空间种子或有效 LLM 凭证而无法执行，只能记录为“环境阻塞”，不能写成“通过”
+- 若某项首先被数据库、Redis、Docker daemon 或默认 provider 配置阻断，也只能记录为“环境阻塞”，不能回写成失败实现或通过
 - 若某项只有代码 review、契约核对或 feature branch 历史 smoke 证据，只能记录为“静态通过”，不能写成“集成完成”
 - 本轮通过的产物应直接附着在 acceptance review 记录中，不要再把实现任务重新打开
