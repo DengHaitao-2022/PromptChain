@@ -57,3 +57,7 @@ node_modules/
 
 .cache/
 tmp/
+
+.agents/
+.cunzhi-memory/
+.worktrees/
