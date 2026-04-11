@@ -1,15 +1,17 @@
 """
 基于 Prompt Chain 的自动化内容生成系统 - FastAPI 应用入口
 
-职责：
+职责:
 1. 创建 FastAPI 应用实例
 2. 配置中间件（CORS 等）
 3. 注册所有路由
 """
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
+from core.errors import install_error_infrastructure
 
 
 def create_app() -> FastAPI:
@@ -31,6 +33,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # 统一错误基础设施在路由注册前完成挂接，保证旧路由也能进入统一错误出口。
+    install_error_infrastructure(application)
+
     # 注册路由
     _register_routes(application)
 
@@ -41,34 +46,44 @@ def _register_routes(application: FastAPI) -> None:
     """集中注册所有路由"""
     # 内容工作流 API
     from routes.workflow_routes import router as workflow_router
+
     application.include_router(workflow_router, tags=["workflow"])
 
     # Trace / Artifact API
     from routes.trace_routes import router as trace_router
+
     application.include_router(trace_router, tags=["trace"])
 
     # 认证路由
     from routes.auth_routes import router as auth_router
+
     application.include_router(auth_router, prefix="/api", tags=["auth"])
 
     # 工作空间路由
     from routes.workspace_routes import router as workspace_router
+
     application.include_router(workspace_router, prefix="/api", tags=["workspace"])
 
     # 后台管理路由
     from routes.admin_routes import router as admin_router
+
     application.include_router(admin_router, prefix="/api", tags=["admin"])
 
     # 工作流定义路由
     from routes.workflow_definition_routes import router as workflow_definition_router
-    application.include_router(workflow_definition_router, prefix="/api", tags=["workflow-definition"])
+
+    application.include_router(
+        workflow_definition_router, prefix="/api", tags=["workflow-definition"]
+    )
 
     # 版本管理路由
     from routes.workflow_version_routes import router as version_router
+
     application.include_router(version_router, prefix="/api", tags=["workflow-version"])
 
     # WebSocket 路由
     from routes.websocket_routes import router as ws_router
+
     application.include_router(ws_router, tags=["websocket"])
 
     # 健康检查
