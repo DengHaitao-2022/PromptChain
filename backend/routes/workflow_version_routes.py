@@ -3,12 +3,14 @@
 
 提供版本历史、版本对比和版本恢复接口。
 """
+
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from db.postgres_store import get_postgres_store
+from models.auth_models import MemberRole
 from models.result import Result
 from routes.auth_routes import get_current_user
 from services.permission_service import PermissionService
@@ -39,22 +41,38 @@ async def _get_workspace_from_request(request: Request, user: dict[str, Any]) ->
     return workspace_id
 
 
-async def _require_workflow_update(
+async def _require_workflow_role(
     request: Request,
     session,
-) -> tuple[str, str]:
+) -> tuple[str, str, MemberRole]:
+    return await _require_permission(request, session, action="update")
+
+
+async def _require_workflow_read(
+    request: Request,
+    session,
+) -> tuple[str, str, MemberRole]:
+    return await _require_permission(request, session, action="read")
+
+
+async def _require_permission(
+    request: Request,
+    session,
+    *,
+    action: str,
+) -> tuple[str, str, MemberRole]:
     user = await get_current_user(request)
     workspace_id = await _get_workspace_from_request(request, user)
     user_id = _get_user_id(user)
 
     permission_service = PermissionService(session)
-    await permission_service.require_permission(
+    role = await permission_service.require_permission(
         user_id=user_id,
         workspace_id=workspace_id,
         resource="workflow",
-        action="update",
+        action=action,
     )
-    return user_id, workspace_id
+    return user_id, workspace_id, role
 
 
 @router.get("/{workflow_id}/versions")
@@ -65,25 +83,40 @@ async def list_versions(
     """获取工作流的版本历史。"""
     store = get_postgres_store()
     async with store.async_session() as session:
-        _, workspace_id = await _require_workflow_update(request, session)
+        _, workspace_id, role = await _require_workflow_read(request, session)
         service = WorkflowDefinitionService(session)
         workflow, versions = await service.get_version_history(workflow_id, workspace_id)
         if workflow is None:
             return Result.not_found(message="工作流不存在")
 
+        current_version = workflow.version
+        visible_versions = versions
+        if role == MemberRole.VIEWER:
+            if not workflow.is_published:
+                return Result.not_found(message="工作流不存在")
+
+            published_snapshot = await service._get_published_snapshot(workflow)
+            if published_snapshot is None:
+                return Result.not_found(message="工作流不存在")
+
+            current_version = published_snapshot.version
+            visible_versions = [published_snapshot]
+
         return Result.success(
             data={
                 "workflow_id": workflow_id,
-                "current_version": workflow.version,
+                "current_version": current_version,
                 "is_published": bool(workflow.is_published),
                 "published_version_id": workflow.published_version_id,
-                "published_at": workflow.published_at.isoformat() if workflow.published_at else None,
+                "published_at": workflow.published_at.isoformat()
+                if workflow.published_at
+                else None,
                 "versions": [
                     service.version_to_dict(
                         version,
                         published_version_id=workflow.published_version_id,
                     )
-                    for version in versions
+                    for version in visible_versions
                 ],
             }
         )
@@ -99,7 +132,7 @@ async def compare_versions(
     """对比两个版本的差异。"""
     store = get_postgres_store()
     async with store.async_session() as session:
-        _, workspace_id = await _require_workflow_update(request, session)
+        _, workspace_id, _ = await _require_workflow_role(request, session)
         service = WorkflowDefinitionService(session)
         workflow = await service.get_by_id(workflow_id=workflow_id, workspace_id=workspace_id)
         if workflow is None:
@@ -121,7 +154,7 @@ async def get_version(
     """获取特定版本的工作流快照。"""
     store = get_postgres_store()
     async with store.async_session() as session:
-        _, workspace_id = await _require_workflow_update(request, session)
+        _, workspace_id, _ = await _require_workflow_role(request, session)
         service = WorkflowDefinitionService(session)
         workflow, version = await service.get_version_by_id(workflow_id, workspace_id, version_id)
         if workflow is None:
@@ -147,7 +180,7 @@ async def restore_version(
     """恢复指定版本到新的草稿。"""
     store = get_postgres_store()
     async with store.async_session() as session:
-        user_id, workspace_id = await _require_workflow_update(request, session)
+        user_id, workspace_id, _ = await _require_workflow_role(request, session)
         service = WorkflowDefinitionService(session)
         workflow, version = await service.restore(
             workflow_id=workflow_id,
