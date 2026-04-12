@@ -5,12 +5,18 @@
 from dataclasses import dataclass
 from typing import Any
 
+import aiosmtplib
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from core.errors.codes import (
     COMMON_INTERNAL_ERROR,
     COMMON_VALIDATION_ERROR,
+    INFRA_DATABASE_ERROR,
+    INFRA_EMAIL_SERVICE_ERROR,
+    INFRA_EXTERNAL_SERVICE_ERROR,
+    INFRA_MODEL_SERVICE_ERROR,
     ErrorCodeDefinition,
     get_error_definition,
     get_fallback_code_for_status,
@@ -80,6 +86,34 @@ def _normalize_validation_details(exc: RequestValidationError) -> list[dict[str,
     ]
 
 
+def _infer_raw_infrastructure_code(exc: BaseException) -> str | None:
+    """基于常见基础设施异常类型推导统一错误码。"""
+
+    if isinstance(exc, SQLAlchemyError):
+        return INFRA_DATABASE_ERROR
+
+    if isinstance(exc, aiosmtplib.errors.SMTPException):
+        return INFRA_EMAIL_SERVICE_ERROR
+
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        module_name = exc.__class__.__module__.lower()
+        cause_text = f"{exc.__class__.__name__} {exc}".lower()
+        model_markers = (
+            "openai",
+            "anthropic",
+            "langchain",
+            "litellm",
+            "google",
+            "gemini",
+            "model",
+        )
+        if any(marker in module_name or marker in cause_text for marker in model_markers):
+            return INFRA_MODEL_SERVICE_ERROR
+        return INFRA_EXTERNAL_SERVICE_ERROR
+
+    return None
+
+
 def map_exception(
     exc: Exception,
     *,
@@ -142,6 +176,25 @@ def map_exception(
                 definition=definition,
                 request_id=request_id,
                 message=_normalize_http_exception_message(exc, definition),
+            ),
+            context=_build_context(
+                request_id=request_id,
+                path=path,
+                method=method,
+                code=definition.code,
+                internal_cause=exc,
+            ),
+        )
+
+    raw_infra_code = _infer_raw_infrastructure_code(exc)
+    if raw_infra_code is not None:
+        definition = get_error_definition(raw_infra_code)
+        return MappedError(
+            http_status=definition.http_status,
+            envelope=_build_envelope(
+                definition=definition,
+                request_id=request_id,
+                message=definition.default_message,
             ),
             context=_build_context(
                 request_id=request_id,

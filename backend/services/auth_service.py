@@ -3,23 +3,28 @@
 
 提供密码加密、JWT Token 管理、登录限流等核心认证功能
 """
-from typing import Optional, Tuple
-from datetime import datetime, timedelta
-import os
-import uuid
-import hashlib
-import secrets
 
-from jose import jwt, JWTError
+import hashlib
+import os
+import secrets
+import uuid
+from datetime import datetime, timedelta
+
+from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy import and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import and_, func
 
-from models.auth_models import User, UserStatus, MemberRole, Workspace, Membership
-from models.auth_orm import UserORM, WorkspaceORM, MembershipORM, RefreshTokenORM
+from core.errors.codes import (
+    AUTH_ACCOUNT_SUSPENDED,
+    AUTH_LOGIN_LOCKED,
+    AUTH_REGISTRATION_CONFLICT,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from models.admin_orm import LoginAttemptORM
-
+from models.auth_models import MemberRole, User, UserStatus, Workspace
+from models.auth_orm import MembershipORM, RefreshTokenORM, UserORM, WorkspaceORM
 
 # ==================== 配置 ====================
 
@@ -30,14 +35,15 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-super-secret-key-change-in-production")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15  # Access Token 15分钟过期
-REFRESH_TOKEN_EXPIRE_DAYS = 7      # Refresh Token 7天过期
+REFRESH_TOKEN_EXPIRE_DAYS = 7  # Refresh Token 7天过期
 
 # 登录限流配置
-MAX_LOGIN_ATTEMPTS = 5             # 最大尝试次数
-LOGIN_LOCKOUT_MINUTES = 15         # 锁定时间（分钟）
+MAX_LOGIN_ATTEMPTS = 5  # 最大尝试次数
+LOGIN_LOCKOUT_MINUTES = 15  # 锁定时间（分钟）
 
 
 # ==================== 密码处理 ====================
+
 
 def hash_password(password: str) -> str:
     """
@@ -68,7 +74,12 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 # ==================== Token 管理 ====================
 
-def create_access_token(user_id: str, workspace_id: Optional[str] = None, extra_data: dict = None) -> str:
+
+def create_access_token(
+    user_id: str,
+    workspace_id: str | None = None,
+    extra_data: dict[str, object] | None = None,
+) -> str:
     """
     创建 Access Token
 
@@ -96,7 +107,7 @@ def create_access_token(user_id: str, workspace_id: Optional[str] = None, extra_
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token() -> Tuple[str, str]:
+def create_refresh_token() -> tuple[str, str]:
     """
     创建 Refresh Token
 
@@ -110,7 +121,7 @@ def create_refresh_token() -> Tuple[str, str]:
     return token, token_hash
 
 
-def verify_access_token(token: str) -> Optional[dict]:
+def verify_access_token(token: str) -> dict | None:
     """
     验证 Access Token
 
@@ -136,6 +147,7 @@ def hash_token(token: str) -> str:
 
 # ==================== 认证服务类 ====================
 
+
 class AuthService:
     """认证服务"""
 
@@ -146,8 +158,8 @@ class AuthService:
         self,
         email: str,
         password: str,
-        username: Optional[str] = None,
-        display_name: Optional[str] = None
+        username: str | None = None,
+        display_name: str | None = None,
     ) -> User:
         """
         注册新用户
@@ -162,22 +174,24 @@ class AuthService:
             创建的用户
 
         Raises:
-            ValueError: 邮箱或用户名已存在
+            DomainError: 邮箱或用户名已存在
         """
         # 检查邮箱是否已存在
-        result = await self.session.execute(
-            select(UserORM).where(UserORM.email == email)
-        )
+        result = await self.session.execute(select(UserORM).where(UserORM.email == email))
         if result.scalar_one_or_none():
-            raise ValueError("该邮箱已被注册")
+            raise DomainError(
+                code=AUTH_REGISTRATION_CONFLICT,
+                message="该邮箱已被注册",
+            )
 
         # 检查用户名是否已存在
         if username:
-            result = await self.session.execute(
-                select(UserORM).where(UserORM.username == username)
-            )
+            result = await self.session.execute(select(UserORM).where(UserORM.username == username))
             if result.scalar_one_or_none():
-                raise ValueError("该用户名已被使用")
+                raise DomainError(
+                    code=AUTH_REGISTRATION_CONFLICT,
+                    message="该用户名已被使用",
+                )
 
         # 创建用户
         user_id = str(uuid.uuid4())
@@ -194,7 +208,7 @@ class AuthService:
         await self.session.commit()
 
         # 创建默认工作空间
-        workspace = await self._create_default_workspace(user_id, display_name or email.split("@")[0])
+        await self._create_default_workspace(user_id, display_name or email.split("@")[0])
 
         return User(
             id=user_id,
@@ -232,11 +246,8 @@ class AuthService:
         )
 
     async def authenticate_user(
-        self,
-        email: str,
-        password: str,
-        ip_address: Optional[str] = None
-    ) -> Optional[UserORM]:
+        self, email: str, password: str, ip_address: str | None = None
+    ) -> UserORM | None:
         """
         验证用户登录
 
@@ -249,18 +260,20 @@ class AuthService:
             用户ORM对象或None
 
         Raises:
-            ValueError: 登录被锁定
+            ApplicationError: 登录被锁定
+            DomainError: 账号已停用
         """
         # 检查登录限流
         if ip_address:
             is_locked = await self._check_login_lockout(email, ip_address)
             if is_locked:
-                raise ValueError("登录尝试次数过多，请稍后再试")
+                raise ApplicationError(
+                    code=AUTH_LOGIN_LOCKED,
+                    message="登录尝试次数过多，请稍后再试",
+                )
 
         # 查找用户
-        result = await self.session.execute(
-            select(UserORM).where(UserORM.email == email)
-        )
+        result = await self.session.execute(select(UserORM).where(UserORM.email == email))
         user = result.scalar_one_or_none()
 
         if not user:
@@ -274,7 +287,10 @@ class AuthService:
 
         # 检查用户状态
         if user.status == UserStatus.SUSPENDED.value:
-            raise ValueError("账号已被停用")
+            raise DomainError(
+                code=AUTH_ACCOUNT_SUSPENDED,
+                message="账号已被停用",
+            )
 
         # 记录成功登录
         await self._record_login_attempt(email, ip_address, success=True)
@@ -294,8 +310,8 @@ class AuthService:
                 and_(
                     LoginAttemptORM.email == email,
                     LoginAttemptORM.ip_address == ip_address,
-                    LoginAttemptORM.success == False,
-                    LoginAttemptORM.created_at > lockout_time
+                    LoginAttemptORM.success.is_(False),
+                    LoginAttemptORM.created_at > lockout_time,
                 )
             )
         )
@@ -303,12 +319,7 @@ class AuthService:
 
         return failed_attempts >= MAX_LOGIN_ATTEMPTS
 
-    async def _record_login_attempt(
-        self,
-        email: str,
-        ip_address: Optional[str],
-        success: bool
-    ):
+    async def _record_login_attempt(self, email: str, ip_address: str | None, success: bool):
         """记录登录尝试"""
         if not ip_address:
             return
@@ -326,8 +337,8 @@ class AuthService:
         self,
         user_id: str,
         token_hash: str,
-        user_agent: Optional[str] = None,
-        ip_address: Optional[str] = None
+        user_agent: str | None = None,
+        ip_address: str | None = None,
     ) -> RefreshTokenORM:
         """创建 Refresh Token 记录"""
         expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
@@ -345,7 +356,7 @@ class AuthService:
 
         return token_orm
 
-    async def validate_refresh_token(self, token: str) -> Optional[UserORM]:
+    async def validate_refresh_token(self, token: str) -> UserORM | None:
         """验证 Refresh Token 并返回用户"""
         token_hash = hash_token(token)
 
@@ -354,7 +365,7 @@ class AuthService:
                 and_(
                     RefreshTokenORM.token_hash == token_hash,
                     RefreshTokenORM.revoked_at.is_(None),
-                    RefreshTokenORM.expires_at > datetime.utcnow()
+                    RefreshTokenORM.expires_at > datetime.utcnow(),
                 )
             )
         )
@@ -364,9 +375,7 @@ class AuthService:
             return None
 
         # 获取用户
-        result = await self.session.execute(
-            select(UserORM).where(UserORM.id == token_orm.user_id)
-        )
+        result = await self.session.execute(select(UserORM).where(UserORM.id == token_orm.user_id))
         return result.scalar_one_or_none()
 
     async def revoke_refresh_token(self, token: str) -> bool:
@@ -389,10 +398,7 @@ class AuthService:
         """撤销用户所有 Refresh Token（用于密码重置后）"""
         result = await self.session.execute(
             select(RefreshTokenORM).where(
-                and_(
-                    RefreshTokenORM.user_id == user_id,
-                    RefreshTokenORM.revoked_at.is_(None)
-                )
+                and_(RefreshTokenORM.user_id == user_id, RefreshTokenORM.revoked_at.is_(None))
             )
         )
         tokens = result.scalars().all()
@@ -402,19 +408,18 @@ class AuthService:
 
         await self.session.commit()
 
-    async def get_user_by_id(self, user_id: str) -> Optional[UserORM]:
+    async def get_user_by_id(self, user_id: str) -> UserORM | None:
         """根据ID获取用户"""
-        result = await self.session.execute(
-            select(UserORM).where(UserORM.id == user_id)
-        )
+        result = await self.session.execute(select(UserORM).where(UserORM.id == user_id))
         return result.scalar_one_or_none()
 
     async def get_user_workspaces(self, user_id: str) -> list:
         """获取用户的所有工作空间"""
         result = await self.session.execute(
-            select(MembershipORM, WorkspaceORM).join(
-                WorkspaceORM, MembershipORM.workspace_id == WorkspaceORM.id
-            ).where(MembershipORM.user_id == user_id).order_by(
+            select(MembershipORM, WorkspaceORM)
+            .join(WorkspaceORM, MembershipORM.workspace_id == WorkspaceORM.id)
+            .where(MembershipORM.user_id == user_id)
+            .order_by(
                 func.coalesce(MembershipORM.joined_at, WorkspaceORM.created_at).asc(),
                 WorkspaceORM.created_at.asc(),
                 WorkspaceORM.id.asc(),
@@ -424,9 +429,7 @@ class AuthService:
 
     async def activate_user(self, user_id: str):
         """激活用户（邮箱验证后）"""
-        result = await self.session.execute(
-            select(UserORM).where(UserORM.id == user_id)
-        )
+        result = await self.session.execute(select(UserORM).where(UserORM.id == user_id))
         user = result.scalar_one_or_none()
 
         if user:

@@ -3,21 +3,29 @@
 
 提供工作空间管理、成员管理等功能
 """
-from typing import Optional
-from datetime import datetime, timedelta
+
 import hashlib
 import secrets
 import uuid
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import and_
+from sqlalchemy.future import select
 
+from core.errors.codes import (
+    WORKSPACE_ACCESS_DENIED,
+    WORKSPACE_INVITE_INVALID,
+    WORKSPACE_MEMBER_CONFLICT,
+    WORKSPACE_MEMBER_NOT_FOUND,
+    WORKSPACE_MEMBER_STATE_INVALID,
+    WORKSPACE_NOT_FOUND,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from db.postgres_store import get_postgres_store
-from services.auth_service import create_access_token
-from services.permission_service import PermissionService, resolve_membership_role, serialize_membership_role
-from services.email_service import EmailService
 from models.auth_models import MemberRole
-from models.auth_orm import WorkspaceORM, MembershipORM, WorkspaceInviteORM, UserORM
+from models.auth_orm import MembershipORM, UserORM, WorkspaceInviteORM, WorkspaceORM
 from routes.auth_routes import (
     ACCESS_TOKEN_COOKIE,
     COOKIE_HTTPONLY,
@@ -25,64 +33,76 @@ from routes.auth_routes import (
     COOKIE_SECURE,
     get_current_user,
 )
-
-from sqlalchemy.future import select
-from sqlalchemy import and_
-
+from services.auth_service import create_access_token
+from services.email_service import EmailService
+from services.permission_service import (
+    PermissionService,
+    resolve_membership_role,
+    serialize_membership_role,
+)
 
 router = APIRouter()
 
 
 # ==================== 请求模型 ====================
 
+
 class CreateWorkspaceRequest(BaseModel):
     """创建工作空间请求"""
+
     name: str = Field(..., min_length=1, max_length=100)
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class UpdateWorkspaceRequest(BaseModel):
     """更新工作空间请求"""
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    description: Optional[str] = None
-    logo_url: Optional[str] = None
+
+    name: str | None = Field(None, min_length=1, max_length=100)
+    description: str | None = None
+    logo_url: str | None = None
 
 
 class InviteMemberRequest(BaseModel):
     """邀请成员请求"""
+
     email: EmailStr
     role: MemberRole = MemberRole.VIEWER
 
 
 class UpdateMemberRoleRequest(BaseModel):
     """更新成员角色请求"""
+
     role: MemberRole
 
 
 class SwitchWorkspaceRequest(BaseModel):
     """切换工作空间请求"""
+
     workspace_id: str
 
 
 # ==================== 响应模型 ====================
 
+
 class WorkspaceResponse(BaseModel):
     """工作空间响应"""
+
     id: str
     name: str
-    description: Optional[str]
-    logo_url: Optional[str]
+    description: str | None
+    logo_url: str | None
     owner_id: str
     created_at: datetime
 
 
 class MemberResponse(BaseModel):
     """成员响应"""
+
     id: str
     user_id: str
     email: str
-    display_name: Optional[str]
-    avatar_url: Optional[str]
+    display_name: str | None
+    avatar_url: str | None
     role: str
     workspace_access: str
     account_status: str
@@ -92,6 +112,7 @@ class MemberResponse(BaseModel):
 
 class InviteResponse(BaseModel):
     """邀请响应"""
+
     id: str
     email: str
     role: str
@@ -100,6 +121,7 @@ class InviteResponse(BaseModel):
 
 
 # ==================== API 路由 ====================
+
 
 @router.get("/workspaces")
 async def list_workspaces(request: Request):
@@ -112,9 +134,9 @@ async def list_workspaces(request: Request):
     store = get_postgres_store()
     async with store.async_session() as session:
         result = await session.execute(
-            select(MembershipORM, WorkspaceORM).join(
-                WorkspaceORM, MembershipORM.workspace_id == WorkspaceORM.id
-            ).where(MembershipORM.user_id == user_id)
+            select(MembershipORM, WorkspaceORM)
+            .join(WorkspaceORM, MembershipORM.workspace_id == WorkspaceORM.id)
+            .where(MembershipORM.user_id == user_id)
         )
         rows = result.all()
 
@@ -123,16 +145,18 @@ async def list_workspaces(request: Request):
             role, is_suspended = resolve_membership_role(membership.role)
             if not role or is_suspended:
                 continue
-            workspaces.append({
-                "id": workspace.id,
-                "name": workspace.name,
-                "description": workspace.description,
-                "logo_url": workspace.logo_url,
-                "owner_id": workspace.owner_id,
-                "role": role.value,
-                "joined_at": membership.joined_at,
-                "created_at": workspace.created_at,
-            })
+            workspaces.append(
+                {
+                    "id": workspace.id,
+                    "name": workspace.name,
+                    "description": workspace.description,
+                    "logo_url": workspace.logo_url,
+                    "owner_id": workspace.owner_id,
+                    "role": role.value,
+                    "joined_at": membership.joined_at,
+                    "created_at": workspace.created_at,
+                }
+            )
 
         return {"workspaces": workspaces}
 
@@ -193,16 +217,20 @@ async def get_workspace(request: Request, workspace_id: str):
         role = await permission_service.get_user_role_in_workspace(user_id, workspace_id)
 
         if not role:
-            raise HTTPException(status_code=403, detail="您不是该工作空间的成员")
+            raise DomainError(
+                code=WORKSPACE_ACCESS_DENIED,
+                message="您不是该工作空间的成员",
+            )
 
         # 获取工作空间
-        result = await session.execute(
-            select(WorkspaceORM).where(WorkspaceORM.id == workspace_id)
-        )
+        result = await session.execute(select(WorkspaceORM).where(WorkspaceORM.id == workspace_id))
         workspace = result.scalar_one_or_none()
 
         if not workspace:
-            raise HTTPException(status_code=404, detail="工作空间不存在")
+            raise DomainError(
+                code=WORKSPACE_NOT_FOUND,
+                message="工作空间不存在",
+            )
 
         return {
             "id": workspace.id,
@@ -232,13 +260,14 @@ async def update_workspace(request: Request, workspace_id: str, body: UpdateWork
         await permission_service.require_permission(user_id, workspace_id, "workspace", "update")
 
         # 更新工作空间
-        result = await session.execute(
-            select(WorkspaceORM).where(WorkspaceORM.id == workspace_id)
-        )
+        result = await session.execute(select(WorkspaceORM).where(WorkspaceORM.id == workspace_id))
         workspace = result.scalar_one_or_none()
 
         if not workspace:
-            raise HTTPException(status_code=404, detail="工作空间不存在")
+            raise DomainError(
+                code=WORKSPACE_NOT_FOUND,
+                message="工作空间不存在",
+            )
 
         if body.name is not None:
             workspace.name = body.name
@@ -267,9 +296,9 @@ async def list_members(request: Request, workspace_id: str):
 
         # 获取成员列表
         result = await session.execute(
-            select(MembershipORM, UserORM).join(
-                UserORM, MembershipORM.user_id == UserORM.id
-            ).where(MembershipORM.workspace_id == workspace_id)
+            select(MembershipORM, UserORM)
+            .join(UserORM, MembershipORM.user_id == UserORM.id)
+            .where(MembershipORM.workspace_id == workspace_id)
         )
         rows = result.all()
 
@@ -278,18 +307,20 @@ async def list_members(request: Request, workspace_id: str):
             role, is_suspended = resolve_membership_role(membership.role)
             if not role:
                 continue
-            members.append({
-                "id": membership.id,
-                "user_id": user.id,
-                "email": user.email,
-                "display_name": user.display_name,
-                "avatar_url": user.avatar_url,
-                "role": role.value,
-                "workspace_access": "suspended" if is_suspended else "active",
-                "account_status": user.status,
-                "email_verified": user.email_verified,
-                "joined_at": membership.joined_at,
-            })
+            members.append(
+                {
+                    "id": membership.id,
+                    "user_id": user.id,
+                    "email": user.email,
+                    "display_name": user.display_name,
+                    "avatar_url": user.avatar_url,
+                    "role": role.value,
+                    "workspace_access": "suspended" if is_suspended else "active",
+                    "account_status": user.status,
+                    "email_verified": user.email_verified,
+                    "joined_at": membership.joined_at,
+                }
+            )
 
         return {"members": members}
 
@@ -311,9 +342,7 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         await permission_service.require_permission(user_id, workspace_id, "member", "manage")
 
         # 检查是否已经是成员
-        result = await session.execute(
-            select(UserORM).where(UserORM.email == body.email)
-        )
+        result = await session.execute(select(UserORM).where(UserORM.email == body.email))
         existing_user = result.scalar_one_or_none()
 
         if existing_user:
@@ -321,22 +350,21 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
                 select(MembershipORM).where(
                     and_(
                         MembershipORM.user_id == existing_user.id,
-                        MembershipORM.workspace_id == workspace_id
+                        MembershipORM.workspace_id == workspace_id,
                     )
                 )
             )
             if result.scalar_one_or_none():
-                raise HTTPException(status_code=400, detail="该用户已经是工作空间成员")
+                raise ApplicationError(
+                    code=WORKSPACE_MEMBER_CONFLICT,
+                    message="该用户已经是工作空间成员",
+                )
 
         # 获取工作空间名称和邀请者信息
-        result = await session.execute(
-            select(WorkspaceORM).where(WorkspaceORM.id == workspace_id)
-        )
+        result = await session.execute(select(WorkspaceORM).where(WorkspaceORM.id == workspace_id))
         workspace = result.scalar_one_or_none()
 
-        result = await session.execute(
-            select(UserORM).where(UserORM.id == user_id)
-        )
+        result = await session.execute(select(UserORM).where(UserORM.id == user_id))
         inviter = result.scalar_one_or_none()
 
         # 生成邀请 Token
@@ -359,8 +387,9 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
 
         # 发送邀请邮件
         import os
-        APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:3000")
-        invite_link = f"{APP_BASE_URL}/invite?token={token}"
+
+        app_base_url = os.getenv("APP_BASE_URL", "http://localhost:3000")
+        invite_link = f"{app_base_url}/invite?token={token}"
 
         email_service = EmailService(session)
         await email_service.send_workspace_invite_email(
@@ -394,36 +423,32 @@ async def accept_invite(request: Request, token: str):
                 and_(
                     WorkspaceInviteORM.token_hash == token_hash,
                     WorkspaceInviteORM.accepted_at.is_(None),
-                    WorkspaceInviteORM.expires_at > datetime.utcnow()
+                    WorkspaceInviteORM.expires_at > datetime.utcnow(),
                 )
             )
         )
         invite = result.scalar_one_or_none()
 
         if not invite:
-            raise HTTPException(status_code=400, detail="邀请链接无效或已过期")
-
-        # 获取当前用户信息
-        result = await session.execute(
-            select(UserORM).where(UserORM.id == user_id)
-        )
-        user = result.scalar_one_or_none()
-
-        # 检查邮箱是否匹配（可选，可以允许任何登录用户接受）
-        # if user.email != invite.email:
-        #     raise HTTPException(status_code=400, detail="邀请是发送给其他邮箱的")
+            raise ApplicationError(
+                code=WORKSPACE_INVITE_INVALID,
+                message="邀请链接无效或已过期",
+            )
 
         # 检查是否已经是成员
         result = await session.execute(
             select(MembershipORM).where(
                 and_(
                     MembershipORM.user_id == user_id,
-                    MembershipORM.workspace_id == invite.workspace_id
+                    MembershipORM.workspace_id == invite.workspace_id,
                 )
             )
         )
         if result.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="您已经是该工作空间的成员")
+            raise ApplicationError(
+                code=WORKSPACE_MEMBER_CONFLICT,
+                message="您已经是该工作空间的成员",
+            )
 
         # 添加为成员
         membership = MembershipORM(
@@ -461,7 +486,10 @@ async def update_member_role(request: Request, membership_id: str, body: UpdateM
         membership = result.scalar_one_or_none()
 
         if not membership:
-            raise HTTPException(status_code=404, detail="成员关系不存在")
+            raise DomainError(
+                code=WORKSPACE_MEMBER_NOT_FOUND,
+                message="成员关系不存在",
+            )
 
         # 检查权限
         permission_service = PermissionService(session)
@@ -471,24 +499,40 @@ async def update_member_role(request: Request, membership_id: str, body: UpdateM
 
         current_role, is_suspended = resolve_membership_role(membership.role)
         if not current_role:
-            raise HTTPException(status_code=400, detail="成员角色状态无效")
+            raise ApplicationError(
+                code=WORKSPACE_MEMBER_STATE_INVALID,
+                message="成员角色状态无效",
+            )
 
         # 不能修改 Owner 的角色
         if current_role == MemberRole.OWNER:
-            raise HTTPException(status_code=400, detail="不能修改 Owner 的角色")
+            raise ApplicationError(
+                code=WORKSPACE_MEMBER_CONFLICT,
+                message="不能修改 Owner 的角色",
+            )
 
         if membership.user_id == user_id:
-            raise HTTPException(status_code=400, detail="不能修改自己的角色")
+            raise ApplicationError(
+                code=WORKSPACE_MEMBER_CONFLICT,
+                message="不能修改自己的角色",
+            )
 
         # 不能将自己设为 Owner（需要专门的转让流程）
         if body.role == MemberRole.OWNER:
-            raise HTTPException(status_code=400, detail="不能直接设置 Owner 角色，请使用转让功能")
+            raise ApplicationError(
+                code=WORKSPACE_MEMBER_CONFLICT,
+                message="不能直接设置 Owner 角色，请使用转让功能",
+            )
 
         # 更新角色
         membership.role = serialize_membership_role(body.role, suspended=is_suspended)
         await session.commit()
 
-        return {"message": "成员角色已更新", "membership_id": membership.id, "role": body.role.value}
+        return {
+            "message": "成员角色已更新",
+            "membership_id": membership.id,
+            "role": body.role.value,
+        }
 
 
 @router.delete("/memberships/{membership_id}")
@@ -510,13 +554,19 @@ async def remove_member(request: Request, membership_id: str):
         membership = result.scalar_one_or_none()
 
         if not membership:
-            raise HTTPException(status_code=404, detail="成员关系不存在")
+            raise DomainError(
+                code=WORKSPACE_MEMBER_NOT_FOUND,
+                message="成员关系不存在",
+            )
 
         membership_role, _ = resolve_membership_role(membership.role)
 
         # 不能移除 Owner
         if membership_role == MemberRole.OWNER:
-            raise HTTPException(status_code=400, detail="不能移除 Owner")
+            raise ApplicationError(
+                code=WORKSPACE_MEMBER_CONFLICT,
+                message="不能移除 Owner",
+            )
 
         # 检查权限（自己可以离开，或者有管理权限）
         if membership.user_id != user_id:
@@ -546,7 +596,10 @@ async def switch_workspace(request: Request, response: Response, body: SwitchWor
         role = await permission_service.get_user_role_in_workspace(user_id, body.workspace_id)
 
         if not role:
-            raise HTTPException(status_code=403, detail="您不是该工作空间的成员")
+            raise DomainError(
+                code=WORKSPACE_ACCESS_DENIED,
+                message="您不是该工作空间的成员",
+            )
 
         access_token = create_access_token(user_id=user_id, workspace_id=body.workspace_id)
         response.set_cookie(

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.errors.codes import WORKFLOW_GATE_CONFLICT
 from tests._runtime_auth import authenticated_client, ownership_metadata
 
 
@@ -143,7 +144,7 @@ def test_get_workflow_status_returns_workflow_response_shape(monkeypatch):
             "clarification_questions": [
                 {
                     "field": "audience",
-                    "question": "目标读者是谁？",
+                    "question": "目标读者是谁?",
                     "priority": 1,
                 }
             ],
@@ -199,7 +200,7 @@ def test_pause_rejects_gate_waiting_workflow(monkeypatch):
             "clarification_questions": [
                 {
                     "field": "audience",
-                    "question": "目标读者是谁？",
+                    "question": "目标读者是谁?",
                     "priority": 1,
                 }
             ],
@@ -212,7 +213,10 @@ def test_pause_rejects_gate_waiting_workflow(monkeypatch):
     res = client.post("/api/workflow/wf-123/pause", json={"reason": "先暂停"})
 
     assert res.status_code == 409
-    assert "Gate" in res.json()["detail"]
+    body = res.json()
+    assert body["code"] == WORKFLOW_GATE_CONFLICT
+    assert body["message"] == "当前工作流正在等待人工 Gate，请使用对应审批接口继续。"
+    assert body["request_id"]
 
 
 def test_manual_pause_status_beats_running_graph_snapshot(monkeypatch):

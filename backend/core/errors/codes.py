@@ -61,13 +61,24 @@ COMMON_INTERNAL_ERROR = "COMMON_INTERNAL_ERROR"
 AUTH_UNAUTHENTICATED = "AUTH_UNAUTHENTICATED"
 AUTH_INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS"
 AUTH_EMAIL_NOT_VERIFIED = "AUTH_EMAIL_NOT_VERIFIED"
+AUTH_ACCOUNT_SUSPENDED = "AUTH_ACCOUNT_SUSPENDED"
+AUTH_REGISTRATION_CONFLICT = "AUTH_REGISTRATION_CONFLICT"
+AUTH_LOGIN_LOCKED = "AUTH_LOGIN_LOCKED"
 
+WORKSPACE_CONTEXT_REQUIRED = "WORKSPACE_CONTEXT_REQUIRED"
 WORKSPACE_ACCESS_DENIED = "WORKSPACE_ACCESS_DENIED"
+WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND"
+WORKSPACE_MEMBER_NOT_FOUND = "WORKSPACE_MEMBER_NOT_FOUND"
+WORKSPACE_MEMBER_CONFLICT = "WORKSPACE_MEMBER_CONFLICT"
+WORKSPACE_INVITE_INVALID = "WORKSPACE_INVITE_INVALID"
+WORKSPACE_MEMBER_STATE_INVALID = "WORKSPACE_MEMBER_STATE_INVALID"
+
 WORKFLOW_NOT_FOUND = "WORKFLOW_NOT_FOUND"
 WORKFLOW_STATE_CONFLICT = "WORKFLOW_STATE_CONFLICT"
 WORKFLOW_GATE_CONFLICT = "WORKFLOW_GATE_CONFLICT"
 TRACE_RESOURCE_NOT_FOUND = "TRACE_RESOURCE_NOT_FOUND"
 ADMIN_FORBIDDEN = "ADMIN_FORBIDDEN"
+ADMIN_RESOURCE_NOT_FOUND = "ADMIN_RESOURCE_NOT_FOUND"
 
 INFRA_DATABASE_ERROR = "INFRA_DATABASE_ERROR"
 INFRA_CACHE_ERROR = "INFRA_CACHE_ERROR"
@@ -188,6 +199,42 @@ ERROR_REGISTRY: dict[str, ErrorCodeDefinition] = {
         default_message="请先完成邮箱验证",
         consumer_action=ConsumerAction.REAUTHENTICATE,
     ),
+    AUTH_ACCOUNT_SUSPENDED: _entry(
+        code=AUTH_ACCOUNT_SUSPENDED,
+        domain=ErrorDomain.AUTH,
+        category=ErrorCategory.DOMAIN,
+        http_status=HTTPStatus.FORBIDDEN,
+        description="账号已被停用。",
+        default_message="账号已被停用",
+        consumer_action=ConsumerAction.CONTACT_ADMIN,
+    ),
+    AUTH_REGISTRATION_CONFLICT: _entry(
+        code=AUTH_REGISTRATION_CONFLICT,
+        domain=ErrorDomain.AUTH,
+        category=ErrorCategory.DOMAIN,
+        http_status=HTTPStatus.BAD_REQUEST,
+        description="注册信息与现有账号冲突。",
+        default_message="账号注册信息已存在",
+        consumer_action=ConsumerAction.FIX_INPUT,
+    ),
+    AUTH_LOGIN_LOCKED: _entry(
+        code=AUTH_LOGIN_LOCKED,
+        domain=ErrorDomain.AUTH,
+        category=ErrorCategory.APPLICATION,
+        http_status=HTTPStatus.BAD_REQUEST,
+        description="登录尝试次数过多，当前登录被暂时锁定。",
+        default_message="登录尝试次数过多，请稍后再试",
+        consumer_action=ConsumerAction.RETRY_LATER,
+    ),
+    WORKSPACE_CONTEXT_REQUIRED: _entry(
+        code=WORKSPACE_CONTEXT_REQUIRED,
+        domain=ErrorDomain.WORKSPACE,
+        category=ErrorCategory.APPLICATION,
+        http_status=HTTPStatus.BAD_REQUEST,
+        description="请求缺少工作空间上下文。",
+        default_message="请先选择工作空间",
+        consumer_action=ConsumerAction.FIX_INPUT,
+    ),
     WORKSPACE_ACCESS_DENIED: _entry(
         code=WORKSPACE_ACCESS_DENIED,
         domain=ErrorDomain.WORKSPACE,
@@ -196,6 +243,51 @@ ERROR_REGISTRY: dict[str, ErrorCodeDefinition] = {
         description="当前用户无权访问目标工作空间。",
         default_message="您无权访问该工作空间",
         consumer_action=ConsumerAction.REAUTHENTICATE,
+    ),
+    WORKSPACE_NOT_FOUND: _entry(
+        code=WORKSPACE_NOT_FOUND,
+        domain=ErrorDomain.WORKSPACE,
+        category=ErrorCategory.DOMAIN,
+        http_status=HTTPStatus.NOT_FOUND,
+        description="工作空间不存在。",
+        default_message="工作空间不存在",
+        consumer_action=ConsumerAction.NOT_FOUND,
+    ),
+    WORKSPACE_MEMBER_NOT_FOUND: _entry(
+        code=WORKSPACE_MEMBER_NOT_FOUND,
+        domain=ErrorDomain.WORKSPACE,
+        category=ErrorCategory.DOMAIN,
+        http_status=HTTPStatus.NOT_FOUND,
+        description="目标成员关系不存在。",
+        default_message="成员关系不存在",
+        consumer_action=ConsumerAction.NOT_FOUND,
+    ),
+    WORKSPACE_MEMBER_CONFLICT: _entry(
+        code=WORKSPACE_MEMBER_CONFLICT,
+        domain=ErrorDomain.WORKSPACE,
+        category=ErrorCategory.APPLICATION,
+        http_status=HTTPStatus.BAD_REQUEST,
+        description="成员关系或邀请状态与当前请求冲突。",
+        default_message="当前成员状态不允许执行该操作",
+        consumer_action=ConsumerAction.FIX_INPUT,
+    ),
+    WORKSPACE_INVITE_INVALID: _entry(
+        code=WORKSPACE_INVITE_INVALID,
+        domain=ErrorDomain.WORKSPACE,
+        category=ErrorCategory.APPLICATION,
+        http_status=HTTPStatus.BAD_REQUEST,
+        description="工作空间邀请链接无效或已过期。",
+        default_message="邀请链接无效或已过期",
+        consumer_action=ConsumerAction.FIX_INPUT,
+    ),
+    WORKSPACE_MEMBER_STATE_INVALID: _entry(
+        code=WORKSPACE_MEMBER_STATE_INVALID,
+        domain=ErrorDomain.WORKSPACE,
+        category=ErrorCategory.APPLICATION,
+        http_status=HTTPStatus.BAD_REQUEST,
+        description="成员角色或访问状态非法。",
+        default_message="成员状态无效",
+        consumer_action=ConsumerAction.FIX_INPUT,
     ),
     WORKFLOW_NOT_FOUND: _entry(
         code=WORKFLOW_NOT_FOUND,
@@ -241,6 +333,15 @@ ERROR_REGISTRY: dict[str, ErrorCodeDefinition] = {
         description="当前账号无管理员权限。",
         default_message="仅管理员可执行该操作",
         consumer_action=ConsumerAction.REAUTHENTICATE,
+    ),
+    ADMIN_RESOURCE_NOT_FOUND: _entry(
+        code=ADMIN_RESOURCE_NOT_FOUND,
+        domain=ErrorDomain.ADMIN,
+        category=ErrorCategory.DOMAIN,
+        http_status=HTTPStatus.NOT_FOUND,
+        description="管理后台目标资源不存在。",
+        default_message="管理后台资源不存在",
+        consumer_action=ConsumerAction.NOT_FOUND,
     ),
     INFRA_DATABASE_ERROR: _entry(
         code=INFRA_DATABASE_ERROR,
@@ -308,11 +409,15 @@ LEGACY_NUMERIC_ERROR_CODES: dict[str, int] = {
     AUTH_INVALID_CREDENTIALS: 40100,
     COMMON_FORBIDDEN: 40300,
     AUTH_EMAIL_NOT_VERIFIED: 40300,
+    AUTH_ACCOUNT_SUSPENDED: 40300,
     WORKSPACE_ACCESS_DENIED: 40300,
     ADMIN_FORBIDDEN: 40300,
     COMMON_NOT_FOUND: 40400,
+    WORKSPACE_NOT_FOUND: 40400,
+    WORKSPACE_MEMBER_NOT_FOUND: 40400,
     WORKFLOW_NOT_FOUND: 40400,
     TRACE_RESOURCE_NOT_FOUND: 40400,
+    ADMIN_RESOURCE_NOT_FOUND: 40400,
     COMMON_CONFLICT: 40900,
     WORKFLOW_STATE_CONFLICT: 40900,
     WORKFLOW_GATE_CONFLICT: 40900,
