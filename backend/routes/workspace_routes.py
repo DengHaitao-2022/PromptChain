@@ -383,7 +383,6 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
             expires_at=expires_at,
         )
         session.add(invite)
-        await session.commit()
 
         # 发送邀请邮件
         import os
@@ -392,12 +391,18 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         invite_link = f"{app_base_url}/invite?token={token}"
 
         email_service = EmailService(session)
-        await email_service.send_workspace_invite_email(
-            email=body.email,
-            workspace_name=workspace.name,
-            inviter_name=inviter.display_name or inviter.email,
-            invite_link=invite_link,
-        )
+        try:
+            await email_service.send_workspace_invite_email(
+                email=body.email,
+                workspace_name=workspace.name,
+                inviter_name=inviter.display_name or inviter.email,
+                invite_link=invite_link,
+            )
+        except Exception:
+            await session.rollback()
+            raise
+
+        await session.commit()
 
         return {
             "message": f"邀请已发送至 {body.email}",
