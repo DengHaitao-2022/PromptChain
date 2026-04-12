@@ -1026,7 +1026,7 @@ export default function WorkflowDetailPage() {
                                 </div>
                             </div>
                             <div className={styles.stageBody}>
-                                {workflow?.state.intent_card && (
+                                {!!workflow?.state.intent_card && (
                                     <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>意图分析</h3>
                                         <IntentCardViewer intentCard={workflow.state.intent_card} />

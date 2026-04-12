@@ -6,7 +6,171 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-// 类型定义
+// ===== 统一错误系统 =====
+
+export type ApiErrorCode = string;
+
+export type ApiErrorAction =
+  | 'reauthenticate'
+  | 'forbidden'
+  | 'not_found'
+  | 'retry_later'
+  | 'contact_admin'
+  | 'fix_input'
+  | 'unknown';
+
+export interface ApiErrorEnvelope {
+  success: false;
+  code: ApiErrorCode;
+  message: string;
+  request_id: string;
+  details?: Record<string, unknown> | unknown[];
+  data: null;
+}
+
+export class ApiClientError extends Error {
+  public code: ApiErrorCode;
+  public action: ApiErrorAction;
+  public httpStatus: number;
+  public requestId: string;
+  public details?: Record<string, unknown> | unknown[];
+  public isRetryable: boolean;
+
+  constructor(
+    message: string,
+    code: ApiErrorCode,
+    action: ApiErrorAction,
+    httpStatus: number,
+    requestId: string = '',
+    details?: Record<string, unknown> | unknown[]
+  ) {
+    super(message);
+    this.name = 'ApiClientError';
+    this.code = code;
+    this.action = action;
+    this.httpStatus = httpStatus;
+    this.requestId = requestId;
+    this.details = details;
+    this.isRetryable = action === 'retry_later';
+  }
+}
+
+function isUnifiedErrorEnvelope(payload: unknown): payload is ApiErrorEnvelope {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const obj = payload as Record<string, unknown>;
+  return (
+    obj.success === false &&
+    typeof obj.code === 'string' &&
+    typeof obj.message === 'string'
+  );
+}
+
+function isLegacyResultEnvelope(payload: unknown): boolean {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const obj = payload as Record<string, unknown>;
+  return (
+    typeof obj.code === 'number' &&
+    obj.code !== 0 &&
+    typeof obj.message === 'string'
+  );
+}
+
+function resolveErrorAction(code: string, status: number): ApiErrorAction {
+  if (code.startsWith('AUTH_')) {
+    if (
+      [
+        'AUTH_UNAUTHENTICATED',
+        'AUTH_INVALID_CREDENTIALS',
+        'AUTH_EMAIL_NOT_VERIFIED',
+        'AUTH_ACCOUNT_SUSPENDED',
+        'AUTH_LOGIN_LOCKED',
+      ].includes(code)
+    ) {
+      return 'reauthenticate';
+    }
+  }
+
+  if (code === 'WORKSPACE_ACCESS_DENIED') return 'forbidden';
+  if (code.endsWith('_NOT_FOUND')) return 'not_found';
+  if (code.startsWith('INFRA_')) return 'retry_later';
+  if (code === 'COMMON_BAD_REQUEST') return 'fix_input';
+
+  if (status >= 500) return 'contact_admin';
+  if (status === 401) return 'reauthenticate';
+  if (status === 403) return 'forbidden';
+  if (status === 404) return 'not_found';
+  if (status === 400) return 'fix_input';
+
+  return 'unknown';
+}
+
+export async function parseApiErrorResponse(response: Response): Promise<ApiClientError> {
+  const status = response.status;
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return new ApiClientError(
+      `HTTP ${status} Error`,
+      'UNKNOWN_ERROR',
+      resolveErrorAction('UNKNOWN_ERROR', status),
+      status
+    );
+  }
+
+  // 1. 优先处理统一的新版错误 envelope
+  if (isUnifiedErrorEnvelope(payload)) {
+    return new ApiClientError(
+      payload.message,
+      payload.code,
+      resolveErrorAction(payload.code, status),
+      status,
+      payload.request_id,
+      payload.details as Record<string, unknown> | unknown[] | undefined
+    );
+  }
+
+  // 2. 兼容旧版 Result 返回，将 code 非 0 包装为 ApiClientError
+  if (isLegacyResultEnvelope(payload)) {
+    const obj = payload as Record<string, unknown>;
+    return new ApiClientError(
+      (obj.message as string) || 'Legacy Error',
+      `LEGACY_ERROR_${obj.code}`,
+      resolveErrorAction(`LEGACY_ERROR_${obj.code}`, status),
+      status,
+      '',
+      obj.data as Record<string, unknown> | unknown[] | undefined
+    );
+  }
+
+  // 3. Fallback 兜底纯文本 detail
+  let message = `HTTP Error ${status}`;
+  let details: unknown = undefined;
+
+  const obj = (typeof payload === 'object' && payload !== null) ? (payload as Record<string, unknown>) : {};
+
+  if ('detail' in obj) {
+    if (typeof obj.detail === 'string') {
+      message = obj.detail;
+    } else {
+      message = 'Validation Error';
+      details = obj.detail;
+    }
+  } else if ('message' in obj && typeof obj.message === 'string') {
+    message = obj.message;
+  }
+
+  return new ApiClientError(
+    message,
+    'UNCLASSIFIED_ERROR',
+    resolveErrorAction('UNCLASSIFIED_ERROR', status),
+    status,
+    '',
+    details as Record<string, unknown> | unknown[] | undefined
+  );
+}
+
+// ===== 类型定义 =====
 export type WorkflowStatus =
   | 'running'
   | 'paused'
@@ -32,6 +196,7 @@ export interface WorkflowResponse {
     error?: string;
     pause?: WorkflowPauseState;
     gate?: WorkflowGateState;
+    intent_card?: IntentCard;
     [key: string]: unknown;
   };
 }
@@ -193,8 +358,9 @@ export type WorkflowRealtimeEvent =
   | WorkflowLifecycleEvent
   | WorkflowGateWaitingEvent;
 
-// API 请求函数
-async function request<T>(
+// ===== API 请求函数 =====
+
+export async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
@@ -210,11 +376,42 @@ async function request<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw await parseApiErrorResponse(response);
   }
 
-  return response.json();
+  // Handle successful status codes that contain error envelopes
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    // If it's not JSON but OK, just return null or empty (this might not be perfectly safe but works if APIs return valid JSON)
+    return {} as T;
+  }
+
+  if (isUnifiedErrorEnvelope(payload)) {
+    throw new ApiClientError(
+      payload.message,
+      payload.code,
+      resolveErrorAction(payload.code, response.status),
+      response.status,
+      payload.request_id,
+      payload.details as Record<string, unknown> | unknown[] | undefined
+    );
+  }
+
+  if (isLegacyResultEnvelope(payload)) {
+    const obj = payload as Record<string, unknown>;
+    throw new ApiClientError(
+      (obj.message as string) || 'Legacy Error',
+      `LEGACY_ERROR_${obj.code}`,
+      resolveErrorAction(`LEGACY_ERROR_${obj.code}`, response.status),
+      response.status,
+      '',
+      obj.data as Record<string, unknown> | unknown[] | undefined
+    );
+  }
+
+  return payload as T;
 }
 
 // 统一 Result 包装类型
@@ -225,18 +422,33 @@ type ApiResult<T> = {
 };
 
 // 针对统一 Result 返回格式的请求函数
-async function requestResult<T>(
+export async function requestResult<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
+  // request 会处理 HTTP 非 ok，以及 envelope 内嵌错误格式的情况
+  // 正常会拿到 { code: 0, message: "xxx", data: T } 的结果
   const result = await request<ApiResult<T>>(endpoint, options);
 
-  if (result.code !== 0) {
-    throw new Error(result.message || 'Request failed');
+  // 针对仍然是 Result 格式的兼容（如果未在 request() 里被识别出来）
+  if (result.code !== undefined && result.code !== 0) {
+    throw new ApiClientError(
+      result.message || 'Request failed',
+      `LEGACY_ERROR_${result.code}`,
+      resolveErrorAction(`LEGACY_ERROR_${result.code}`, 200),
+      200,
+      '',
+      result.data as Record<string, unknown> | unknown[] | undefined
+    );
   }
 
   if (result.data == null) {
-    throw new Error(result.message || 'Request returned empty data');
+    throw new ApiClientError(
+      result.message || 'Request returned empty data',
+      'EMPTY_DATA',
+      'unknown',
+      200
+    );
   }
 
   return result.data;

@@ -159,10 +159,12 @@ function normalizeAuthState(data: AuthResponse): AuthState {
   };
 }
 
+import { parseApiErrorResponse } from './api';
+
 async function parseErrorMessage(response: Response, fallback: string): Promise<string> {
   try {
-    const error = (await response.json()) as { detail?: string; message?: string };
-    return error.detail || error.message || fallback;
+    const error = await parseApiErrorResponse(response);
+    return error.message || fallback;
   } catch {
     return fallback;
   }

@@ -37,18 +37,7 @@ interface TrustSignal {
   description: string;
 }
 
-interface WorkflowDefinition {
-  id: string;
-  name: string;
-  description: string;
-  is_published?: boolean;
-}
 
-interface WorkflowVersion {
-  id: string;
-  version: number;
-  change_log: string;
-}
 
 const examplePrompts = [
   '写一篇关于 AI Agent 技术架构的深度文章，面向技术开发者，2000 字左右',
