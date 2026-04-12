@@ -18,7 +18,8 @@ from core.errors.codes import (
     COMMON_BAD_REQUEST,
     COMMON_NOT_FOUND,
 )
-from core.errors.exceptions import ApplicationError, DomainError
+from core.errors.context import resolve_request_id
+from core.errors.exceptions import ApplicationError, DomainError, InfrastructureError
 from db.postgres_store import get_postgres_store
 from models.auth_models import UserStatus
 from services.auth_service import (
@@ -487,7 +488,7 @@ async def verify_email(body: VerifyEmailRequest):
 
 
 @router.post("/auth/forgot-password", response_model=MessageResponse)
-async def forgot_password(body: ForgotPasswordRequest):
+async def forgot_password(request: Request, body: ForgotPasswordRequest):
     """
     忘记密码
 
@@ -506,7 +507,14 @@ async def forgot_password(body: ForgotPasswordRequest):
         # 无论用户是否存在都返回成功（安全考虑）
         if user:
             email_service = EmailService(session)
-            await email_service.send_password_reset_email(user.id, user.email)
+            try:
+                await email_service.send_password_reset_email(user.id, user.email)
+            except InfrastructureError as exc:
+                request_id = resolve_request_id(request)
+                print(
+                    f"[WARN] forgot-password 邮件发送失败 request_id={request_id} "
+                    f"code={exc.code} user_id={user.id}"
+                )
 
         return MessageResponse(message="如果该邮箱已注册，您将收到密码重置邮件")
 
