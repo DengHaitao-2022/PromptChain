@@ -74,6 +74,8 @@ WORKSPACE_INVITE_INVALID = "WORKSPACE_INVITE_INVALID"
 WORKSPACE_MEMBER_STATE_INVALID = "WORKSPACE_MEMBER_STATE_INVALID"
 
 WORKFLOW_NOT_FOUND = "WORKFLOW_NOT_FOUND"
+WORKFLOW_VERSION_NOT_FOUND = "WORKFLOW_VERSION_NOT_FOUND"
+WORKFLOW_VALIDATION_FAILED = "WORKFLOW_VALIDATION_FAILED"
 WORKFLOW_STATE_CONFLICT = "WORKFLOW_STATE_CONFLICT"
 WORKFLOW_GATE_CONFLICT = "WORKFLOW_GATE_CONFLICT"
 TRACE_RESOURCE_NOT_FOUND = "TRACE_RESOURCE_NOT_FOUND"
@@ -298,6 +300,24 @@ ERROR_REGISTRY: dict[str, ErrorCodeDefinition] = {
         default_message="工作流不存在",
         consumer_action=ConsumerAction.NOT_FOUND,
     ),
+    WORKFLOW_VERSION_NOT_FOUND: _entry(
+        code=WORKFLOW_VERSION_NOT_FOUND,
+        domain=ErrorDomain.WORKFLOW,
+        category=ErrorCategory.DOMAIN,
+        http_status=HTTPStatus.NOT_FOUND,
+        description="工作流版本快照不存在。",
+        default_message="工作流版本不存在",
+        consumer_action=ConsumerAction.NOT_FOUND,
+    ),
+    WORKFLOW_VALIDATION_FAILED: _entry(
+        code=WORKFLOW_VALIDATION_FAILED,
+        domain=ErrorDomain.WORKFLOW,
+        category=ErrorCategory.APPLICATION,
+        http_status=HTTPStatus.BAD_REQUEST,
+        description="工作流定义未通过发布或执行前校验。",
+        default_message="工作流未通过校验",
+        consumer_action=ConsumerAction.FIX_INPUT,
+    ),
     WORKFLOW_STATE_CONFLICT: _entry(
         code=WORKFLOW_STATE_CONFLICT,
         domain=ErrorDomain.WORKFLOW,
@@ -416,8 +436,10 @@ LEGACY_NUMERIC_ERROR_CODES: dict[str, int] = {
     WORKSPACE_NOT_FOUND: 40400,
     WORKSPACE_MEMBER_NOT_FOUND: 40400,
     WORKFLOW_NOT_FOUND: 40400,
+    WORKFLOW_VERSION_NOT_FOUND: 40400,
     TRACE_RESOURCE_NOT_FOUND: 40400,
     ADMIN_RESOURCE_NOT_FOUND: 40400,
+    WORKFLOW_VALIDATION_FAILED: 40000,
     COMMON_CONFLICT: 40900,
     WORKFLOW_STATE_CONFLICT: 40900,
     WORKFLOW_GATE_CONFLICT: 40900,

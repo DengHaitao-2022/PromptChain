@@ -6,9 +6,16 @@
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from core.errors.codes import (
+    AUTH_UNAUTHENTICATED,
+    WORKFLOW_NOT_FOUND,
+    WORKFLOW_VERSION_NOT_FOUND,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from db.postgres_store import get_postgres_store
 from models.auth_models import MemberRole
 from models.result import Result
@@ -28,7 +35,10 @@ class RestoreVersionRequest(BaseModel):
 def _get_user_id(user: dict[str, Any]) -> str:
     user_id = user.get("sub") or user.get("id")
     if not user_id:
-        raise HTTPException(status_code=401, detail="未识别用户身份")
+        raise ApplicationError(
+            code=AUTH_UNAUTHENTICATED,
+            message="未识别用户身份",
+        )
     return user_id
 
 
@@ -37,7 +47,10 @@ async def _get_workspace_from_request(request: Request, user: dict[str, Any]) ->
     if not workspace_id:
         workspace_id = user.get("default_workspace_id") or user.get("workspace_id")
     if not workspace_id:
-        raise HTTPException(status_code=400, detail="未指定工作空间")
+        raise ApplicationError(
+            code=WORKSPACE_CONTEXT_REQUIRED,
+            message="未指定工作空间",
+        )
     return workspace_id
 
 
@@ -87,17 +100,26 @@ async def list_versions(
         service = WorkflowDefinitionService(session)
         workflow, versions = await service.get_version_history(workflow_id, workspace_id)
         if workflow is None:
-            return Result.not_found(message="工作流不存在")
+            raise DomainError(
+                code=WORKFLOW_NOT_FOUND,
+                message="工作流不存在",
+            )
 
         current_version = workflow.version
         visible_versions = versions
         if role == MemberRole.VIEWER:
             if not workflow.is_published:
-                return Result.not_found(message="工作流不存在")
+                raise DomainError(
+                    code=WORKFLOW_NOT_FOUND,
+                    message="工作流不存在",
+                )
 
             published_snapshot = await service._get_published_snapshot(workflow)
             if published_snapshot is None:
-                return Result.not_found(message="工作流不存在")
+                raise DomainError(
+                    code=WORKFLOW_NOT_FOUND,
+                    message="工作流不存在",
+                )
 
             current_version = published_snapshot.version
             visible_versions = [published_snapshot]
@@ -136,11 +158,17 @@ async def compare_versions(
         service = WorkflowDefinitionService(session)
         workflow = await service.get_by_id(workflow_id=workflow_id, workspace_id=workspace_id)
         if workflow is None:
-            return Result.not_found(message="工作流不存在")
+            raise DomainError(
+                code=WORKFLOW_NOT_FOUND,
+                message="工作流不存在",
+            )
 
         diff = await service.compare_versions(workflow_id, workspace_id, version_a, version_b)
         if diff is None:
-            return Result.not_found(message="待比较的版本不存在")
+            raise DomainError(
+                code=WORKFLOW_VERSION_NOT_FOUND,
+                message="待比较的版本不存在",
+            )
 
         return Result.success(data=diff)
 
@@ -158,9 +186,15 @@ async def get_version(
         service = WorkflowDefinitionService(session)
         workflow, version = await service.get_version_by_id(workflow_id, workspace_id, version_id)
         if workflow is None:
-            return Result.not_found(message="工作流不存在")
+            raise DomainError(
+                code=WORKFLOW_NOT_FOUND,
+                message="工作流不存在",
+            )
         if version is None:
-            return Result.not_found(message="版本不存在")
+            raise DomainError(
+                code=WORKFLOW_VERSION_NOT_FOUND,
+                message="工作流版本不存在",
+            )
 
         return Result.success(
             data=service.version_to_dict(
@@ -189,8 +223,16 @@ async def restore_version(
             version_id=version_id,
             change_log=body.change_log,
         )
-        if workflow is None or version is None:
-            return Result.not_found(message="工作流或版本不存在")
+        if workflow is None:
+            raise DomainError(
+                code=WORKFLOW_NOT_FOUND,
+                message="工作流不存在",
+            )
+        if version is None:
+            raise DomainError(
+                code=WORKFLOW_VERSION_NOT_FOUND,
+                message="工作流版本不存在",
+            )
 
         return Result.success(
             data={
