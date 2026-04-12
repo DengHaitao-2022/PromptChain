@@ -19,6 +19,8 @@
 - “已在 dev”表示代码或文档结果已经进入 `dev@6caaa24`。
 - “静态通过”表示主线代码已合入，或已完成 review / 契约核对，但当前 `dev` 尚未补 live smoke 证据。
 - “验收基线已回填”表示 quickstart/tasks 已按当前 `dev` 更新，可直接作为 acceptance review 基线；完成签收仍需人工 smoke。
+- 2026-04-10 已在实际工作区 `dev@698b80d` 执行 current-dev smoke；结果见 [`quickstart.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/quickstart.md) 与 [`acceptance/current-dev-2026-04-10.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md)。
+- 2026-04-12 已在候选分支 `fix-homepage-mvp1@e994c86` 执行 homepage 专项 smoke；结果见 [`acceptance/fix-homepage-mvp1-2026-04-12.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/fix-homepage-mvp1-2026-04-12.md)。
 - 下方原表中的文件路径反映的是规划阶段的修改落点；若当前代码结构已迁移，以 `dev@6caaa24` 的真实目录结构为准。
 
 | 状态 | Task IDs | 当前说明 |
@@ -26,22 +28,23 @@
 | 历史基线已在 `dev` | `T001`, `T002`, `T003` | 环境示例、启动说明、初始化 SQL 已存在于主线，后续仅在环境契约漂移时再改 |
 | 已在 `dev` | `T004`, `T005`, `T006`, `T007`, `T008`, `T009`, `T010`, `T011`, `T012`, `T013`, `T014`, `T015`, `T016`, `T018`, `T019`, `T020`, `T021`, `T022`, `T023`, `T025`, `T026`, `T027`, `T028`, `T029`, `T030`, `T032`, `T033`, `T034`, `T035`, `T036`, `T038`, `T039`, `T040`, `T041`, `T045`, `T046` | 运行态契约/持久化、Gate、首页与详情页主链路、工作流发布闭环、RBAC 与成员管理、Google provider、homepage runtime client、console/runs 真列表，以及本轮默认前置的中文文案/错误路径收口都已进入主线 |
 | 静态通过，待 runtime smoke | `T037` | `console/runs`、trace、artifact history 与 rerun 入口都已在 `dev`，但当前 `dev` 的监控/回放/重跑 smoke 尚未重新执行 |
-| 验收基线已回填，待人工 smoke | `T017`, `T024`, `T031`, `T042` | 这些任务当前缺的是真机验收证据，而不是功能实现；`T042` 只覆盖 auth/access 验收闭环，不代表 auth-flow 缺实现 |
+| current-dev smoke 已执行，环境阻塞 | `T017`, `T024`, `T031`, `T042` | 2026-04-10 在 `dev@698b80d` 已实际执行 smoke；由于 PostgreSQL 不可达，四项均未进入 live 验收，通过状态不能回写 |
 | 文档/契约已同步 latest dev | `T043`, `T044`, `T047`, `T048` | 契约、协作方式、入口结构与 quickstart 已按 `dev@6caaa24` 回写，可直接用于 acceptance review 准备 |
 
 补充事实：
 - latest `dev` 已包含 Google provider 支持，以及首页 runtime client 与 `console/runs` 真数据接线；不再把 `T005 / T011 / T036` 视为实现残口。
-- 当前不再存在“先补实现才能做 US1 / US2 / US3 / US5 验收”的已知 blocker；剩余工作是人工 smoke 证据。
-- 下一轮如继续推进，优先执行 `quickstart.md` 中的 Smoke D / E / F / A / B / C 与必要的越权 API 负向校验，不要重新打开实现任务。
+- 当前实现侧已无“先补功能才能验收”的已知 blocker，但 2026-04-10 的 current-dev smoke 已确认存在环境 blocker：本地 PostgreSQL 不可达，且默认 provider 指向空的 `anthropic` key。
+- 2026-04-12 的 homepage 候选 smoke 已确认：viewer 可见已发布 workflow、可取版本、只见当前已发布版本、首页可启动 workflow，且不再出现 `workflows` undefined。
+- 下一轮如继续推进，应先恢复 Docker / PostgreSQL / Redis，并修正 live LLM provider，再按 `quickstart.md` 中的 Smoke D / E / F / A / B / C 重跑，不要重新打开实现任务。
 
 ### Acceptance Closure Snapshot
 
 | Story | Task | 当前归类 | 当前说明 |
 |---|---|---|---|
-| US1 | `T017` | 验收基线已回填，待 current-dev smoke | 首页 workflow/version client、详情页关键产物展示与 Google provider 支持均已在 `dev`；需带有效 LLM 环境跑标准生成链路 |
-| US2 | `T024` | 验收基线已回填，待 current-dev smoke | Gate 与 pause/resume API/UI 已在 `dev`；需在当前 `dev` 触发至少 1 条真实 Gate 路径并验证暂停/恢复 |
-| US3 | `T031` | 验收基线已回填，待 current-dev smoke | save / validate / publish / published-only visibility 已在 `dev`；需 editor/viewer 双角色 smoke |
-| US5 | `T042` | auth-flow 有历史 smoke 证据，当前 `dev` 仍待 access smoke | 认证页面和 `/api/me` 已在 `dev`；当前只需 auth/access 回归与越权边界验证，不再重复实现认证功能 |
+| US1 | `T017` | homepage blocker 已解除，待最终 sign-off | `fix-homepage-mvp1` 已证明首页 workflow/version/start 链路恢复；完整标准生成链路的最终签收仍沿用主验收口径 |
+| US2 | `T024` | homepage blocker 已解除，待最终 sign-off | 首页入口已恢复 Gate/恢复链路的验证前提；完整 Gate/pause-resume 最终签收仍沿用主验收口径 |
+| US3 | `T031` | current-dev smoke 已执行，blocked | editor/viewer 发布闭环未进入 live smoke；受 PostgreSQL blocker 连带阻断 |
+| US5 | `T042` | current-dev smoke 已执行，blocked | 认证页面静态可达、`/api/me` 未登录返回正常，但 auth/access live 回归被 PostgreSQL blocker 截断 |
 
 ## Phase 1: Setup (Shared Infrastructure)
 

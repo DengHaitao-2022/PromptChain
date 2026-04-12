@@ -136,6 +136,7 @@ export default function Home() {
   const [launchState, setLaunchState] = useState<LaunchState>('idle');
   const [workflowRunId, setWorkflowRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorTitle, setErrorTitle] = useState<string>('错误');
 
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [versions, setVersions] = useState<WorkflowVersion[]>([]);
@@ -252,7 +253,7 @@ export default function Home() {
       try {
         setError(null);
         const response = await workflowDefinitionApi.list();
-        const workflowData = response.data.workflows || [];
+        const workflowData = response.workflows || [];
 
         const hasPublished = workflowData.some((w: WorkflowDefinition) => 'is_published' in w);
         const displayableWorkflows = hasPublished
@@ -270,7 +271,8 @@ export default function Home() {
           setSelectedWorkflow(displayableWorkflows[0].id);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载工作流失败');
+        setErrorTitle('加载工作流失败');
+        setError(err instanceof Error ? err.message : '未知错误');
       }
     };
     fetchWorkflows();
@@ -283,11 +285,14 @@ export default function Home() {
       return;
     }
 
+    setVersions([]);
+    setSelectedVersion('');
+
     const fetchVersions = async () => {
       try {
         setError(null);
         const response = await workflowDefinitionApi.getVersions(selectedWorkflow);
-        const versionData = response.data.versions || [];
+        const versionData = response.versions || [];
         setVersions(versionData);
         if (versionData.length > 0) {
           setSelectedVersion(versionData[0].id);
@@ -295,7 +300,8 @@ export default function Home() {
           setSelectedVersion('');
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载版本失败');
+        setErrorTitle('加载版本失败');
+        setError(err instanceof Error ? err.message : '未知错误');
       }
     };
     fetchVersions();
@@ -318,7 +324,8 @@ export default function Home() {
     } catch (err) {
       setLaunchState('idle');
       setWorkflowRunId(null);
-      setError(err instanceof Error ? err.message : '工作流启动失败');
+      setErrorTitle('启动工作流失败');
+      setError(err instanceof Error ? err.message : '未知错误');
     } finally {
       setIsLoading(false);
     }
@@ -526,7 +533,7 @@ export default function Home() {
 
                 {error ? (
                   <div className={styles.errorCard} role="alert">
-                    <strong>启动失败</strong>
+                    <strong>{errorTitle}</strong>
                     <span>{error}</span>
                   </div>
                 ) : null}
