@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+import { requestResult } from '@/lib/api';
 
 // ==================== 类型定义 ====================
 
@@ -79,32 +78,7 @@ export function useWorkflowApi() {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}${url}`, {
-        ...options,
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...options?.headers,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || errorData.message || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
-      if (result.code !== undefined && result.code !== 200 && result.code !== 0) {
-          interface ApiError extends Error {
-              code?: number;
-              data?: unknown;
-          }
-          const error = new Error(result.message || '请求失败') as ApiError;
-          error.code = result.code;
-          error.data = result.data;
-          throw error;
-      }
-      return result.data !== undefined ? result.data : result;
+      return await requestResult<T>(`/api${url}`, options);
     } catch (err) {
       const message = err instanceof Error ? err.message : '请求失败';
       setError(message);

@@ -20,7 +20,12 @@ import {
 import styles from './page.module.css';
 import { HomeWorkflowPreview } from '@/components/HomeWorkflowPreview/HomeWorkflowPreview';
 import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher';
-import { workflowDefinitionApi, workflowApi, WorkflowDefinition, WorkflowVersion } from '@/lib/api';
+import {
+  workflowDefinitionApi,
+  workflowApi,
+  type WorkflowDefinition,
+  type WorkflowVersion,
+} from '@/lib/api';
 
 type LaunchState = 'idle' | 'launching' | 'handoff';
 
@@ -35,19 +40,6 @@ interface TrustSignal {
   eyebrow: string;
   title: string;
   description: string;
-}
-
-interface WorkflowDefinition {
-  id: string;
-  name: string;
-  description: string;
-  is_published?: boolean;
-}
-
-interface WorkflowVersion {
-  id: string;
-  version: number;
-  change_log: string;
 }
 
 const examplePrompts = [

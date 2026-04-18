@@ -5,6 +5,8 @@
  * 最终授权仍以服务端校验为准。
  */
 
+import { parseApiErrorResponse } from './api';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 const PREFERRED_WORKSPACE_STORAGE_KEY = 'promptchain:workspace_id';
 
@@ -161,8 +163,8 @@ function normalizeAuthState(data: AuthResponse): AuthState {
 
 async function parseErrorMessage(response: Response, fallback: string): Promise<string> {
   try {
-    const error = (await response.json()) as { detail?: string; message?: string };
-    return error.detail || error.message || fallback;
+    const error = await parseApiErrorResponse(response);
+    return error.message || fallback;
   } catch {
     return fallback;
   }

@@ -1,6 +1,14 @@
 import {
+  ApiClientError,
+  parseApiErrorResponse,
+  request,
+  requestResult,
+  workflowDefinitionApi,
   workflowApi,
+  type ApiErrorAction,
+  type ApiErrorEnvelope,
   type WorkflowRealtimeEvent,
+  type WorkflowDefinition,
   type WorkflowResponse
 } from '@/lib/api';
 
@@ -98,3 +106,45 @@ workflowApi.pause();
 workflowApi.pause('wf_123');
 workflowApi.pause('wf_123', '人工暂停');
 workflowApi.resume('wf_123');
+
+// 5. 验证统一错误 envelope 与 typed client error
+const assertApiErrorAction = (action: ApiErrorAction) => action;
+assertApiErrorAction('reauthenticate');
+assertApiErrorAction('forbidden');
+assertApiErrorAction('not_found');
+assertApiErrorAction('retry_later');
+assertApiErrorAction('contact_admin');
+assertApiErrorAction('fix_input');
+assertApiErrorAction('unknown');
+
+const assertErrorEnvelope = (error: ApiErrorEnvelope) => error;
+assertErrorEnvelope({
+  success: false,
+  code: 'WORKFLOW_VALIDATION_FAILED',
+  message: '工作流未通过发布校验',
+  request_id: 'req-type-contract-001',
+  details: null,
+  data: null
+});
+
+const clientError = new ApiClientError(
+  '请先登录后再继续',
+  'AUTH_UNAUTHENTICATED',
+  'reauthenticate',
+  401,
+  'req-type-contract-002',
+  null
+);
+
+clientError.code satisfies string;
+clientError.action satisfies ApiErrorAction;
+clientError.httpStatus satisfies number;
+clientError.requestId satisfies string;
+clientError.isRetryable satisfies boolean;
+
+parseApiErrorResponse(new Response('{}', { status: 500 })) satisfies Promise<ApiClientError>;
+request<WorkflowResponse>('/api/workflow/wf_1') satisfies Promise<WorkflowResponse>;
+requestResult<{ workflows: WorkflowDefinition[] }>('/api/workflows') satisfies Promise<{
+  workflows: WorkflowDefinition[];
+}>;
+workflowDefinitionApi.list() satisfies Promise<{ workflows: WorkflowDefinition[] }>;
