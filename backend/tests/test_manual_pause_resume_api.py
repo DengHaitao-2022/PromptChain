@@ -1,12 +1,10 @@
-from pathlib import Path
 import sys
-
-from fastapi.testclient import TestClient
+from datetime import UTC, datetime
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests._runtime_auth import authenticated_client, ownership_metadata
-from main import app
 
 
 class _FakeWorkflowRun:
@@ -49,24 +47,40 @@ class _FakeWorkflow:
             return "paused"
         return "running"
 
+    @staticmethod
+    def _utc_now_z() -> str:
+        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
     async def pause(self, workflow_run_id: str, reason: str = ""):
         self.store.workflow_run.status = "paused"
+        paused_at = self._utc_now_z()
         return {
             "workflow_run_id": workflow_run_id,
             "status": "paused",
             "state": {
                 "is_paused": True,
-                "pause_reason": reason,
+                "pause": {
+                    "reason": reason,
+                    "paused_at": paused_at,
+                    "source": "user",
+                },
             },
         }
 
     async def resume_paused(self, workflow_run_id: str):
         self.store.workflow_run.status = "running"
+        pause_info = self.store.workflow_run.metadata.get("pause", {})
         return {
             "workflow_run_id": workflow_run_id,
             "status": "running",
             "state": {
                 "is_paused": False,
+                "pause": {
+                    "reason": pause_info.get("reason", ""),
+                    "paused_at": pause_info.get("paused_at", self._utc_now_z()),
+                    "source": pause_info.get("source", "user"),
+                    "resumed_at": self._utc_now_z(),
+                },
             },
         }
 

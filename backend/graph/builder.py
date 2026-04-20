@@ -9,28 +9,28 @@
 - 局部重跑/回溯
 - 状态持久化
 """
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 from models import WorkflowRunStatus
 from nodes import (
-    parse_intent,
-    clarify_intent,
-    generate_outline,
-    approve_outline,
-    generate_all_sections,
-    self_refine_loop,
-    check_facts,
     approve_fact_check,
+    approve_outline,
+    check_facts,
+    clarify_intent,
+    generate_all_sections,
+    generate_outline,
+    parse_intent,
+    self_refine_loop,
 )
 from services import get_artifact_store, get_postgres_checkpoint_saver
 
-from graph.state import GraphState
 from graph.conditions import (
     should_clarify,
-    should_regenerate_outline,
     should_proceed_after_fact_check,
+    should_regenerate_outline,
 )
+from graph.state import GraphState
 
 
 async def finalize_output(state: GraphState) -> GraphState:
@@ -49,9 +49,7 @@ async def finalize_output(state: GraphState) -> GraphState:
         workflow_run.total_node_runs = len(node_runs)
         workflow_run.total_llm_calls = sum(len(n.llm_calls) for n in node_runs)
         workflow_run.total_tokens = sum(
-            call.total_tokens
-            for n in node_runs
-            for call in n.llm_calls
+            call.total_tokens for n in node_runs for call in n.llm_calls
         )
 
         workflow_run.complete()
@@ -95,12 +93,7 @@ def build_content_generation_graph():
 
     # 意图解析 → 条件分支
     graph.add_conditional_edges(
-        "parse_intent",
-        should_clarify,
-        {
-            "clarify": "clarify_intent",
-            "outline": "generate_outline"
-        }
+        "parse_intent", should_clarify, {"clarify": "clarify_intent", "outline": "generate_outline"}
     )
 
     # 澄清后 → 提纲
@@ -113,19 +106,15 @@ def build_content_generation_graph():
         {
             "regenerate": "generate_outline",
             "generate_content": "generate_content",
-            END: END  # 暂停等待用户审批
-        }
+            END: END,  # 暂停等待用户审批
+        },
     )
 
     # 提纲审批 → 条件分支
     graph.add_conditional_edges(
         "approve_outline",
         should_regenerate_outline,
-        {
-            "regenerate": "generate_outline",
-            "generate_content": "generate_content",
-            END: END
-        }
+        {"regenerate": "generate_outline", "generate_content": "generate_content", END: END},
     )
 
     # 内容生成 → 自检修订 → 事实核查 → 条件分支
@@ -138,8 +127,8 @@ def build_content_generation_graph():
         should_proceed_after_fact_check,
         {
             "finalize": "finalize",
-            END: END  # 暂停等待用户确认高风险项
-        }
+            END: END,  # 暂停等待用户确认高风险项
+        },
     )
 
     # 事实核查审批 → 最终处理

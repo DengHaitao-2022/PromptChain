@@ -36,12 +36,13 @@ class ArtifactStore:
 
     async def create_artifact(
         self,
-        type: ArtifactType,
+        artifact_type: ArtifactType | None,
         content: Any,
         workflow_run_id: str,
         node_run_id: str,
         parent_version_id: str | None = None,
-        metadata: dict = None,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> Artifact:
         """
         创建新的 Artifact 版本
@@ -49,6 +50,11 @@ class ArtifactStore:
         - 如果是首次创建，version = 1
         - 如果是 rerun/修改，version = parent.version + 1
         """
+        if artifact_type is None:
+            artifact_type = kwargs.get("type")
+        if artifact_type is None:
+            raise ValueError("artifact_type is required")
+
         metadata = metadata or {}
 
         # 计算版本号
@@ -60,11 +66,11 @@ class ArtifactStore:
                 version = 1
         else:
             # 查询同类型同工作流的最大版本号
-            max_version = await self._get_max_version(workflow_run_id, type)
+            max_version = await self._get_max_version(workflow_run_id, artifact_type)
             version = max_version + 1 if max_version else 1
 
         artifact = Artifact(
-            type=type,
+            type=artifact_type,
             version=version,
             content=content,
             content_hash=self._compute_hash(content),

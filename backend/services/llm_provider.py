@@ -308,16 +308,20 @@ def get_current_model_info() -> dict:
     用于 LLMCallRecord 记录，避免硬编码
     """
     provider_name = _resolve_provider_name()
+    resolved_provider_name = provider_name
     try:
         provider = LLMProviderFactory.get_provider(provider_name)
+        resolved_provider_name = provider.provider_name
         model_name = provider.get_default_model_name()
     except Exception:
         try:
+            LLMProviderFactory.get_registration(provider_name)
             model_name = LLMProviderFactory.get_resolved_model_name(provider_name)
         except Exception:
+            resolved_provider_name = DEFAULT_PROVIDER_NAME
             model_name = _resolve_model_override() or DEFAULT_FALLBACK_MODEL
 
     return {
-        "provider": provider_name,
+        "provider": resolved_provider_name,
         "model": model_name,
     }

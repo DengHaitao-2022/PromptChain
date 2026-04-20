@@ -6,13 +6,20 @@
 2. 支持流式输出
 3. 创建 Artifact 版本
 """
-from typing import Dict
+
 from datetime import datetime
+
 from langchain_core.prompts import ChatPromptTemplate
-
-from models import IntentCard, Outline, OutlineSection, ArtifactType, NodeRun, NodeRunStatus, LLMCallRecord
-from services import get_llm, get_artifact_store, get_current_model_info
-
+from models import (
+    ArtifactType,
+    IntentCard,
+    LLMCallRecord,
+    NodeRun,
+    NodeRunStatus,
+    Outline,
+    OutlineSection,
+)
+from services import get_artifact_store, get_current_model_info, get_llm
 
 SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据以下信息撰写文章的一个章节。
 
@@ -51,7 +58,7 @@ def _build_section_artifact_content(section: OutlineSection, content: str) -> di
     }
 
 
-def _compile_generated_content(outline: Outline, sections: Dict[str, str]) -> str:
+def _compile_generated_content(outline: Outline, sections: dict[str, str]) -> str:
     compiled_sections: list[str] = []
     for section in outline.get_flat_sections():
         content = sections.get(section.id)
@@ -61,11 +68,7 @@ def _compile_generated_content(outline: Outline, sections: Dict[str, str]) -> st
     return "\n\n".join(compiled_sections)
 
 
-async def generate_section(
-    state: dict,
-    section: OutlineSection,
-    previous_content: str = ""
-) -> str:
+async def generate_section(state: dict, section: OutlineSection, previous_content: str = "") -> str:
     """
     生成单个章节内容
 
@@ -84,15 +87,17 @@ async def generate_section(
     prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
     chain = prompt | llm
 
-    result = await chain.ainvoke({
-        "article_title": outline.title,
-        "audience": intent_card.audience.value,
-        "tone": intent_card.tone.value,
-        "section_title": section.title,
-        "section_summary": section.summary,
-        "target_words": section.target_words,
-        "previous_sections": previous_content or "（这是第一个章节）"
-    })
+    result = await chain.ainvoke(
+        {
+            "article_title": outline.title,
+            "audience": intent_card.audience.value,
+            "tone": intent_card.tone.value,
+            "section_title": section.title,
+            "section_summary": section.summary,
+            "target_words": section.target_words,
+            "previous_sections": previous_content or "（这是第一个章节）",
+        }
+    )
 
     return result.content
 
@@ -133,8 +138,8 @@ async def generate_all_sections(state: dict) -> dict:
     await store.create_node_run(node_run)
 
     try:
-        generated_sections: Dict[str, str] = {}
-        section_artifact_ids: Dict[str, str] = {}
+        generated_sections: dict[str, str] = {}
+        section_artifact_ids: dict[str, str] = {}
         previous_content = ""
 
         # 获取扁平化的章节列表
@@ -155,7 +160,7 @@ async def generate_all_sections(state: dict) -> dict:
                 provider=model_info["provider"],
                 latency_ms=int((end_time - start_time).total_seconds() * 1000),
                 prompt_preview=section.title,
-                response_preview=content[:200] if len(content) > 200 else content
+                response_preview=content[:200] if len(content) > 200 else content,
             )
             node_run.llm_calls.append(llm_call)
 
@@ -290,7 +295,7 @@ async def regenerate_section(state: dict) -> dict:
             provider=model_info["provider"],
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
             prompt_preview=target_section.title,
-            response_preview=new_content[:200]
+            response_preview=new_content[:200],
         )
         node_run.llm_calls.append(llm_call)
         node_run.output_artifact_ids.append(artifact.id)

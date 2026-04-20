@@ -1,5 +1,5 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -7,8 +7,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import services.artifact_store as artifact_store_module
-from db.postgres_store import PostgresArtifactStore
 from db import postgres_store as postgres_store_module
+from db.postgres_store import PostgresArtifactStore
 from graph.content_generation_graph import ContentGenerationWorkflow
 from models.artifact import WorkflowRun
 

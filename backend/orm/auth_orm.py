@@ -6,12 +6,11 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
-from sqlalchemy.orm import relationship
-
 # 使用现有的 Base
 from db.postgres_store import Base
 from models.auth_models import MemberRole, UserStatus
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy.orm import relationship
 
 # ==================== ORM 模型定义 ====================
 

@@ -4,6 +4,7 @@
 实际应用入口已迁移到 app.py，此文件保留以兼容旧的 `uvicorn main:app` 启动方式。
 推荐使用: uv run uvicorn app:app --reload --port 8000
 """
+
 from app import app  # noqa: F401
 
 if __name__ == "__main__":

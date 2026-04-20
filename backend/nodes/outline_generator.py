@@ -6,13 +6,21 @@
 2. 支持 Human-in-the-Loop 确认
 3. 创建 Artifact 版本
 """
+
 import json
 from datetime import datetime
+
 from langchain_core.prompts import ChatPromptTemplate
-
-from models import ArtifactType, HumanDecision, IntentCard, LLMCallRecord, NodeRun, NodeRunStatus, Outline
+from models import (
+    ArtifactType,
+    HumanDecision,
+    IntentCard,
+    LLMCallRecord,
+    NodeRun,
+    NodeRunStatus,
+    Outline,
+)
 from services import get_artifact_store, get_current_model_info, get_structured_llm
-
 
 OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰、逻辑连贯的文章提纲。
 
@@ -98,9 +106,7 @@ async def generate_outline(state: dict) -> dict:
         started_at=datetime.utcnow(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
-            artifact_id
-            for artifact_id in [state.get("intent_card_artifact_id")]
-            if artifact_id
+            artifact_id for artifact_id in [state.get("intent_card_artifact_id")] if artifact_id
         ],
     )
     await store.create_node_run(node_run)
@@ -117,15 +123,17 @@ async def generate_outline(state: dict) -> dict:
 
         # 调用 LLM
         start_time = datetime.utcnow()
-        outline: Outline = await chain.ainvoke({
-            "goal": intent_card.goal,
-            "topic": intent_card.topic,
-            "audience": intent_card.audience.value,
-            "tone": intent_card.tone.value,
-            "length": intent_card.length,
-            "must_include": ", ".join(intent_card.must_include) or "无特殊要求",
-            "must_exclude": ", ".join(intent_card.must_exclude) or "无"
-        })
+        outline: Outline = await chain.ainvoke(
+            {
+                "goal": intent_card.goal,
+                "topic": intent_card.topic,
+                "audience": intent_card.audience.value,
+                "tone": intent_card.tone.value,
+                "length": intent_card.length,
+                "must_include": ", ".join(intent_card.must_include) or "无特殊要求",
+                "must_exclude": ", ".join(intent_card.must_exclude) or "无",
+            }
+        )
         end_time = datetime.utcnow()
 
         # 记录 LLM 调用（动态获取模型配置）
@@ -135,7 +143,7 @@ async def generate_outline(state: dict) -> dict:
             provider=model_info["provider"],
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
             prompt_preview=intent_card.topic[:100],
-            response_preview=outline.title[:100]
+            response_preview=outline.title[:100],
         )
         node_run.llm_calls.append(llm_call)
 
@@ -180,7 +188,7 @@ async def generate_outline(state: dict) -> dict:
             "outline_artifact_id": artifact.id,
             "outline_node_run_id": node_run.id,
             "awaiting_outline_approval": True,
-            "outline_feedback": None  # 清除反馈
+            "outline_feedback": None,  # 清除反馈
         }
 
     except Exception as e:
@@ -215,9 +223,7 @@ async def approve_outline(state: dict) -> dict:
         started_at=datetime.utcnow(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
-            artifact_id
-            for artifact_id in [state.get("outline_artifact_id")]
-            if artifact_id
+            artifact_id for artifact_id in [state.get("outline_artifact_id")] if artifact_id
         ],
     )
     await store.create_node_run(node_run)
@@ -265,7 +271,8 @@ async def approve_outline(state: dict) -> dict:
                 {
                     "gate_type": "outline_approval",
                     "trigger_reason": current_gate.get("trigger_reason") or "outline_review",
-                    "questions": current_gate.get("questions") or _build_outline_gate_questions(approved_outline),
+                    "questions": current_gate.get("questions")
+                    or _build_outline_gate_questions(approved_outline),
                     "answers": user_decision,
                     "opened_at": current_gate.get("opened_at") or handled_at,
                     "handled_at": handled_at,
@@ -310,7 +317,8 @@ async def approve_outline(state: dict) -> dict:
                 {
                     "gate_type": "outline_approval",
                     "trigger_reason": current_gate.get("trigger_reason") or "outline_review",
-                    "questions": current_gate.get("questions") or _build_outline_gate_questions(modified_outline),
+                    "questions": current_gate.get("questions")
+                    or _build_outline_gate_questions(modified_outline),
                     "answers": user_decision,
                     "opened_at": current_gate.get("opened_at") or handled_at,
                     "handled_at": handled_at,
@@ -334,7 +342,8 @@ async def approve_outline(state: dict) -> dict:
             {
                 "gate_type": "outline_approval",
                 "trigger_reason": current_gate.get("trigger_reason") or "outline_review",
-                "questions": current_gate.get("questions") or _build_outline_gate_questions(outline),
+                "questions": current_gate.get("questions")
+                or _build_outline_gate_questions(outline),
                 "answers": user_decision,
                 "opened_at": current_gate.get("opened_at") or handled_at,
                 "handled_at": handled_at,
