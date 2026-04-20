@@ -3,6 +3,9 @@ Trace / Artifact API 路由
 
 提供工作流追踪、节点详情、产物查看等接口
 """
+
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 
 import routes.workflow_helpers as workflow_helpers
@@ -13,14 +16,15 @@ from routes.workflow_helpers import (
 )
 
 router = APIRouter(prefix="/api", tags=["trace"])
+logger = logging.getLogger(__name__)
+INTERNAL_SERVER_ERROR = "Internal server error"
 
 
 @router.get("/trace/{workflow_run_id}")
 async def get_workflow_trace(workflow_run_id: str, request: Request):
     """获取工作流完整追踪"""
-    from services import get_trace_service
     from graph import get_workflow
-    from services import get_artifact_store
+    from services import get_artifact_store, get_trace_service
 
     try:
         await workflow_helpers.require_workflow_run_access(request, workflow_run_id)
@@ -45,8 +49,9 @@ async def get_workflow_trace(workflow_run_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("获取工作流追踪失败: workflow_run_id=%s", workflow_run_id)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
 
 
 @router.get("/trace/node/{node_run_id}")
@@ -63,8 +68,9 @@ async def get_node_detail(node_run_id: str, request: Request):
         raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("获取节点详情失败: node_run_id=%s", node_run_id)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
 
 
 @router.get("/artifact/{artifact_id}")
@@ -86,5 +92,6 @@ async def get_artifact_history(artifact_id: str, request: Request):
         return history
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("获取 Artifact 历史失败: artifact_id=%s", artifact_id)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)

@@ -9,24 +9,23 @@
 
 Source: Chain of Verification (CoVe) - Meta AI Research
 """
-import json
-from typing import List, Optional
-from datetime import datetime
-from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
 
+import json
+from datetime import datetime
+
+from langchain_core.prompts import ChatPromptTemplate
 from models import (
-    FactClaim,
-    VerificationResult,
-    FactCheckReport,
     ArtifactType,
+    FactCheckReport,
+    FactClaim,
+    HumanDecision,
+    LLMCallRecord,
     NodeRun,
     NodeRunStatus,
-    LLMCallRecord,
-    HumanDecision
+    VerificationResult,
 )
-from services import get_llm, get_structured_llm, get_artifact_store, get_current_model_info
-
+from pydantic import BaseModel, Field
+from services import get_artifact_store, get_current_model_info, get_llm, get_structured_llm
 
 # ==================== Prompt 模板 ====================
 
@@ -104,17 +103,20 @@ EVALUATE_CLAIM_PROMPT = """评估以下事实声明的准确性。
 
 # ==================== 结构化输出模型 ====================
 
+
 class ClaimList(BaseModel):
     """提取的事实声明列表"""
-    claims: List[FactClaim] = Field(default_factory=list)
+
+    claims: list[FactClaim] = Field(default_factory=list)
 
 
 class VerificationEvaluation(BaseModel):
     """验证评估结果"""
+
     is_verified: bool
     confidence: float = Field(ge=0, le=1)
     risk_level: str = Field(pattern="^(low|medium|high)$")
-    suggested_correction: Optional[str] = None
+    suggested_correction: str | None = None
 
 
 def _now_iso() -> str:
@@ -198,11 +200,7 @@ def _mark_result_resolved(result: VerificationResult) -> None:
 
 
 def _get_high_risk_claim_ids(report: FactCheckReport) -> list[str]:
-    return [
-        result.claim_id
-        for result in report.results
-        if result.risk_level == "high"
-    ]
+    return [result.claim_id for result in report.results if result.risk_level == "high"]
 
 
 def _get_missing_gate_decisions(
@@ -210,9 +208,7 @@ def _get_missing_gate_decisions(
     decisions: dict[str, str],
 ) -> list[str]:
     return [
-        claim_id
-        for claim_id in _get_high_risk_claim_ids(report)
-        if not decisions.get(claim_id)
+        claim_id for claim_id in _get_high_risk_claim_ids(report) if not decisions.get(claim_id)
     ]
 
 
@@ -249,7 +245,8 @@ def _build_final_content_payload(
 
 # ==================== CoVe 四步验证链 ====================
 
-async def extract_fact_claims(content: str, section_id: str) -> List[FactClaim]:
+
+async def extract_fact_claims(content: str, section_id: str) -> list[FactClaim]:
     """
     步骤1：从内容中提取事实性声明
     """
@@ -274,10 +271,7 @@ async def generate_verification_question(claim: FactClaim) -> str:
     prompt = ChatPromptTemplate.from_template(GENERATE_VERIFICATION_QUESTIONS_PROMPT)
     chain = prompt | llm
 
-    result = await chain.ainvoke({
-        "claim_text": claim.text,
-        "claim_category": claim.category
-    })
+    result = await chain.ainvoke({"claim_text": claim.text, "claim_category": claim.category})
 
     return result.content.strip()
 
@@ -298,9 +292,7 @@ async def execute_verification(question: str) -> str:
 
 
 async def evaluate_claim_accuracy(
-    claim: FactClaim,
-    verification_question: str,
-    verification_answer: str
+    claim: FactClaim, verification_question: str, verification_answer: str
 ) -> VerificationResult:
     """
     步骤4：评估声明准确性
@@ -309,11 +301,13 @@ async def evaluate_claim_accuracy(
     prompt = ChatPromptTemplate.from_template(EVALUATE_CLAIM_PROMPT)
     chain = prompt | llm
 
-    evaluation: VerificationEvaluation = await chain.ainvoke({
-        "claim_text": claim.text,
-        "verification_question": verification_question,
-        "verification_answer": verification_answer
-    })
+    evaluation: VerificationEvaluation = await chain.ainvoke(
+        {
+            "claim_text": claim.text,
+            "verification_question": verification_question,
+            "verification_answer": verification_answer,
+        }
+    )
 
     return VerificationResult(
         claim_id=claim.id,
@@ -322,11 +316,12 @@ async def evaluate_claim_accuracy(
         risk_level=evaluation.risk_level,
         suggested_correction=evaluation.suggested_correction,
         verification_question=verification_question,
-        verification_answer=verification_answer
+        verification_answer=verification_answer,
     )
 
 
 # ==================== 主节点函数 ====================
+
 
 async def check_facts(state: dict) -> dict:
     """
@@ -365,8 +360,8 @@ async def check_facts(state: dict) -> dict:
     await store.create_node_run(node_run)
 
     try:
-        all_claims: List[FactClaim] = []
-        all_results: List[VerificationResult] = []
+        all_claims: list[FactClaim] = []
+        all_results: list[VerificationResult] = []
 
         # 遍历每个章节提取并验证事实声明
         for section_id, content in content_dict.items():
@@ -384,7 +379,7 @@ async def check_facts(state: dict) -> dict:
                 provider=model_info["provider"],
                 latency_ms=int((end_time - start_time).total_seconds() * 1000),
                 prompt_preview=f"Extract claims from section {section_id}",
-                response_preview=f"Found {len(claims)} claims"
+                response_preview=f"Found {len(claims)} claims",
             )
             node_run.llm_calls.append(llm_call)
 
@@ -410,15 +405,12 @@ async def check_facts(state: dict) -> dict:
                     provider=model_info["provider"],
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Verify: {claim.text[:50]}...",
-                    response_preview=f"Verified: {result.is_verified}, Risk: {result.risk_level}"
+                    response_preview=f"Verified: {result.is_verified}, Risk: {result.risk_level}",
                 )
                 node_run.llm_calls.append(llm_call)
 
         # 生成报告
-        report = FactCheckReport(
-            claims=all_claims,
-            results=all_results
-        )
+        report = FactCheckReport(claims=all_claims, results=all_results)
         report.compute_stats()
 
         # 创建 Artifact
@@ -458,7 +450,7 @@ async def check_facts(state: dict) -> dict:
                 **state,
                 "fact_check_report": report,
                 "fact_check_artifact_id": artifact.id,
-                "awaiting_fact_check_approval": True
+                "awaiting_fact_check_approval": True,
             }
 
         # 无高风险项，直接完成
@@ -470,7 +462,7 @@ async def check_facts(state: dict) -> dict:
             **state,
             "fact_check_report": report,
             "fact_check_artifact_id": artifact.id,
-            "awaiting_fact_check_approval": False
+            "awaiting_fact_check_approval": False,
         }
 
     except Exception as e:
@@ -517,8 +509,7 @@ async def approve_fact_check(state: dict) -> dict:
         missing_decisions = _get_missing_gate_decisions(report, decisions)
         if missing_decisions:
             raise ValueError(
-                "Fact-check approval incomplete: missing_decisions="
-                f"{','.join(missing_decisions)}"
+                f"Fact-check approval incomplete: missing_decisions={','.join(missing_decisions)}"
             )
 
         # 应用用户决策

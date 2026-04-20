@@ -1,14 +1,11 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
-
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from graph.content_generation_graph import ContentGenerationWorkflow
 from tests._runtime_auth import authenticated_client, ownership_metadata
-from main import app
 
 
 class _FakeWorkflowRun:
@@ -52,7 +49,11 @@ class _FakeWorkflow:
         }
 
     def _get_workflow_status(self, state: dict):
-        return "awaiting_fact_check_approval" if state.get("awaiting_fact_check_approval") else "running"
+        return (
+            "awaiting_fact_check_approval"
+            if state.get("awaiting_fact_check_approval")
+            else "running"
+        )
 
 
 def test_approve_fact_check_endpoint_exists_and_resumes_workflow(monkeypatch):

@@ -9,9 +9,6 @@ from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from models.workflow_definition import (
     WorkflowCompileResult,
     WorkflowDefinition,
@@ -23,6 +20,8 @@ from models.workflow_definition import (
     WorkflowValidationResult,
 )
 from models.workflow_orm import WorkflowDefinitionORM, WorkflowVersionORM
+from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 _REQUIRED_RUNTIME_NODE_CONFIG_FIELDS: dict[str, list[str]] = {
     "process": ["modelName"],
@@ -97,7 +96,7 @@ _RUNTIME_NODE_TYPE_ALIASES: dict[str, str] = {
 
 _POSTGRES_SCHEMA_STATEMENTS = (
     "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS published_version_id VARCHAR(36)",
-    "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS published_at TIMESTAMP",
+    "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ",
     "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS published_by VARCHAR(36)",
     "ALTER TABLE workflow_versions ADD COLUMN IF NOT EXISTS name VARCHAR(255) DEFAULT ''",
     "ALTER TABLE workflow_versions ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",

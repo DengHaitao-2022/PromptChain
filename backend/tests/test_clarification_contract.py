@@ -1,13 +1,10 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
-
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests._runtime_auth import authenticated_client, ownership_metadata
-from main import app
 
 
 class _FakeWorkflowRun:

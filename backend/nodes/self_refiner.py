@@ -6,20 +6,21 @@ Self-Refine 自检修订节点
 2. 自动评估内容质量
 3. 创建 Artifact 版本
 """
-from typing import Dict, List
-from datetime import datetime
-from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
 
+from datetime import datetime
+
+from langchain_core.prompts import ChatPromptTemplate
 from models import ArtifactType, IntentCard, LLMCallRecord, NodeRun, NodeRunStatus, OutlineSection
-from services import get_llm, get_structured_llm, get_artifact_store, get_current_model_info
+from pydantic import BaseModel, Field
+from services import get_artifact_store, get_current_model_info, get_llm, get_structured_llm
 
 
 class RefinementFeedback(BaseModel):
     """自检反馈"""
+
     section_id: str = Field(..., description="章节ID")
-    issues: List[str] = Field(default_factory=list, description="发现的问题")
-    suggestions: List[str] = Field(default_factory=list, description="改进建议")
+    issues: list[str] = Field(default_factory=list, description="发现的问题")
+    suggestions: list[str] = Field(default_factory=list, description="改进建议")
     quality_score: float = Field(..., ge=0, le=10, description="质量评分 0-10")
     needs_revision: bool = Field(..., description="是否需要修订")
 
@@ -71,10 +72,7 @@ REFINE_PROMPT = """请根据以下反馈，修订文章内容。
 
 def _build_section_lookup(state: dict) -> dict[str, OutlineSection]:
     outline = state["outline"]
-    return {
-        section.id: section
-        for section in outline.get_flat_sections()
-    }
+    return {section.id: section for section in outline.get_flat_sections()}
 
 
 def _build_section_artifact_content(section: OutlineSection, content: str) -> dict:
@@ -89,7 +87,7 @@ def _build_section_artifact_content(section: OutlineSection, content: str) -> di
     }
 
 
-def _build_compiled_content(state: dict, sections: Dict[str, str]) -> str:
+def _build_compiled_content(state: dict, sections: dict[str, str]) -> str:
     compiled_sections: list[str] = []
     for section in state["outline"].get_flat_sections():
         content = sections.get(section.id)
@@ -99,19 +97,13 @@ def _build_compiled_content(state: dict, sections: Dict[str, str]) -> str:
     return "\n\n".join(compiled_sections)
 
 
-def _build_section_order(state: dict, sections: Dict[str, str]) -> list[str]:
+def _build_section_order(state: dict, sections: dict[str, str]) -> list[str]:
     return [
-        section.id
-        for section in state["outline"].get_flat_sections()
-        if section.id in sections
+        section.id for section in state["outline"].get_flat_sections() if section.id in sections
     ]
 
 
-async def generate_feedback(
-    state: dict,
-    section_id: str,
-    content: str
-) -> RefinementFeedback:
+async def generate_feedback(state: dict, section_id: str, content: str) -> RefinementFeedback:
     """为单个章节生成反馈"""
     intent_card: IntentCard = state["intent_card"]
     outline = state["outline"]
@@ -129,24 +121,23 @@ async def generate_feedback(
     prompt = ChatPromptTemplate.from_template(FEEDBACK_PROMPT)
     chain = prompt | llm
 
-    feedback = await chain.ainvoke({
-        "audience": intent_card.audience.value,
-        "tone": intent_card.tone.value,
-        "target_words": target_words,
-        "section_title": section_title,
-        "section_id": section_id,
-        "content": content,
-        "current_words": len(content)
-    })
+    feedback = await chain.ainvoke(
+        {
+            "audience": intent_card.audience.value,
+            "tone": intent_card.tone.value,
+            "target_words": target_words,
+            "section_title": section_title,
+            "section_id": section_id,
+            "content": content,
+            "current_words": len(content),
+        }
+    )
 
     return feedback
 
 
 async def refine_section(
-    state: dict,
-    section_id: str,
-    original_content: str,
-    feedback: RefinementFeedback
+    state: dict, section_id: str, original_content: str, feedback: RefinementFeedback
 ) -> str:
     """根据反馈修订章节"""
     llm = get_llm(temperature=0.5)  # 降低温度以保持一致性
@@ -164,10 +155,7 @@ async def refine_section(
 质量评分: {feedback.quality_score}/10
 """
 
-    result = await chain.ainvoke({
-        "original_content": original_content,
-        "feedback": feedback_text
-    })
+    result = await chain.ainvoke({"original_content": original_content, "feedback": feedback_text})
 
     return result.content
 
@@ -185,7 +173,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
         - final_content: Dict[str, str]
         - refinement_history: List[dict]
     """
-    draft_sections: Dict[str, str] = state.get("draft_sections", {})
+    draft_sections: dict[str, str] = state.get("draft_sections", {})
     workflow_run_id = state["workflow_run_id"]
     store = get_artifact_store()
 
@@ -214,7 +202,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
             }
 
             # Step 1: 生成反馈
-            feedback_list: List[RefinementFeedback] = []
+            feedback_list: list[RefinementFeedback] = []
             for section_id, content in current_content.items():
                 start_time = datetime.utcnow()
                 feedback = await generate_feedback(state, section_id, content)
@@ -252,14 +240,12 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                     provider=model_info["provider"],
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Feedback for {section_id}",
-                    response_preview=f"Score: {feedback.quality_score}"
+                    response_preview=f"Score: {feedback.quality_score}",
                 )
                 node_run.llm_calls.append(llm_call)
 
             # Step 2: 检查是否需要继续修订
-            sections_needing_revision = [
-                f for f in feedback_list if f.needs_revision
-            ]
+            sections_needing_revision = [f for f in feedback_list if f.needs_revision]
 
             if not sections_needing_revision:
                 # 质量已满足要求，停止循环
@@ -271,10 +257,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 section = section_lookup[feedback.section_id]
                 start_time = datetime.utcnow()
                 refined_content = await refine_section(
-                    state,
-                    feedback.section_id,
-                    current_content[feedback.section_id],
-                    feedback
+                    state, feedback.section_id, current_content[feedback.section_id], feedback
                 )
                 end_time = datetime.utcnow()
 
@@ -307,7 +290,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                     provider=model_info["provider"],
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Refine {feedback.section_id}",
-                    response_preview=refined_content[:100]
+                    response_preview=refined_content[:100],
                 )
                 node_run.llm_calls.append(llm_call)
 

@@ -7,14 +7,15 @@ ContentGenerationWorkflow 负责：
 - 同步 WorkflowRun 持久化状态
 - WebSocket 实时状态推送
 """
+
 import asyncio
-from typing import Optional, Any
+from typing import Any
 
 from models import WorkflowRun, WorkflowRunStatus
 from services import get_artifact_store
 
-from graph.state import GraphState
 from graph.builder import build_content_generation_graph
+from graph.state import GraphState
 
 
 class ContentGenerationWorkflow:
@@ -52,7 +53,7 @@ class ContentGenerationWorkflow:
             return None
         return max(node_runs, key=lambda run: run.started_at)
 
-    async def _load_workflow_context(self, workflow_run: WorkflowRun) -> Optional[dict]:
+    async def _load_workflow_context(self, workflow_run: WorkflowRun) -> dict | None:
         if hasattr(self.store, "get_workflow_context"):
             return await self.store.get_workflow_context(
                 workflow_run.workflow_definition_id,
@@ -63,7 +64,7 @@ class ContentGenerationWorkflow:
     async def _build_initial_state(
         self,
         workflow_run: WorkflowRun,
-        overrides: Optional[dict] = None,
+        overrides: dict | None = None,
     ) -> GraphState:
         workflow_context = await self._load_workflow_context(workflow_run)
         state: GraphState = {
@@ -94,7 +95,7 @@ class ContentGenerationWorkflow:
         workflow_run_id: str,
         node_id: str,
         status: str,
-        data: Optional[dict] = None,
+        data: dict | None = None,
     ) -> None:
         try:
             from routes.websocket_routes import emit_node_status
@@ -107,7 +108,7 @@ class ContentGenerationWorkflow:
         self,
         workflow_run_id: str,
         status: str,
-        data: Optional[dict] = None,
+        data: dict | None = None,
     ) -> None:
         try:
             from routes.websocket_routes import emit_workflow_status
@@ -191,8 +192,8 @@ class ContentGenerationWorkflow:
         self,
         workflow_run_id: str,
         *,
-        initial_state: Optional[dict] = None,
-        config: Optional[dict] = None,
+        initial_state: dict | None = None,
+        config: dict | None = None,
         emit_resumed: bool = False,
     ) -> None:
         try:
@@ -209,8 +210,8 @@ class ContentGenerationWorkflow:
         self,
         workflow_run_id: str,
         *,
-        initial_state: Optional[dict] = None,
-        config: Optional[dict] = None,
+        initial_state: dict | None = None,
+        config: dict | None = None,
         emit_resumed: bool = False,
     ) -> None:
         if self._is_task_running(workflow_run_id):
@@ -235,8 +236,8 @@ class ContentGenerationWorkflow:
         self,
         workflow_run_id: str,
         *,
-        initial_state: Optional[dict] = None,
-        config: Optional[dict] = None,
+        initial_state: dict | None = None,
+        config: dict | None = None,
         emit_resumed: bool = False,
     ) -> dict:
         current_config = config or self._base_config(workflow_run_id)
@@ -248,9 +249,7 @@ class ContentGenerationWorkflow:
                 await self._emit_workflow_status(
                     workflow_run_id,
                     "resumed",
-                    {
-                        "current_node": workflow_run.current_node if workflow_run else None
-                    },
+                    {"current_node": workflow_run.current_node if workflow_run else None},
                 )
 
             while True:
@@ -287,9 +286,7 @@ class ContentGenerationWorkflow:
                 latest_node_run = await self._get_latest_node_run(workflow_run_id)
                 if current_node and latest_node_run and latest_node_run.node_name == current_node:
                     node_status = (
-                        "failed"
-                        if latest_node_run.status.value == "failed"
-                        else "completed"
+                        "failed" if latest_node_run.status.value == "failed" else "completed"
                     )
                     await self._emit_node_status(
                         workflow_run_id,
@@ -401,8 +398,8 @@ class ContentGenerationWorkflow:
     async def start(
         self,
         user_input: str,
-        workflow_definition_id: Optional[str] = None,
-        workflow_version_id: Optional[str] = None,
+        workflow_definition_id: str | None = None,
+        workflow_version_id: str | None = None,
     ) -> dict:
         """启动新的工作流，并在后台逐节点推进。"""
         workflow_run = WorkflowRun(
@@ -422,11 +419,7 @@ class ContentGenerationWorkflow:
             "status": "running",
         }
 
-    async def resume(
-        self,
-        workflow_run_id: str,
-        user_input: dict
-    ) -> dict:
+    async def resume(self, workflow_run_id: str, user_input: dict) -> dict:
         """
         恢复暂停的工作流
 
@@ -542,11 +535,7 @@ class ContentGenerationWorkflow:
         }
 
     async def approve_outline(
-        self,
-        workflow_run_id: str,
-        action: str,
-        feedback: str = "",
-        modified_outline: dict = None
+        self, workflow_run_id: str, action: str, feedback: str = "", modified_outline: dict = None
     ) -> dict:
         """
         处理提纲审批
@@ -557,17 +546,13 @@ class ContentGenerationWorkflow:
             feedback: 用户反馈
             modified_outline: 修改后的提纲（action 为 modify 时）
         """
-        user_decision = {
-            "action": action,
-            "feedback": feedback
-        }
+        user_decision = {"action": action, "feedback": feedback}
         if modified_outline:
             user_decision["modified_outline"] = modified_outline
 
-        return await self.resume(workflow_run_id, {
-            "user_decision": user_decision,
-            "awaiting_outline_approval": False
-        })
+        return await self.resume(
+            workflow_run_id, {"user_decision": user_decision, "awaiting_outline_approval": False}
+        )
 
     def _get_workflow_status(self, state: dict) -> str:
         """获取工作流当前状态"""
@@ -588,7 +573,7 @@ class ContentGenerationWorkflow:
 
 # ==================== 全局单例 ====================
 
-_workflow: Optional[ContentGenerationWorkflow] = None
+_workflow: ContentGenerationWorkflow | None = None
 
 
 def get_workflow() -> ContentGenerationWorkflow:

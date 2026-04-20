@@ -8,17 +8,20 @@
 - LLMCallRecord: LLM调用记录
 - HumanDecision: 人工决策记录
 """
-from pydantic import BaseModel, Field
-from typing import Optional, Any, Literal, List
-from datetime import datetime
-from enum import Enum
-import uuid
+
 import hashlib
 import json
+import uuid
+from datetime import datetime
+from enum import Enum
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 
 class ArtifactType(str, Enum):
     """产物类型枚举"""
+
     INTENT_CARD = "intent_card"
     OUTLINE = "outline"
     FACT_CHECK_REPORT = "fact_check_report"
@@ -36,6 +39,7 @@ class Artifact(BaseModel):
     2. 永不覆盖历史版本（Immutable）
     3. 通过 parent_version 链接版本历史
     """
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     # 类型与版本
@@ -50,7 +54,7 @@ class Artifact(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     # 版本链
-    parent_version: Optional[str] = Field(None, description="父版本ID（rerun时指向被替换的版本）")
+    parent_version: str | None = Field(None, description="父版本ID（rerun时指向被替换的版本）")
 
     # 关联信息
     workflow_run_id: str = Field(..., description="所属工作流运行ID")
@@ -68,6 +72,7 @@ class Artifact(BaseModel):
 
 class NodeRunStatus(str, Enum):
     """节点运行状态"""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -77,6 +82,7 @@ class NodeRunStatus(str, Enum):
 
 class LLMCallRecord(BaseModel):
     """LLM调用记录"""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     model: str
     provider: str = Field(default="openai", description="LLM提供商")
@@ -86,17 +92,18 @@ class LLMCallRecord(BaseModel):
     latency_ms: int = Field(default=0)
     temperature: float = Field(default=0.7)
     # 可选：保存完整prompt/response用于调试
-    prompt_preview: Optional[str] = Field(None, description="Prompt前200字符")
-    response_preview: Optional[str] = Field(None, description="Response前200字符")
+    prompt_preview: str | None = Field(None, description="Prompt前200字符")
+    response_preview: str | None = Field(None, description="Response前200字符")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class HumanDecision(BaseModel):
     """人工决策记录"""
+
     decision_type: Literal["approve", "reject", "modify", "regenerate"]
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    user_input: Optional[str] = None
-    modified_content: Optional[Any] = None
+    user_input: str | None = None
+    modified_content: Any | None = None
 
 
 class NodeRun(BaseModel):
@@ -108,6 +115,7 @@ class NodeRun(BaseModel):
     2. 可复现：基于相同输入重现结果
     3. 调试：定位问题节点
     """
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     # 所属工作流
@@ -119,29 +127,29 @@ class NodeRun(BaseModel):
 
     # 执行时间
     started_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: Optional[datetime] = None
-    duration_ms: Optional[int] = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
 
     # 状态
     status: NodeRunStatus = NodeRunStatus.PENDING
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
     # 输入输出 Artifact 版本关联（核心追溯能力）
-    input_artifact_ids: List[str] = Field(default_factory=list, description="输入产物ID列表")
-    output_artifact_ids: List[str] = Field(default_factory=list, description="输出产物ID列表")
+    input_artifact_ids: list[str] = Field(default_factory=list, description="输入产物ID列表")
+    output_artifact_ids: list[str] = Field(default_factory=list, description="输出产物ID列表")
 
     # LLM 调用详情（用于成本分析和调试）
-    llm_calls: List[LLMCallRecord] = Field(default_factory=list, description="LLM调用记录")
+    llm_calls: list[LLMCallRecord] = Field(default_factory=list, description="LLM调用记录")
 
     # 门控决策（Human-in-the-Loop）
-    human_decision: Optional[HumanDecision] = None
+    human_decision: HumanDecision | None = None
 
     # 重试信息
     retry_count: int = Field(default=0)
     is_rerun: bool = Field(default=False, description="是否为rerun产生的节点运行")
-    rerun_from_node_run_id: Optional[str] = Field(None, description="rerun来源的节点运行ID")
+    rerun_from_node_run_id: str | None = Field(None, description="rerun来源的节点运行ID")
 
-    def complete(self, status: NodeRunStatus = NodeRunStatus.COMPLETED, error: Optional[str] = None):
+    def complete(self, status: NodeRunStatus = NodeRunStatus.COMPLETED, error: str | None = None):
         """标记节点完成"""
         self.completed_at = datetime.utcnow()
         self.status = status
@@ -152,6 +160,7 @@ class NodeRun(BaseModel):
 
 class WorkflowRunStatus(str, Enum):
     """工作流运行状态"""
+
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -162,33 +171,34 @@ class WorkflowRun(BaseModel):
     """
     工作流运行记录（顶层追溯入口）
     """
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     # 工作流定义
     workflow_name: str = Field(default="content_generation")
     workflow_version: str = Field(default="1.0.0")
-    workflow_definition_id: Optional[str] = Field(
+    workflow_definition_id: str | None = Field(
         default=None,
         description="绑定的已发布工作流定义ID",
     )
-    workflow_version_id: Optional[str] = Field(
+    workflow_version_id: str | None = Field(
         default=None,
         description="绑定的已发布工作流版本ID",
     )
 
     # 时间
     started_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: Optional[datetime] = None
+    completed_at: datetime | None = None
 
     # 状态
     status: WorkflowRunStatus = WorkflowRunStatus.RUNNING
-    current_node: Optional[str] = None
+    current_node: str | None = None
 
     # 原始输入
     user_input: str = Field(..., description="用户原始输入")
 
     # 最终输出 Artifact ID
-    final_artifact_id: Optional[str] = None
+    final_artifact_id: str | None = None
 
     # 统计
     total_node_runs: int = 0
@@ -204,4 +214,6 @@ class WorkflowRun(BaseModel):
         self.completed_at = datetime.utcnow()
         self.status = status
         if self.started_at:
-            self.total_duration_ms = int((self.completed_at - self.started_at).total_seconds() * 1000)
+            self.total_duration_ms = int(
+                (self.completed_at - self.started_at).total_seconds() * 1000
+            )

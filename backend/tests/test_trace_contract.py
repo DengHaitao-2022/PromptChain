@@ -1,14 +1,11 @@
-from pathlib import Path
 import sys
-from datetime import datetime, UTC
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
-
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests._runtime_auth import authenticated_client, ownership_metadata
-from main import app
 
 
 class _FakeWorkflowRun:
@@ -48,7 +45,9 @@ class _FakeGraph:
             values={
                 "awaiting_fact_check_approval": True,
                 "fact_check_report": {
-                    "claims": [{"id": "claim-1", "text": "结论", "category": "事实", "section_id": "intro"}],
+                    "claims": [
+                        {"id": "claim-1", "text": "结论", "category": "事实", "section_id": "intro"}
+                    ],
                     "results": [
                         {
                             "claim_id": "claim-1",
