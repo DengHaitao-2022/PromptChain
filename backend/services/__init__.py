@@ -11,12 +11,10 @@ from db.postgres_store import (
     get_postgres_store,
 )
 
-from .artifact_store import (
-    ArtifactStore,
-    get_artifact_store,
-)
+from .artifact_store import ArtifactStore, get_artifact_store
 from .llm_provider import (
     AnthropicProvider,
+    GitHubProvider,
     GoogleProvider,
     LLMProvider,
     LLMProviderFactory,
@@ -26,37 +24,32 @@ from .llm_provider import (
     get_llm,
     get_structured_llm,
 )
-from .rerun_service import (
-    RerunService,
-    get_rerun_service,
-)
-from .trace_service import (
-    TraceService,
-    get_trace_service,
-)
+from .rerun_service import RerunService, get_rerun_service
+from .trace_service import TraceService, get_trace_service
 
 __all__ = [
+    # artifact_store
+    "ArtifactStore",
+    "PostgresArtifactStore",
+    "PostgresGraphCheckpointSaver",
+    "get_artifact_store",
+    "get_postgres_store",
+    "get_postgres_checkpoint_saver",
     # llm_provider
     "LLMProvider",
     "LLMProviderFactory",
     "OpenAIProvider",
     "AnthropicProvider",
     "GoogleProvider",
+    "GitHubProvider",
     "OllamaProvider",
     "get_llm",
     "get_structured_llm",
     "get_current_model_info",
-    # artifact_store
-    "ArtifactStore",
-    "get_artifact_store",
-    "PostgresArtifactStore",
-    "PostgresGraphCheckpointSaver",
-    "get_postgres_store",
-    "get_postgres_checkpoint_saver",
-    # trace_service
-    "TraceService",
-    "get_trace_service",
     # rerun_service
     "RerunService",
     "get_rerun_service",
+    # trace_service
+    "TraceService",
+    "get_trace_service",
 ]

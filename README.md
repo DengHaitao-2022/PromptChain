@@ -126,6 +126,7 @@ uv run uvicorn app:app --reload --port 8000
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+GITHUB_MODEL_TOKEN=your_github_models_token_here
 OLLAMA_BASE_URL=http://localhost:11434
 
 DEFAULT_LLM_PROVIDER=openai
