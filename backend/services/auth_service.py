@@ -25,12 +25,19 @@ from sqlalchemy.future import select
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT 配置
+DEBUG_MODE = os.getenv("DEBUG", "false").lower() == "true"
+ALLOW_INSECURE_JWT_SECRET = (
+    os.getenv("ALLOW_INSECURE_JWT_SECRET", "false").lower() == "true"
+)
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 if not JWT_SECRET_KEY:
-    if os.getenv("DEBUG", "true").lower() == "true":
+    if DEBUG_MODE and ALLOW_INSECURE_JWT_SECRET:
         JWT_SECRET_KEY = "dev-insecure-secret-change-me"
     else:
-        raise RuntimeError("JWT_SECRET_KEY is required in non-debug environments")
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be set unless running in debug mode with "
+            "ALLOW_INSECURE_JWT_SECRET=true"
+        )
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15  # Access Token 15分钟过期
 REFRESH_TOKEN_EXPIRE_DAYS = 7  # Refresh Token 7天过期

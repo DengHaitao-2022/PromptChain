@@ -51,10 +51,11 @@ class TraceService:
             artifact_ids.update(node.input_artifact_ids)
             artifact_ids.update(node.output_artifact_ids)
 
+        artifact_id_list = list(artifact_ids)
         artifacts = {}
-        artifact_tasks = [self.store.get_artifact(aid) for aid in artifact_ids]
+        artifact_tasks = [self.store.get_artifact(aid) for aid in artifact_id_list]
         artifact_results = await asyncio.gather(*artifact_tasks) if artifact_tasks else []
-        for aid, artifact in zip(artifact_ids, artifact_results):
+        for aid, artifact in zip(artifact_id_list, artifact_results):
             if artifact:
                 artifacts[aid] = artifact
 
