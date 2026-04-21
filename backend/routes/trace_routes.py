@@ -46,12 +46,12 @@ async def get_workflow_trace(workflow_run_id: str, request: Request):
             status=status,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("获取工作流追踪失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.get("/trace/node/{node_run_id}")
@@ -65,12 +65,12 @@ async def get_node_detail(node_run_id: str, request: Request):
         detail = await trace_service.get_node_detail(node_run_id)
         return detail
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("获取节点详情失败: node_run_id=%s", node_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.get("/artifact/{artifact_id}")
@@ -92,6 +92,6 @@ async def get_artifact_history(artifact_id: str, request: Request):
         return history
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("获取 Artifact 历史失败: artifact_id=%s", artifact_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc

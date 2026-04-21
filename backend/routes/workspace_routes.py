@@ -9,27 +9,27 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from db.postgres_store import get_postgres_store
 from fastapi import APIRouter, HTTPException, Request, Response
-from models.auth_models import MemberRole
-from models.auth_orm import MembershipORM, UserORM, WorkspaceInviteORM, WorkspaceORM
 from pydantic import BaseModel, EmailStr, Field
-from services.auth_service import create_access_token
-from services.email_service import EmailService
-from services.permission_service import (
-    PermissionService,
-    resolve_membership_role,
-    serialize_membership_role,
-)
 from sqlalchemy import and_
 from sqlalchemy.future import select
 
+from db.postgres_store import get_postgres_store
+from models.auth_models import MemberRole
+from models.auth_orm import MembershipORM, UserORM, WorkspaceInviteORM, WorkspaceORM
 from routes.auth_routes import (
     ACCESS_TOKEN_COOKIE,
     COOKIE_HTTPONLY,
     COOKIE_SAMESITE,
     COOKIE_SECURE,
     get_current_user,
+)
+from services.auth_service import create_access_token
+from services.email_service import EmailService
+from services.permission_service import (
+    PermissionService,
+    resolve_membership_role,
+    serialize_membership_role,
 )
 
 router = APIRouter()
@@ -367,8 +367,8 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         # 发送邀请邮件
         import os
 
-        APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:3000")
-        invite_link = f"{APP_BASE_URL}/invite?token={token}"
+        app_base_url = os.getenv("APP_BASE_URL", "http://localhost:3000")
+        invite_link = f"{app_base_url}/invite?token={token}"
 
         email_service = EmailService(session)
         await email_service.send_workspace_invite_email(
@@ -410,14 +410,6 @@ async def accept_invite(request: Request, token: str):
 
         if not invite:
             raise HTTPException(status_code=400, detail="邀请链接无效或已过期")
-
-        # 获取当前用户信息
-        result = await session.execute(select(UserORM).where(UserORM.id == user_id))
-        user = result.scalar_one_or_none()
-
-        # 检查邮箱是否匹配（可选，可以允许任何登录用户接受）
-        # if user.email != invite.email:
-        #     raise HTTPException(status_code=400, detail="邀请是发送给其他邮箱的")
 
         # 检查是否已经是成员
         result = await session.execute(

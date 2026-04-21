@@ -23,14 +23,6 @@ from langgraph.checkpoint.base import (
     get_checkpoint_id,
     get_checkpoint_metadata,
 )
-from models.artifact import (
-    Artifact,
-    ArtifactType,
-    NodeRun,
-    NodeRunStatus,
-    WorkflowRun,
-    WorkflowRunStatus,
-)
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -46,6 +38,15 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.future import select
 from sqlalchemy.orm import DeclarativeBase, relationship
+
+from models.artifact import (
+    Artifact,
+    ArtifactType,
+    NodeRun,
+    NodeRunStatus,
+    WorkflowRun,
+    WorkflowRunStatus,
+)
 
 
 class Base(DeclarativeBase):

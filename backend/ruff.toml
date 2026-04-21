@@ -4,6 +4,9 @@
 # 目标Python版本
 target-version = "py314"
 
+# 后端采用 flat package 布局，显式声明源根以稳定一方包导入排序
+src = ["backend"]
+
 # 每行最大字符数
 line-length = 100
 
@@ -30,11 +33,11 @@ ignore = [
 ]
 
 # 允许中文注释/docstring中出现的全角符号，避免 RUF002 / RUF003 误报
-allowed-confusables = ["，", "（", "）"]
+allowed-confusables = ["，", "（", "）", "：", "？", "！"]
 
 # 每个文件可忽略的规则
 [lint.per-file-ignores]
-"__init__.py" = ["F401"]  # 允许未使用的导入
+"**/__init__.py" = ["F401", "RUF022"]  # 允许导出聚合和按模块分组的 __all__
 
 [format]
 # 使用双引号

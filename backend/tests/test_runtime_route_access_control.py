@@ -204,7 +204,8 @@ class _FakeRerunService:
 class _FakeGraph:
     async def aget_state(self, config):
         class _Snapshot:
-            values = {}
+            def __init__(self):
+                self.values = {}
 
         return _Snapshot()
 

@@ -76,9 +76,9 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("启动工作流失败")
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.post("/{workflow_run_id}/pause", response_model=WorkflowResponse)
@@ -134,10 +134,10 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
     except HTTPException:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as exc:
         logger.exception("暂停工作流失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.post("/{workflow_run_id}/resume", response_model=WorkflowResponse)
@@ -181,10 +181,10 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
     except HTTPException:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as exc:
         logger.exception("恢复工作流失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.post("/{workflow_run_id}/approve-outline", response_model=WorkflowResponse)
@@ -223,9 +223,9 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("提纲审批失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.post("/{workflow_run_id}/clarify", response_model=WorkflowResponse)
@@ -254,9 +254,9 @@ async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRe
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("澄清提交失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.post("/{workflow_run_id}/approve-fact-check", response_model=WorkflowResponse)
@@ -290,9 +290,9 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("事实核查审批失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.get("/runs", response_model=WorkflowRunListResponse)
@@ -316,9 +316,9 @@ async def list_workflow_runs(request: Request):
         return _build_workflow_run_list_response(workflow_runs)
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("获取工作流运行列表失败")
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.get("/{workflow_run_id}", response_model=WorkflowResponse)
@@ -346,9 +346,9 @@ async def get_rerun_options(workflow_run_id: str, request: Request):
         return {"options": options}
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("获取重跑选项失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.post("/{workflow_run_id}/rerun")
@@ -399,10 +399,10 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
     except HTTPException:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as exc:
         logger.exception("重跑工作流失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
 @router.get("/{workflow_run_id}/rerun-history")
@@ -417,6 +417,6 @@ async def get_rerun_history(workflow_run_id: str, request: Request):
         return {"history": history}
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("获取重跑历史失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc

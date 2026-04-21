@@ -9,6 +9,9 @@ from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.workflow_definition import (
     WorkflowCompileResult,
     WorkflowDefinition,
@@ -20,8 +23,6 @@ from models.workflow_definition import (
     WorkflowValidationResult,
 )
 from models.workflow_orm import WorkflowDefinitionORM, WorkflowVersionORM
-from sqlalchemy import select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 _REQUIRED_RUNTIME_NODE_CONFIG_FIELDS: dict[str, list[str]] = {
     "process": ["modelName"],

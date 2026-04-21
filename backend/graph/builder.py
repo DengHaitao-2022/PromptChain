@@ -12,6 +12,13 @@
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+
+from graph.conditions import (
+    should_clarify,
+    should_proceed_after_fact_check,
+    should_regenerate_outline,
+)
+from graph.state import GraphState
 from models import WorkflowRunStatus
 from nodes import (
     approve_fact_check,
@@ -24,13 +31,6 @@ from nodes import (
     self_refine_loop,
 )
 from services import get_artifact_store, get_postgres_checkpoint_saver
-
-from graph.conditions import (
-    should_clarify,
-    should_proceed_after_fact_check,
-    should_regenerate_outline,
-)
-from graph.state import GraphState
 
 
 async def finalize_output(state: GraphState) -> GraphState:
