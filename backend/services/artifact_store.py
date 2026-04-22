@@ -60,10 +60,7 @@ class ArtifactStore:
         # 计算版本号
         if parent_version_id:
             parent = await self.get_artifact(parent_version_id)
-            if parent:
-                version = parent.version + 1
-            else:
-                version = 1
+            version = parent.version + 1 if parent else 1
         else:
             # 查询同类型同工作流的最大版本号
             max_version = await self._get_max_version(workflow_run_id, artifact_type)
@@ -207,8 +204,5 @@ def get_artifact_store() -> ArtifactStore | PostgresArtifactStore:
     global _artifact_store
     if _artifact_store is None:
         backend = _resolve_runtime_store_backend()
-        if backend == "memory":
-            _artifact_store = ArtifactStore()
-        else:
-            _artifact_store = get_postgres_store()
+        _artifact_store = ArtifactStore() if backend == "memory" else get_postgres_store()
     return _artifact_store

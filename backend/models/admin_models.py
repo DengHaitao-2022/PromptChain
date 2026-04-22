@@ -6,7 +6,7 @@
 
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 # ==================== 枚举定义 ====================
 
 
-class ModelProviderType(str, Enum):
+class ModelProviderType(StrEnum):
     """模型供应商类型"""
 
     OPENAI = "openai"
@@ -25,7 +25,7 @@ class ModelProviderType(str, Enum):
     CUSTOM = "custom"
 
 
-class AuditAction(str, Enum):
+class AuditAction(StrEnum):
     """审计动作类型"""
 
     # 用户相关
@@ -147,7 +147,7 @@ class SecretResponse(SecretBase):
 # ==================== API Key 管理 ====================
 
 
-class ApiKeyScope(str, Enum):
+class ApiKeyScope(StrEnum):
     """API Key 权限范围"""
 
     READ = "read"

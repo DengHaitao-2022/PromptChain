@@ -5,12 +5,12 @@ IntentCard: 结构化意图卡，约束内容生成的边界
 Uncertainty: 不确定点，需要用户澄清
 """
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class Audience(str, Enum):
+class Audience(StrEnum):
     """目标受众"""
 
     BEGINNER = "初学者"
@@ -19,7 +19,7 @@ class Audience(str, Enum):
     GENERAL = "通用读者"
 
 
-class Tone(str, Enum):
+class Tone(StrEnum):
     """语气风格"""
 
     FORMAL = "正式严谨"

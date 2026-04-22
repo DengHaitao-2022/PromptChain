@@ -14,6 +14,8 @@ import json
 from datetime import datetime
 
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
+
 from models import (
     ArtifactType,
     FactCheckReport,
@@ -24,7 +26,6 @@ from models import (
     NodeRunStatus,
     VerificationResult,
 )
-from pydantic import BaseModel, Field
 from services import get_artifact_store, get_current_model_info, get_llm, get_structured_llm
 
 # ==================== Prompt 模板 ====================

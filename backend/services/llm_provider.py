@@ -6,29 +6,30 @@ LLM Provider 抽象层
 - Anthropic (Claude)
 - Ollama (本地模型)
 - Google (Gemini)
+- GitHub Models (GitHub Copilot)
 """
 
 from __future__ import annotations
 
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
 
-from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
-load_dotenv()
+from core.config import get_settings
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_FALLBACK_MODEL = "gpt-4o"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference"
 
 
 def _read_env(name: str) -> str:
-    """读取环境变量并去除首尾空白。"""
-    return os.getenv(name, "").strip()
+    """从统一配置源读取字段并去除首尾空白。"""
+    value = getattr(get_settings(), name, "")
+    return str(value).strip() if value is not None else ""
 
 
 def _resolve_provider_name(provider_name: str | None = None) -> str:
@@ -166,6 +167,29 @@ class GoogleProvider(LLMProvider):
         )
 
 
+class GitHubProvider(LLMProvider):
+    """GitHub Models 提供商"""
+
+    def __init__(self, registration: ProviderRegistration):
+        super().__init__(registration)
+        self.api_key = self.require_credential()
+        self.base_url = DEFAULT_GITHUB_MODELS_BASE_URL
+
+    def get_default_model_name(self) -> str:
+        """GitHub Models 使用自身默认模型，避免被全局默认模型覆盖。"""
+        return self.registration.default_model_name
+
+    def get_model(self, model_name: str | None = None, **kwargs) -> BaseChatModel:
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=self.resolve_model_name(model_name),
+            base_url=self.base_url,
+            api_key=self.api_key,
+            **kwargs,
+        )
+
+
 @dataclass(frozen=True)
 class ProviderRegistration:
     """Provider registry 的最小元数据。"""
@@ -200,6 +224,12 @@ PROVIDER_REGISTRY: dict[str, ProviderRegistration] = {
         provider_class=GoogleProvider,
         default_model_name="gemini-2.5-flash",
         credential_env="GEMINI_API_KEY",
+    ),
+    "github": ProviderRegistration(
+        name="github",
+        provider_class=GitHubProvider,
+        default_model_name="openai/gpt-4.1",
+        credential_env="GITHUB_MODEL_TOKEN",
     ),
 }
 
@@ -311,7 +341,7 @@ def get_current_model_info() -> dict:
     resolved_provider_name = provider_name
     try:
         provider = LLMProviderFactory.get_provider(provider_name)
-        resolved_provider_name = provider.provider_name
+        resolved_provider_name = provider.registration.name
         model_name = provider.get_default_model_name()
     except Exception:
         try:

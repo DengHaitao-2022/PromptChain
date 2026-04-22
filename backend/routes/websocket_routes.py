@@ -11,14 +11,14 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from db.postgres_store import get_postgres_store
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+
+from db.postgres_store import get_postgres_store
 from models.auth_models import UserStatus
+from routes.auth_routes import ACCESS_TOKEN_COOKIE
 from services.artifact_store import get_artifact_store
 from services.auth_service import AuthService, verify_access_token
 from services.permission_service import PermissionService, is_admin_role
-
-from routes.auth_routes import ACCESS_TOKEN_COOKIE
 
 router = APIRouter(tags=["websocket"])
 logger = logging.getLogger(__name__)
@@ -302,7 +302,9 @@ async def user_websocket(websocket: WebSocket, user_id: str):
 # ==================== 工具函数 ====================
 
 
-async def emit_node_status(workflow_run_id: str, node_id: str, status: str, data: dict = None):
+async def emit_node_status(
+    workflow_run_id: str, node_id: str, status: str, data: dict | None = None
+):
     """
     发送节点状态更新
 
@@ -321,7 +323,7 @@ async def emit_node_status(workflow_run_id: str, node_id: str, status: str, data
     await manager.broadcast_workflow_status(workflow_run_id, message)
 
 
-async def emit_workflow_status(workflow_run_id: str, status: str, data: dict = None):
+async def emit_workflow_status(workflow_run_id: str, status: str, data: dict | None = None):
     """
     发送工作流状态更新
 

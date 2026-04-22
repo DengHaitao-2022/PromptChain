@@ -7,14 +7,14 @@
 
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, EmailStr, Field
 
 # ==================== 枚举定义 ====================
 
 
-class UserStatus(str, Enum):
+class UserStatus(StrEnum):
     """用户状态"""
 
     ACTIVE = "active"  # 正常
@@ -22,7 +22,7 @@ class UserStatus(str, Enum):
     SUSPENDED = "suspended"  # 已停用
 
 
-class MemberRole(str, Enum):
+class MemberRole(StrEnum):
     """成员角色 - Workspace 级 RBAC"""
 
     OWNER = "owner"  # 工作空间最高权限（成员/计费/密钥/删除空间）

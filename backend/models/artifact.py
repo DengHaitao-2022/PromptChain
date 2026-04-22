@@ -13,13 +13,13 @@ import hashlib
 import json
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-class ArtifactType(str, Enum):
+class ArtifactType(StrEnum):
     """产物类型枚举"""
 
     INTENT_CARD = "intent_card"
@@ -70,7 +70,7 @@ class Artifact(BaseModel):
             self.content_hash = hashlib.sha256(content_str.encode()).hexdigest()[:16]
 
 
-class NodeRunStatus(str, Enum):
+class NodeRunStatus(StrEnum):
     """节点运行状态"""
 
     PENDING = "pending"
@@ -158,7 +158,7 @@ class NodeRun(BaseModel):
             self.duration_ms = int((self.completed_at - self.started_at).total_seconds() * 1000)
 
 
-class WorkflowRunStatus(str, Enum):
+class WorkflowRunStatus(StrEnum):
     """工作流运行状态"""
 
     RUNNING = "running"
