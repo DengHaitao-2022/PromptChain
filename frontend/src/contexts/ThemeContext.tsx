@@ -17,6 +17,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  DEFAULT_RESOLVED_THEME,
   DEFAULT_THEME_PREFERENCE,
   THEME_STORAGE_KEY,
   applyThemeToDocument,
@@ -41,12 +42,10 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() =>
-    readThemePreferenceFromDocument(),
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(
+    DEFAULT_THEME_PREFERENCE,
   );
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
-    readResolvedThemeFromDocument(),
-  );
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(DEFAULT_RESOLVED_THEME);
   const preferenceRef = useRef<ThemePreference>(themePreference);
 
   const syncTheme = useCallback((preference: ThemePreference) => {
