@@ -4,14 +4,10 @@
 提供标准化的API响应格式
 """
 
-from typing import Generic, TypeVar
-
 from pydantic import BaseModel
 
-T = TypeVar("T")
 
-
-class Result(BaseModel, Generic[T]):
+class Result[T](BaseModel):
     """
     统一API响应格式
 
@@ -70,7 +66,7 @@ class Result(BaseModel, Generic[T]):
         return cls(code=50000, message=message)
 
 
-class PageResult(BaseModel, Generic[T]):
+class PageResult[T](BaseModel):
     """
     分页响应格式
     """

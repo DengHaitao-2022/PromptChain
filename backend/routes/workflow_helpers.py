@@ -8,8 +8,9 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import HTTPException, Request
-from models.auth_models import MemberRole
 from pydantic import BaseModel, Field
+
+from models.auth_models import MemberRole
 
 # ==================== 类型定义 ====================
 
@@ -192,9 +193,8 @@ async def require_workspace_permission(
 ) -> tuple[str, str, MemberRole]:
     """基于当前 access token 和工作空间上下文校验权限。"""
     from db.postgres_store import get_postgres_store
-    from services.permission_service import PermissionService
-
     from routes.auth_routes import get_current_user
+    from services.permission_service import PermissionService
 
     user = await get_current_user(request)
     user_id = user.get("sub") or user.get("id")
@@ -301,6 +301,7 @@ async def require_artifact_access(request: Request, artifact_id: str) -> Any:
 async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, dict, WorkflowStatus]:
     """加载工作流运行时上下文（store, workflow, workflow_run, graph_state, status）"""
     from fastapi import HTTPException
+
     from graph import get_workflow
     from services import get_artifact_store
 

@@ -6,6 +6,7 @@ LLM Provider 抽象层
 - Anthropic (Claude)
 - Ollama (本地模型)
 - Google (Gemini)
+- GitHub Models (GitHub Copilot)
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from core.config import get_settings
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_FALLBACK_MODEL = "gpt-4o"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference"
 
 
 def _read_env(name: str) -> str:
@@ -165,6 +167,29 @@ class GoogleProvider(LLMProvider):
         )
 
 
+class GitHubProvider(LLMProvider):
+    """GitHub Models 提供商"""
+
+    def __init__(self, registration: ProviderRegistration):
+        super().__init__(registration)
+        self.api_key = self.require_credential()
+        self.base_url = DEFAULT_GITHUB_MODELS_BASE_URL
+
+    def get_default_model_name(self) -> str:
+        """GitHub Models 使用自身默认模型，避免被全局默认模型覆盖。"""
+        return self.registration.default_model_name
+
+    def get_model(self, model_name: str | None = None, **kwargs) -> BaseChatModel:
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=self.resolve_model_name(model_name),
+            base_url=self.base_url,
+            api_key=self.api_key,
+            **kwargs,
+        )
+
+
 @dataclass(frozen=True)
 class ProviderRegistration:
     """Provider registry 的最小元数据。"""
@@ -199,6 +224,12 @@ PROVIDER_REGISTRY: dict[str, ProviderRegistration] = {
         provider_class=GoogleProvider,
         default_model_name="gemini-2.5-flash",
         credential_env="GEMINI_API_KEY",
+    ),
+    "github": ProviderRegistration(
+        name="github",
+        provider_class=GitHubProvider,
+        default_model_name="openai/gpt-4.1",
+        credential_env="GITHUB_MODEL_TOKEN",
     ),
 }
 

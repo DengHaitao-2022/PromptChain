@@ -11,11 +11,10 @@ ContentGenerationWorkflow 负责：
 import asyncio
 from typing import Any
 
-from models import WorkflowRun, WorkflowRunStatus
-from services import get_artifact_store
-
 from graph.builder import build_content_generation_graph
 from graph.state import GraphState
+from models import WorkflowRun, WorkflowRunStatus
+from services import get_artifact_store
 
 
 class ContentGenerationWorkflow:
@@ -535,7 +534,11 @@ class ContentGenerationWorkflow:
         }
 
     async def approve_outline(
-        self, workflow_run_id: str, action: str, feedback: str = "", modified_outline: dict = None
+        self,
+        workflow_run_id: str,
+        action: str,
+        feedback: str = "",
+        modified_outline: dict | None = None,
     ) -> dict:
         """
         处理提纲审批

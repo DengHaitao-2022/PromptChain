@@ -12,7 +12,6 @@ import asyncio
 from datetime import UTC, datetime
 
 from models.artifact import Artifact, NodeRun, NodeRunStatus
-
 from services.artifact_store import ArtifactStore, get_artifact_store
 
 
@@ -51,10 +50,11 @@ class TraceService:
             artifact_ids.update(node.input_artifact_ids)
             artifact_ids.update(node.output_artifact_ids)
 
+        artifact_id_list = list(artifact_ids)
         artifacts = {}
-        artifact_tasks = [self.store.get_artifact(aid) for aid in artifact_ids]
+        artifact_tasks = [self.store.get_artifact(aid) for aid in artifact_id_list]
         artifact_results = await asyncio.gather(*artifact_tasks) if artifact_tasks else []
-        for aid, artifact in zip(artifact_ids, artifact_results):
+        for aid, artifact in zip(artifact_id_list, artifact_results, strict=False):
             if artifact:
                 artifacts[aid] = artifact
 
@@ -171,7 +171,7 @@ class TraceService:
         output_artifacts = []
         output_tasks = [self.store.get_artifact(aid) for aid in node.output_artifact_ids]
         output_results = await asyncio.gather(*output_tasks) if output_tasks else []
-        for aid, artifact in zip(node.output_artifact_ids, output_results):
+        for aid, artifact in zip(node.output_artifact_ids, output_results, strict=False):
             if artifact:
                 # 附带版本历史
                 history = await self.store.get_version_history(aid)

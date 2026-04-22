@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from models import ArtifactType, WorkflowRun, WorkflowRunStatus
-
 from services.artifact_store import ArtifactStore, get_artifact_store
 from services.trace_service import TraceService, get_trace_service
 

@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -109,7 +109,7 @@ class WorkflowDefinitionUpdate(BaseModel):
     change_log: str | None = None
 
 
-class WorkflowValidationMode(str, Enum):
+class WorkflowValidationMode(StrEnum):
     """工作流校验模式"""
 
     SAVE = "save"

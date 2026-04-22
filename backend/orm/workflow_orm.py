@@ -7,8 +7,9 @@
 import uuid
 from datetime import datetime
 
-from db.postgres_store import Base
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
+
+from db.postgres_store import Base
 
 
 class WorkflowDefinitionORM(Base):

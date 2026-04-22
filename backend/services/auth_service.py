@@ -11,13 +11,14 @@ import uuid
 from datetime import datetime, timedelta
 
 from jose import JWTError, jwt
-from models.admin_orm import LoginAttemptORM
-from models.auth_models import MemberRole, User, UserStatus, Workspace
-from models.auth_orm import MembershipORM, RefreshTokenORM, UserORM, WorkspaceORM
 from passlib.context import CryptContext
 from sqlalchemy import and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+
+from models.admin_orm import LoginAttemptORM
+from models.auth_models import MemberRole, User, UserStatus, Workspace
+from models.auth_orm import MembershipORM, RefreshTokenORM, UserORM, WorkspaceORM
 
 # ==================== 配置 ====================
 
@@ -25,12 +26,17 @@ from sqlalchemy.future import select
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT 配置
+DEBUG_MODE = os.getenv("DEBUG", "false").lower() == "true"
+ALLOW_INSECURE_JWT_SECRET = os.getenv("ALLOW_INSECURE_JWT_SECRET", "false").lower() == "true"
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 if not JWT_SECRET_KEY:
-    if os.getenv("DEBUG", "true").lower() == "true":
+    if DEBUG_MODE and ALLOW_INSECURE_JWT_SECRET:
         JWT_SECRET_KEY = "dev-insecure-secret-change-me"
     else:
-        raise RuntimeError("JWT_SECRET_KEY is required in non-debug environments")
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be set unless running in debug mode with "
+            "ALLOW_INSECURE_JWT_SECRET=true"
+        )
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15  # Access Token 15分钟过期
 REFRESH_TOKEN_EXPIRE_DAYS = 7  # Refresh Token 7天过期
@@ -74,7 +80,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(
-    user_id: str, workspace_id: str | None = None, extra_data: dict = None
+    user_id: str, workspace_id: str | None = None, extra_data: dict | None = None
 ) -> str:
     """
     创建 Access Token
@@ -198,9 +204,7 @@ class AuthService:
         await self.session.commit()
 
         # 创建默认工作空间
-        workspace = await self._create_default_workspace(
-            user_id, display_name or email.split("@")[0]
-        )
+        await self._create_default_workspace(user_id, display_name or email.split("@")[0])
 
         return User(
             id=user_id,
@@ -295,7 +299,7 @@ class AuthService:
                 and_(
                     LoginAttemptORM.email == email,
                     LoginAttemptORM.ip_address == ip_address,
-                    LoginAttemptORM.success == False,
+                    LoginAttemptORM.success.is_(False),
                     LoginAttemptORM.created_at > lockout_time,
                 )
             )

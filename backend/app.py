@@ -7,9 +7,10 @@
 3. 注册所有路由
 """
 
-from core.config import get_settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from core.config import get_settings
 
 
 def create_app() -> FastAPI:

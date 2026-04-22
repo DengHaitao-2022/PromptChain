@@ -14,8 +14,12 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
-from db.postgres_store import get_postgres_store
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy import and_, desc, func
+from sqlalchemy.future import select
+
+from db.postgres_store import get_postgres_store
 from models.admin_models import (
     ApiKeyCreate,
     AuditAction,
@@ -26,17 +30,13 @@ from models.admin_models import (
 from models.admin_orm import ApiKeyORM, AuditLogORM, ModelProviderORM, SecretORM
 from models.auth_models import UserStatus
 from models.auth_orm import MembershipORM, UserORM
-from pydantic import BaseModel
+from routes.auth_routes import get_current_user
 from services.auth_service import JWT_SECRET_KEY
 from services.permission_service import (
     PermissionService,
     resolve_membership_role,
     serialize_membership_role,
 )
-from sqlalchemy import and_, desc, func
-from sqlalchemy.future import select
-
-from routes.auth_routes import get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -97,11 +97,11 @@ async def log_audit(
     workspace_id: str,
     user_id: str,
     action: AuditAction,
-    target_type: str = None,
-    target_id: str = None,
-    detail: dict = None,
-    ip_address: str = None,
-    user_agent: str = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    detail: dict | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ):
     """记录审计日志"""
     audit_log = AuditLogORM(

@@ -8,10 +8,11 @@ import os
 from datetime import datetime
 from typing import Any
 
-from db.postgres_store import get_postgres_store
 from fastapi import APIRouter, HTTPException, Request, Response
-from models.auth_models import UserStatus
 from pydantic import BaseModel, EmailStr, Field
+
+from db.postgres_store import get_postgres_store
+from models.auth_models import UserStatus
 from services.auth_service import (
     AuthService,
     create_access_token,
@@ -299,7 +300,7 @@ async def register(request: Request, body: RegisterRequest):
             return MessageResponse(message="注册成功，请查收验证邮件")
 
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/auth/login")
@@ -356,7 +357,7 @@ async def login(request: Request, response: Response, body: LoginRequest):
             return {"message": "登录成功", **auth_context}
 
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/auth/refresh")
@@ -466,8 +467,9 @@ async def forgot_password(body: ForgotPasswordRequest):
     """
     store = get_postgres_store()
     async with store.async_session() as session:
-        from models.auth_orm import UserORM
         from sqlalchemy.future import select
+
+        from models.auth_orm import UserORM
 
         # 查找用户
         result = await session.execute(select(UserORM).where(UserORM.email == body.email))
@@ -490,9 +492,10 @@ async def reset_password(body: ResetPasswordRequest):
     """
     store = get_postgres_store()
     async with store.async_session() as session:
+        from sqlalchemy.future import select
+
         from models.auth_orm import UserORM
         from services.auth_service import hash_password
-        from sqlalchemy.future import select
 
         email_service = EmailService(session)
         auth_service = AuthService(session)
