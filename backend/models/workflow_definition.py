@@ -3,53 +3,64 @@
 
 用于可视化编辑器保存/加载工作流定义
 """
+
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ==================== 节点定义 ====================
+
 
 class NodePosition(BaseModel):
     """节点位置"""
+
     x: float
     y: float
 
 
 class NodeData(BaseModel):
     """节点数据"""
+
     label: str
-    config: Optional[Dict[str, Any]] = None
+    config: dict[str, Any] | None = None
 
 
 class WorkflowNode(BaseModel):
     """工作流节点"""
+
     id: str
-    type: str  # input, process, gate, checker, output
+    # 前端编排器可以提交 richer taxonomy，例如 start/end/llm/tool/http/code/subflow。
+    # 后端发布校验与编译预览会将这些扩展类型映射到当前运行时支持的
+    # input/process/gate/checker/output 五大类别，以保持向后兼容。
+    type: str
     position: NodePosition
     data: NodeData
 
 
 # ==================== 边定义 ====================
 
+
 class EdgeData(BaseModel):
     """边数据"""
-    condition: Optional[str] = None
-    label: Optional[str] = None
+
+    condition: str | None = None
+    label: str | None = None
 
 
 class WorkflowEdge(BaseModel):
     """工作流边（连接线）"""
+
     id: str
     source: str  # 源节点ID
     target: str  # 目标节点ID
-    type: Optional[str] = "default"
-    data: Optional[EdgeData] = None
+    type: str | None = "default"
+    data: EdgeData | None = None
 
 
 # ==================== 工作流定义 ====================
+
 
 class WorkflowDefinition(BaseModel):
     """
@@ -57,41 +68,45 @@ class WorkflowDefinition(BaseModel):
 
     用于前端React Flow编辑器与后端的数据交换
     """
+
     id: str
     name: str
-    description: Optional[str] = ""
+    description: str | None = ""
     version: int = 1
-    nodes: List[WorkflowNode] = Field(default_factory=list)
-    edges: List[WorkflowEdge] = Field(default_factory=list)
+    nodes: list[WorkflowNode] = Field(default_factory=list)
+    edges: list[WorkflowEdge] = Field(default_factory=list)
 
     # 元数据
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    created_by: Optional[str] = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    created_by: str | None = None
     is_published: bool = False
-    published_version_id: Optional[str] = None
-    published_version: Optional[int] = None
-    published_at: Optional[datetime] = None
-    published_by: Optional[str] = None
+    published_version_id: str | None = None
+    published_version: int | None = None
+    published_at: datetime | None = None
+    published_by: str | None = None
 
 
 # ==================== API请求/响应模型 ====================
 
+
 class WorkflowDefinitionCreate(BaseModel):
     """创建工作流定义请求"""
+
     name: str
-    description: Optional[str] = ""
-    nodes: List[WorkflowNode] = Field(default_factory=list)
-    edges: List[WorkflowEdge] = Field(default_factory=list)
+    description: str | None = ""
+    nodes: list[WorkflowNode] = Field(default_factory=list)
+    edges: list[WorkflowEdge] = Field(default_factory=list)
 
 
 class WorkflowDefinitionUpdate(BaseModel):
     """更新工作流定义请求"""
-    name: Optional[str] = None
-    description: Optional[str] = None
-    nodes: Optional[List[WorkflowNode]] = None
-    edges: Optional[List[WorkflowEdge]] = None
-    change_log: Optional[str] = None
+
+    name: str | None = None
+    description: str | None = None
+    nodes: list[WorkflowNode] | None = None
+    edges: list[WorkflowEdge] | None = None
+    change_log: str | None = None
 
 
 class WorkflowValidationMode(str, Enum):
@@ -103,14 +118,16 @@ class WorkflowValidationMode(str, Enum):
 
 class WorkflowValidationResult(BaseModel):
     """工作流验证结果"""
+
     mode: WorkflowValidationMode = WorkflowValidationMode.SAVE
     is_valid: bool
-    errors: List[str] = Field(default_factory=list)
-    warnings: List[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class WorkflowCompileResult(BaseModel):
     """工作流编译结果"""
+
     success: bool
-    graph_code: Optional[str] = None  # 生成的LangGraph代码预览
-    errors: List[str] = Field(default_factory=list)
+    graph_code: str | None = None  # 生成的LangGraph代码预览
+    errors: list[str] = Field(default_factory=list)

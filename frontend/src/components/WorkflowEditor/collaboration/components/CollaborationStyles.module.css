@@ -1,0 +1,129 @@
+.connectionBadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-sm);
+}
+
+.connected {
+    color: var(--success);
+    border-color: var(--success-border, var(--success));
+    background: var(--success-bg, rgba(34, 197, 94, 0.1));
+}
+
+.connecting {
+    color: var(--warning);
+}
+
+.disconnected {
+    color: var(--text-tertiary);
+}
+
+.statusText {
+    white-space: nowrap;
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.avatarStack {
+    display: flex;
+    align-items: center;
+    gap: -8px; /* 重叠效果 */
+}
+
+.avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 600;
+    font-size: 12px;
+    border: 2px solid var(--surface-overlay);
+    box-shadow: var(--shadow-sm);
+    margin-left: -8px; /* Avatar stacking overlap */
+}
+
+.avatar:first-child {
+    margin-left: 0;
+}
+
+.avatarMore {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    border: 2px solid var(--surface-overlay);
+    margin-left: -8px;
+    z-index: 1;
+}
+
+.selectionOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 5; /* 覆盖在节点之上，但不阻挡点击 */
+}
+
+.remoteSelectionBox {
+    position: absolute;
+    top: 0;
+    left: 0;
+    border: 2px solid;
+    border-radius: 8px; /* 跟节点圆角保持一致 */
+    transition: all 0.2s ease-out;
+}
+
+.remoteSelectionTag {
+    position: absolute;
+    top: -24px;
+    right: -2px;
+    color: white;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    box-shadow: var(--shadow-sm);
+}
+
+.conflictHint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(234, 179, 8, 0.1);
+    border: 1px solid var(--warning);
+    color: var(--warning-dark, #854d0e);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    margin-bottom: 12px;
+}

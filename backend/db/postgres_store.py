@@ -23,6 +23,14 @@ from langgraph.checkpoint.base import (
     get_checkpoint_id,
     get_checkpoint_metadata,
 )
+from models.artifact import (
+    Artifact,
+    ArtifactType,
+    NodeRun,
+    NodeRunStatus,
+    WorkflowRun,
+    WorkflowRunStatus,
+)
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -38,15 +46,6 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.future import select
 from sqlalchemy.orm import DeclarativeBase, relationship
-
-from models.artifact import (
-    Artifact,
-    ArtifactType,
-    NodeRun,
-    NodeRunStatus,
-    WorkflowRun,
-    WorkflowRunStatus,
-)
 
 
 class Base(DeclarativeBase):
@@ -299,7 +298,8 @@ class PostgresArtifactStore:
         self.database_url = database_url or os.getenv(
             "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
         )
-        self.engine = create_async_engine(self.database_url, echo=False)
+        sql_echo = os.getenv("SQL_ECHO", "false").lower() == "true"
+        self.engine = create_async_engine(self.database_url, echo=sql_echo)
         self.async_session = async_sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
@@ -325,18 +325,23 @@ class PostgresArtifactStore:
 
     async def create_artifact(
         self,
-        type: ArtifactType,
+        artifact_type: ArtifactType | None,
         content: Any,
         workflow_run_id: str,
         node_run_id: str,
         parent_version_id: str | None = None,
-        metadata: dict = None,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> Artifact:
         """创建新的 Artifact 版本"""
         import hashlib
         import json
 
         await self._ensure_initialized()
+        if artifact_type is None:
+            artifact_type = kwargs.get("type")
+        if artifact_type is None:
+            raise ValueError("artifact_type is required")
         metadata = metadata or {}
 
         # 计算版本号
@@ -351,7 +356,7 @@ class PostgresArtifactStore:
                 result = await session.execute(
                     select(ArtifactORM)
                     .where(ArtifactORM.workflow_run_id == workflow_run_id)
-                    .where(ArtifactORM.type == type.value)
+                    .where(ArtifactORM.type == artifact_type.value)
                     .order_by(ArtifactORM.version.desc())
                 )
                 latest = result.scalar_one_or_none()
@@ -363,7 +368,7 @@ class PostgresArtifactStore:
 
             # 创建 Artifact
             artifact = Artifact(
-                type=type,
+                type=artifact_type,
                 version=version,
                 content=content,
                 content_hash=content_hash,
@@ -842,7 +847,7 @@ def get_postgres_checkpoint_saver() -> PostgresGraphCheckpointSaver:
     return _postgres_checkpoint_saver
 
 
-async def get_session() -> AsyncSession:
+async def get_session() -> AsyncIterator[AsyncSession]:
     """
     获取数据库会话
 

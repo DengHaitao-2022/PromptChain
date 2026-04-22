@@ -8,9 +8,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import HTTPException, Request
-from pydantic import BaseModel, Field
-
 from models.auth_models import MemberRole
+from pydantic import BaseModel, Field
 
 # ==================== 类型定义 ====================
 
@@ -193,8 +192,9 @@ async def require_workspace_permission(
 ) -> tuple[str, str, MemberRole]:
     """基于当前 access token 和工作空间上下文校验权限。"""
     from db.postgres_store import get_postgres_store
-    from routes.auth_routes import get_current_user
     from services.permission_service import PermissionService
+
+    from routes.auth_routes import get_current_user
 
     user = await get_current_user(request)
     user_id = user.get("sub") or user.get("id")
@@ -301,7 +301,6 @@ async def require_artifact_access(request: Request, artifact_id: str) -> Any:
 async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, dict, WorkflowStatus]:
     """加载工作流运行时上下文（store, workflow, workflow_run, graph_state, status）"""
     from fastapi import HTTPException
-
     from graph import get_workflow
     from services import get_artifact_store
 
@@ -709,5 +708,25 @@ def _enrich_timeline(
             }
         )
 
-    events.sort(key=lambda event: event.get("timestamp") or "")
+    events.sort(key=_timeline_sort_key)
     return events
+
+
+def _timeline_sort_key(event: dict[str, Any]) -> tuple[int, float]:
+    """将 timeline 事件按真实时间排序，避免字符串排序导致时序漂移。"""
+    raw_timestamp = event.get("timestamp")
+    if not raw_timestamp:
+        return (1, float("inf"))
+    if isinstance(raw_timestamp, datetime):
+        timestamp = raw_timestamp if raw_timestamp.tzinfo else raw_timestamp.replace(tzinfo=UTC)
+        return (0, timestamp.timestamp())
+
+    text = str(raw_timestamp)
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+        parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        return (0, parsed.timestamp())
+    except ValueError:
+        return (1, float("inf"))

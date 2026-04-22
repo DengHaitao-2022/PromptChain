@@ -149,7 +149,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isSuggestionPanelOpen, setIsSuggestionPanelOpen] = useState(false);
   const [activePromptIndex, setActivePromptIndex] = useState(0);
-
+  const [errorTitle, setErrorTitle] = useState<string>('错误');
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [versions, setVersions] = useState<WorkflowVersion[]>([]);
   const [selectedWorkflow, setSelectedWorkflow] = useState<string>('');
@@ -265,7 +265,7 @@ export default function Home() {
       try {
         setError(null);
         const response = await workflowDefinitionApi.list();
-        const workflowData = response.data.workflows || [];
+        const workflowData = response.workflows || [];
 
         const hasPublished = workflowData.some((w: WorkflowDefinition) => 'is_published' in w);
         const displayableWorkflows = hasPublished
@@ -283,7 +283,8 @@ export default function Home() {
           setSelectedWorkflow(displayableWorkflows[0].id);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载工作流失败');
+        setErrorTitle('加载工作流失败');
+        setError(err instanceof Error ? err.message : '未知错误');
       }
     };
     fetchWorkflows();
@@ -296,11 +297,14 @@ export default function Home() {
       return;
     }
 
+    setVersions([]);
+    setSelectedVersion('');
+
     const fetchVersions = async () => {
       try {
         setError(null);
         const response = await workflowDefinitionApi.getVersions(selectedWorkflow);
-        const versionData = response.data.versions || [];
+        const versionData = response.versions || [];
         setVersions(versionData);
         if (versionData.length > 0) {
           setSelectedVersion(versionData[0].id);
@@ -308,7 +312,8 @@ export default function Home() {
           setSelectedVersion('');
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载版本失败');
+        setErrorTitle('加载版本失败');
+        setError(err instanceof Error ? err.message : '未知错误');
       }
     };
     fetchVersions();
@@ -353,7 +358,8 @@ export default function Home() {
     } catch (err) {
       setLaunchState('idle');
       setWorkflowRunId(null);
-      setError(err instanceof Error ? err.message : '工作流启动失败');
+      setErrorTitle('启动工作流失败');
+      setError(err instanceof Error ? err.message : '未知错误');
     } finally {
       setIsLoading(false);
     }
@@ -415,10 +421,10 @@ export default function Home() {
   const isLaunchDisabled = !userInput.trim() || isLoading || workflows.length === 0 || versions.length === 0;
 
   let currentLaunchHint = launchState === 'launching'
-      ? '正在依次编排意图解析、提纲生成与事实核查节点。'
-      : launchState === 'handoff'
-        ? `工作流 ${workflowRunId?.slice(0, 8) ?? '准备中'} 已建立，准备进入详情页。`
-        : '点击后会先完成首页启动反馈，再跳转到工作流详情。';
+    ? '正在依次编排意图解析、提纲生成与事实核查节点。'
+    : launchState === 'handoff'
+      ? `工作流 ${workflowRunId?.slice(0, 8) ?? '准备中'} 已建立，准备进入详情页。`
+      : '点击后会先完成首页启动反馈，再跳转到工作流详情。';
 
   if (workflows.length === 0) {
     currentLaunchHint = '没有可用的工作流，请联系管理员配置。';
@@ -720,7 +726,7 @@ export default function Home() {
 
                 {error ? (
                   <div className={styles.errorCard} role="alert">
-                    <strong>启动失败</strong>
+                    <strong>{errorTitle}</strong>
                     <span>{error}</span>
                   </div>
                 ) : null}

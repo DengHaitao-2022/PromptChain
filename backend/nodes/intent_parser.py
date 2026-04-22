@@ -6,10 +6,11 @@
 2. 识别缺失信息，生成澄清问题
 3. 创建 Artifact 版本
 """
+
 import json
 from datetime import datetime
-from langchain_core.prompts import ChatPromptTemplate
 
+from langchain_core.prompts import ChatPromptTemplate
 from models import (
     ArtifactType,
     HumanDecision,
@@ -20,7 +21,6 @@ from models import (
     Uncertainty,
 )
 from services import get_artifact_store, get_current_model_info, get_structured_llm
-
 
 INTENT_EXTRACTION_PROMPT = """你是一个专业的内容规划助手。请根据用户的需求描述，提取结构化意图卡。
 
@@ -114,7 +114,7 @@ async def parse_intent(state: dict) -> dict:
             provider=model_info["provider"],
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
             prompt_preview=user_input[:200] if len(user_input) > 200 else user_input,
-            response_preview=str(intent_card.model_dump())[:200]
+            response_preview=str(intent_card.model_dump())[:200],
         )
         node_run.llm_calls.append(llm_call)
 
@@ -197,9 +197,7 @@ async def clarify_intent(state: dict) -> dict:
         started_at=datetime.utcnow(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
-            artifact_id
-            for artifact_id in [state.get("intent_card_artifact_id")]
-            if artifact_id
+            artifact_id for artifact_id in [state.get("intent_card_artifact_id")] if artifact_id
         ],
     )
     await store.create_node_run(node_run)
@@ -219,8 +217,7 @@ async def clarify_intent(state: dict) -> dict:
 
         # 清除已解答的不确定点
         updated_data["uncertainties"] = [
-            u for u in updated_data["uncertainties"]
-            if u["field"] not in clarifications
+            u for u in updated_data["uncertainties"] if u["field"] not in clarifications
         ]
 
         updated_intent_card = IntentCard.model_validate(updated_data)
@@ -235,7 +232,9 @@ async def clarify_intent(state: dict) -> dict:
             parent_version_id=parent_artifact_id,
             metadata={
                 "clarifications": clarifications,
-                "remaining_uncertainties": updated_intent_card.model_dump().get("uncertainties", []),
+                "remaining_uncertainties": updated_intent_card.model_dump().get(
+                    "uncertainties", []
+                ),
             },
         )
 
@@ -252,7 +251,8 @@ async def clarify_intent(state: dict) -> dict:
             {
                 "gate_type": "clarification",
                 "trigger_reason": current_gate.get("trigger_reason") or "missing_information",
-                "questions": current_gate.get("questions") or state.get("clarification_questions", []),
+                "questions": current_gate.get("questions")
+                or state.get("clarification_questions", []),
                 "answers": clarifications,
                 "opened_at": current_gate.get("opened_at") or _now_iso(),
                 "handled_at": _now_iso(),
@@ -270,7 +270,7 @@ async def clarify_intent(state: dict) -> dict:
             "intent_card": updated_intent_card,
             "intent_card_artifact_id": artifact.id,
             "needs_clarification": False,
-            "clarification_questions": []
+            "clarification_questions": [],
         }
 
     except Exception as e:

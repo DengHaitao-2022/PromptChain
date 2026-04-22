@@ -10,16 +10,14 @@ LLM Provider 抽象层
 
 from __future__ import annotations
 
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
 
-from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
-load_dotenv()
+from core.config import get_settings
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_FALLBACK_MODEL = "gpt-4o"
@@ -27,8 +25,9 @@ DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 
 def _read_env(name: str) -> str:
-    """读取环境变量并去除首尾空白。"""
-    return os.getenv(name, "").strip()
+    """从统一配置源读取字段并去除首尾空白。"""
+    value = getattr(get_settings(), name, "")
+    return str(value).strip() if value is not None else ""
 
 
 def _resolve_provider_name(provider_name: str | None = None) -> str:
@@ -308,16 +307,20 @@ def get_current_model_info() -> dict:
     用于 LLMCallRecord 记录，避免硬编码
     """
     provider_name = _resolve_provider_name()
+    resolved_provider_name = provider_name
     try:
         provider = LLMProviderFactory.get_provider(provider_name)
+        resolved_provider_name = provider.registration.name
         model_name = provider.get_default_model_name()
     except Exception:
         try:
+            LLMProviderFactory.get_registration(provider_name)
             model_name = LLMProviderFactory.get_resolved_model_name(provider_name)
         except Exception:
+            resolved_provider_name = DEFAULT_PROVIDER_NAME
             model_name = _resolve_model_override() or DEFAULT_FALLBACK_MODEL
 
     return {
-        "provider": provider_name,
+        "provider": resolved_provider_name,
         "model": model_name,
     }

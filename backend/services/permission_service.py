@@ -3,40 +3,40 @@
 
 实现 Workspace 级别 RBAC 权限控制
 """
-from typing import Optional, List, Literal
 
+from typing import Literal
+
+from db.postgres_store import get_postgres_store
 from fastapi import HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-
 from models.auth_models import MemberRole
 from models.auth_orm import MembershipORM
-
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
 # ==================== 权限定义 ====================
 
 # 资源类型
 RESOURCES = [
-    "workflow",        # 工作流
-    "workflow_run",    # 运行记录
-    "template",        # 模板
+    "workflow",  # 工作流
+    "workflow_run",  # 运行记录
+    "template",  # 模板
     "model_provider",  # 模型供应商
-    "secret",          # 密钥
-    "api_key",         # API Key
-    "member",          # 成员管理
-    "workspace",       # 工作空间设置
-    "audit_log",       # 审计日志
+    "secret",  # 密钥
+    "api_key",  # API Key
+    "member",  # 成员管理
+    "workspace",  # 工作空间设置
+    "audit_log",  # 审计日志
 ]
 
 # 动作类型
 ACTIONS = [
-    "read",       # 读取
-    "create",     # 创建
-    "update",     # 更新
-    "delete",     # 删除
-    "execute",    # 执行（如运行工作流）
-    "export",     # 导出
-    "manage",     # 管理权限（如邀请成员、配置密钥）
+    "read",  # 读取
+    "create",  # 创建
+    "update",  # 更新
+    "delete",  # 删除
+    "execute",  # 执行（如运行工作流）
+    "export",  # 导出
+    "manage",  # 管理权限（如邀请成员、配置密钥）
 ]
 
 
@@ -121,7 +121,10 @@ PermissionAction = Literal[
 
 # ==================== 权限检查函数 ====================
 
-def check_permission(role: MemberRole, resource: PermissionResource | str, action: PermissionAction | str) -> bool:
+
+def check_permission(
+    role: MemberRole, resource: PermissionResource | str, action: PermissionAction | str
+) -> bool:
     """
     检查角色是否有指定资源的指定操作权限
 
@@ -148,18 +151,18 @@ def is_at_least_role(current_role: MemberRole, required_role: MemberRole) -> boo
     return ROLE_ORDER.index(current_role) >= ROLE_ORDER.index(required_role)
 
 
-def is_admin_role(role: Optional[MemberRole]) -> bool:
+def is_admin_role(role: MemberRole | None) -> bool:
     """管理员与拥有者均视为管理角色。"""
     return role in {MemberRole.ADMIN, MemberRole.OWNER}
 
 
-def resolve_membership_role(raw_role: Optional[str]) -> tuple[Optional[MemberRole], bool]:
+def resolve_membership_role(raw_role: str | None) -> tuple[MemberRole | None, bool]:
     """解析成员关系中的原始角色字符串，并识别工作空间级暂停状态。"""
     if not raw_role:
         return None, False
 
     is_suspended = raw_role.startswith(SUSPENDED_MEMBERSHIP_PREFIX)
-    normalized_role = raw_role[len(SUSPENDED_MEMBERSHIP_PREFIX):] if is_suspended else raw_role
+    normalized_role = raw_role[len(SUSPENDED_MEMBERSHIP_PREFIX) :] if is_suspended else raw_role
 
     try:
         return MemberRole(normalized_role), is_suspended
@@ -175,7 +178,7 @@ def serialize_membership_role(role: MemberRole | str, suspended: bool = False) -
     return normalized_role
 
 
-def is_membership_suspended(raw_role: Optional[str]) -> bool:
+def is_membership_suspended(raw_role: str | None) -> bool:
     """判断成员关系是否处于当前工作空间访问暂停状态。"""
     return bool(raw_role and raw_role.startswith(SUSPENDED_MEMBERSHIP_PREFIX))
 
@@ -192,6 +195,7 @@ def get_allowed_actions(role: MemberRole, resource: str) -> list[str]:
 
 # ==================== 权限服务类 ====================
 
+
 class PermissionService:
     """权限服务"""
 
@@ -199,10 +203,8 @@ class PermissionService:
         self.session = session
 
     async def get_user_role_in_workspace(
-        self,
-        user_id: str,
-        workspace_id: str
-    ) -> Optional[MemberRole]:
+        self, user_id: str, workspace_id: str
+    ) -> MemberRole | None:
         """
         获取用户在工作空间中的角色
 
@@ -215,8 +217,7 @@ class PermissionService:
         """
         result = await self.session.execute(
             select(MembershipORM).where(
-                MembershipORM.user_id == user_id,
-                MembershipORM.workspace_id == workspace_id
+                MembershipORM.user_id == user_id, MembershipORM.workspace_id == workspace_id
             )
         )
         membership = result.scalar_one_or_none()
@@ -231,11 +232,7 @@ class PermissionService:
         return role
 
     async def check_user_permission(
-        self,
-        user_id: str,
-        workspace_id: str,
-        resource: str,
-        action: str
+        self, user_id: str, workspace_id: str, resource: str, action: str
     ) -> bool:
         """
         检查用户是否有指定权限
@@ -256,11 +253,7 @@ class PermissionService:
         return check_permission(role, resource, action)
 
     async def require_permission(
-        self,
-        user_id: str,
-        workspace_id: str,
-        resource: str,
-        action: str
+        self, user_id: str, workspace_id: str, resource: str, action: str
     ) -> MemberRole:
         """
         检查权限，无权限时抛出异常
@@ -280,25 +273,16 @@ class PermissionService:
         role = await self.get_user_role_in_workspace(user_id, workspace_id)
 
         if not role:
-            raise HTTPException(
-                status_code=403,
-                detail="您不是该工作空间的成员"
-            )
+            raise HTTPException(status_code=403, detail="您不是该工作空间的成员")
 
         if not check_permission(role, resource, action):
-            raise HTTPException(
-                status_code=403,
-                detail=f"您没有 {resource}.{action} 的权限"
-            )
+            raise HTTPException(status_code=403, detail=f"您没有 {resource}.{action} 的权限")
 
         return role
 
     async def get_user_workspaces_with_permission(
-        self,
-        user_id: str,
-        resource: str,
-        action: str
-    ) -> List[str]:
+        self, user_id: str, resource: str, action: str
+    ) -> list[str]:
         """
         获取用户有指定权限的所有工作空间ID
 
@@ -328,6 +312,7 @@ class PermissionService:
 
 # ==================== FastAPI 依赖 ====================
 
+
 def require_permission_dependency(resource: str, action: str):
     """
     创建权限检查依赖
@@ -346,10 +331,9 @@ def require_permission_dependency(resource: str, action: str):
     Returns:
         FastAPI 依赖函数
     """
+
     async def dependency(
         request: Request,
-        # 这里需要从请求中获取 user_id 和 workspace_id
-        # 实际使用时会结合 auth 中间件
     ):
         user_id = getattr(request.state, "user_id", None)
         workspace_id = getattr(request.state, "workspace_id", None)
@@ -357,9 +341,6 @@ def require_permission_dependency(resource: str, action: str):
         if not user_id or not workspace_id:
             raise HTTPException(status_code=401, detail="未登录")
 
-        # 这里应该使用数据库session，实际使用时从依赖注入获取
-        # 简化示例，实际需要结合数据库session
-        from db.postgres_store import get_postgres_store
         store = get_postgres_store()
 
         async with store.async_session() as session:

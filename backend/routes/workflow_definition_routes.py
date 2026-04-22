@@ -3,12 +3,11 @@
 
 提供工作流定义的 CRUD、校验、编译和显式发布接口。
 """
+
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
-
 from db.postgres_store import get_postgres_store
+from fastapi import APIRouter, HTTPException, Request
 from models.auth_models import MemberRole
 from models.result import Result
 from models.workflow_definition import (
@@ -16,9 +15,11 @@ from models.workflow_definition import (
     WorkflowDefinitionUpdate,
     WorkflowValidationMode,
 )
-from routes.auth_routes import get_current_user
+from pydantic import BaseModel, Field
 from services.permission_service import PermissionService
 from services.workflow_definition_service import WorkflowDefinitionService
+
+from routes.auth_routes import get_current_user
 
 router = APIRouter(prefix="/workflows", tags=["workflow-definition"])
 
@@ -100,7 +101,9 @@ async def create_workflow(
     """创建新的工作流定义。"""
     store = get_postgres_store()
     async with store.async_session() as session:
-        _, user_id, workspace_id, _ = await _require_workflow_role(request, session, action="create")
+        _, user_id, workspace_id, _ = await _require_workflow_role(
+            request, session, action="create"
+        )
         service = WorkflowDefinitionService(session)
         workflow = await service.create(
             workspace_id=workspace_id,
@@ -158,7 +161,9 @@ async def update_workflow(
     """更新工作流草稿。"""
     store = get_postgres_store()
     async with store.async_session() as session:
-        _, user_id, workspace_id, _ = await _require_workflow_role(request, session, action="update")
+        _, user_id, workspace_id, _ = await _require_workflow_role(
+            request, session, action="update"
+        )
         service = WorkflowDefinitionService(session)
         workflow = await service.update(
             workflow_id=workflow_id,
@@ -227,7 +232,9 @@ async def publish_workflow(
     """显式发布工作流当前草稿。"""
     store = get_postgres_store()
     async with store.async_session() as session:
-        _, user_id, workspace_id, _ = await _require_workflow_role(request, session, action="update")
+        _, user_id, workspace_id, _ = await _require_workflow_role(
+            request, session, action="update"
+        )
         service = WorkflowDefinitionService(session)
         workflow, validation, snapshot = await service.publish(
             workflow_id=workflow_id,

@@ -3,13 +3,15 @@
 
 提供登录、注册、登出、Token 刷新等认证功能
 """
-from typing import Optional, Any
-from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, EmailStr, Field
+import os
+from datetime import datetime
+from typing import Any
 
 from db.postgres_store import get_postgres_store
+from fastapi import APIRouter, HTTPException, Request, Response
+from models.auth_models import UserStatus
+from pydantic import BaseModel, EmailStr, Field
 from services.auth_service import (
     AuthService,
     create_access_token,
@@ -18,71 +20,79 @@ from services.auth_service import (
 )
 from services.email_service import EmailService
 from services.permission_service import resolve_membership_role
-from models.auth_models import UserStatus
-
 
 router = APIRouter()
 
 # Cookie 配置
 ACCESS_TOKEN_COOKIE = "access_token"
 REFRESH_TOKEN_COOKIE = "refresh_token"
-COOKIE_SECURE = False  # 生产环境应设为 True
 COOKIE_HTTPONLY = True
 COOKIE_SAMESITE = "lax"
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 
 
 # ==================== 请求模型 ====================
 
+
 class RegisterRequest(BaseModel):
     """注册请求"""
+
     email: EmailStr
     password: str = Field(..., min_length=8)
-    username: Optional[str] = Field(None, min_length=2, max_length=50)
-    display_name: Optional[str] = Field(None, max_length=100)
+    username: str | None = Field(None, min_length=2, max_length=50)
+    display_name: str | None = Field(None, max_length=100)
 
 
 class LoginRequest(BaseModel):
     """登录请求"""
+
     email: EmailStr
     password: str
 
 
 class RefreshRequest(BaseModel):
     """刷新 Token 请求（可选，主要通过 Cookie）"""
-    refresh_token: Optional[str] = None
-    workspace_id: Optional[str] = None
+
+    refresh_token: str | None = None
+    workspace_id: str | None = None
 
 
 class ForgotPasswordRequest(BaseModel):
     """忘记密码请求"""
+
     email: EmailStr
 
 
 class ResetPasswordRequest(BaseModel):
     """重置密码请求"""
+
     token: str
     password: str = Field(..., min_length=8)
 
 
 class VerifyEmailRequest(BaseModel):
     """验证邮箱请求"""
+
     token: str
 
 
 # ==================== 响应模型 ====================
 
+
 class MessageResponse(BaseModel):
     """通用消息响应"""
+
     message: str
 
 
 class UserResponse(BaseModel):
     """用户信息响应"""
+
     id: str
     email: str
-    username: Optional[str]
-    display_name: Optional[str]
-    avatar_url: Optional[str]
+    username: str | None
+    display_name: str | None
+    avatar_url: str | None
     status: UserStatus
     email_verified: bool
     created_at: datetime
@@ -90,13 +100,15 @@ class UserResponse(BaseModel):
 
 class MeResponse(BaseModel):
     """当前用户信息响应"""
+
     user: UserResponse
-    workspace: Optional[dict[str, Any]] = None
-    role: Optional[str] = None
+    workspace: dict[str, Any] | None = None
+    role: str | None = None
     workspaces: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ==================== 辅助函数 ====================
+
 
 def get_client_ip(request: Request) -> str:
     """获取客户端IP"""
@@ -132,7 +144,7 @@ def clear_auth_cookies(response: Response):
     response.delete_cookie(key=REFRESH_TOKEN_COOKIE)
 
 
-async def get_current_user_optional(request: Request) -> Optional[dict]:
+async def get_current_user_optional(request: Request) -> dict | None:
     """获取当前用户（可选，不强制登录）"""
     access_token = request.cookies.get(ACCESS_TOKEN_COOKIE)
     if not access_token:
@@ -191,14 +203,18 @@ def get_workspace_sort_key(workspace: dict[str, Any]) -> tuple[datetime, datetim
 
 def select_current_workspace(
     workspace_list: list[dict[str, Any]],
-    preferred_workspace_id: Optional[str] = None,
-) -> tuple[Optional[dict[str, Any]], list[dict[str, Any]]]:
+    preferred_workspace_id: str | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """按稳定顺序选择当前工作空间。"""
     ordered_workspaces = sorted(workspace_list, key=get_workspace_sort_key)
 
     if preferred_workspace_id:
         current_workspace = next(
-            (workspace for workspace in ordered_workspaces if workspace["id"] == preferred_workspace_id),
+            (
+                workspace
+                for workspace in ordered_workspaces
+                if workspace["id"] == preferred_workspace_id
+            ),
             None,
         )
         if current_workspace:
@@ -210,7 +226,9 @@ def select_current_workspace(
     return ordered_workspaces[0], ordered_workspaces
 
 
-async def build_auth_context(user_id: str, preferred_workspace_id: Optional[str] = None) -> dict[str, Any]:
+async def build_auth_context(
+    user_id: str, preferred_workspace_id: str | None = None
+) -> dict[str, Any]:
     """构建登录态上下文，供登录、刷新和 `/api/me` 复用。"""
     store = get_postgres_store()
     async with store.async_session() as session:
@@ -252,6 +270,7 @@ async def build_auth_context(user_id: str, preferred_workspace_id: Optional[str]
 
 
 # ==================== API 路由 ====================
+
 
 @router.post("/auth/register", response_model=MessageResponse)
 async def register(request: Request, body: RegisterRequest):
@@ -341,7 +360,7 @@ async def login(request: Request, response: Response, body: LoginRequest):
 
 
 @router.post("/auth/refresh")
-async def refresh_token(request: Request, response: Response, body: Optional[RefreshRequest] = None):
+async def refresh_token(request: Request, response: Response, body: RefreshRequest | None = None):
     """
     刷新 Access Token
 
@@ -371,7 +390,9 @@ async def refresh_token(request: Request, response: Response, body: Optional[Ref
         if not preferred_workspace_id and body:
             preferred_workspace_id = body.workspace_id
 
-        auth_context = await build_auth_context(user.id, preferred_workspace_id=preferred_workspace_id)
+        auth_context = await build_auth_context(
+            user.id, preferred_workspace_id=preferred_workspace_id
+        )
         workspace = auth_context["workspace"]
         workspace_id = workspace["id"] if workspace else None
 
@@ -445,13 +466,11 @@ async def forgot_password(body: ForgotPasswordRequest):
     """
     store = get_postgres_store()
     async with store.async_session() as session:
-        from sqlalchemy.future import select
         from models.auth_orm import UserORM
+        from sqlalchemy.future import select
 
         # 查找用户
-        result = await session.execute(
-            select(UserORM).where(UserORM.email == body.email)
-        )
+        result = await session.execute(select(UserORM).where(UserORM.email == body.email))
         user = result.scalar_one_or_none()
 
         # 无论用户是否存在都返回成功（安全考虑）
@@ -471,9 +490,9 @@ async def reset_password(body: ResetPasswordRequest):
     """
     store = get_postgres_store()
     async with store.async_session() as session:
-        from sqlalchemy.future import select
         from models.auth_orm import UserORM
         from services.auth_service import hash_password
+        from sqlalchemy.future import select
 
         email_service = EmailService(session)
         auth_service = AuthService(session)
@@ -484,9 +503,7 @@ async def reset_password(body: ResetPasswordRequest):
             raise HTTPException(status_code=400, detail="重置链接无效或已过期")
 
         # 更新密码
-        result = await session.execute(
-            select(UserORM).where(UserORM.id == user_id)
-        )
+        result = await session.execute(select(UserORM).where(UserORM.id == user_id))
         user = result.scalar_one_or_none()
 
         if not user:
@@ -510,7 +527,9 @@ async def get_me(request: Request, response: Response):
     """
     payload = await get_current_user(request)
     user_id = payload["sub"]
-    auth_context = await build_auth_context(user_id, preferred_workspace_id=payload.get("workspace_id"))
+    auth_context = await build_auth_context(
+        user_id, preferred_workspace_id=payload.get("workspace_id")
+    )
     workspace = auth_context["workspace"]
     workspace_id = workspace["id"] if workspace else None
 

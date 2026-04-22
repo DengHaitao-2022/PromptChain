@@ -3,13 +3,11 @@
 
 提供工作流定义的 CRUD、校验、发布和版本管理能力。
 """
+
+import uuid
 from collections import defaultdict, deque
 from datetime import datetime
-import uuid
-from typing import Any, Optional
-
-from sqlalchemy import select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
 
 from models.workflow_definition import (
     WorkflowCompileResult,
@@ -22,17 +20,83 @@ from models.workflow_definition import (
     WorkflowValidationResult,
 )
 from models.workflow_orm import WorkflowDefinitionORM, WorkflowVersionORM
+from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-_REQUIRED_NODE_CONFIG_FIELDS: dict[str, list[str]] = {
+_REQUIRED_RUNTIME_NODE_CONFIG_FIELDS: dict[str, list[str]] = {
     "process": ["modelName"],
     "gate": ["gateType", "timeout"],
     "checker": ["confidenceThreshold"],
     "output": ["outputFormat"],
 }
 
+_REQUIRED_NODE_CONFIG_FIELDS_BY_TYPE: dict[str, list[str]] = {
+    "process": ["modelName"],
+    "llm": ["modelName"],
+    "agent_step": ["modelName"],
+    "gate": ["gateType", "timeout"],
+    "checker": ["confidenceThreshold"],
+    "fact_check": ["confidenceThreshold"],
+    "output": ["outputFormat"],
+    "tool": ["toolName"],
+    "tool_call": ["toolName"],
+    "http": ["url", "method"],
+    "sql": ["query"],
+    "code": ["source"],
+    "delay": ["durationMs"],
+    "subflow": ["workflowId"],
+}
+
+_SUPPORTED_RUNTIME_NODE_TYPES = {"input", "process", "gate", "checker", "output"}
+
+# richer taxonomy 到当前运行时五大类别的兼容映射。
+# 目标不是宣称执行引擎已经拥有全部专用语义，而是让前端编辑器可以先稳定提交 DSL，
+# 同时在发布校验和编译预览阶段给出明确、可预期的降级行为。
+_RUNTIME_NODE_TYPE_ALIASES: dict[str, str] = {
+    "start": "input",
+    "prompt": "input",
+    "end": "output",
+    "task": "process",
+    "llm": "process",
+    "agent_step": "process",
+    "tool": "process",
+    "tool_call": "process",
+    "knowledge": "process",
+    "rag_retrieve": "process",
+    "rerank": "process",
+    "output_parser": "process",
+    "memory_read": "process",
+    "memory_write": "process",
+    "http": "process",
+    "sql": "process",
+    "function": "process",
+    "webhook": "process",
+    "queue_publish": "process",
+    "email": "process",
+    "slack": "process",
+    "im": "process",
+    "file_loader": "process",
+    "code": "process",
+    "delay": "process",
+    "subflow": "process",
+    "switch": "gate",
+    "condition": "gate",
+    "if_else": "gate",
+    "loop": "gate",
+    "parallel": "gate",
+    "merge": "gate",
+    "retry_gate": "gate",
+    "approval": "gate",
+    "review": "gate",
+    "edit": "gate",
+    "assign": "gate",
+    "human_approval": "gate",
+    "fact_check": "checker",
+}
+
 _POSTGRES_SCHEMA_STATEMENTS = (
     "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS published_version_id VARCHAR(36)",
-    "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS published_at TIMESTAMP",
+    "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ",
     "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS published_by VARCHAR(36)",
     "ALTER TABLE workflow_versions ADD COLUMN IF NOT EXISTS name VARCHAR(255) DEFAULT ''",
     "ALTER TABLE workflow_versions ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
@@ -109,7 +173,7 @@ class WorkflowDefinitionService:
         *,
         published_only: bool = False,
         use_published_snapshot: bool = False,
-    ) -> Optional[WorkflowDefinition]:
+    ) -> WorkflowDefinition | None:
         """根据 ID 获取工作流定义。"""
         await self.ensure_schema(self.session)
 
@@ -122,7 +186,9 @@ class WorkflowDefinitionService:
             return None
 
         snapshot = None
-        published_snapshot = await self._get_published_snapshot(workflow) if workflow.is_published else None
+        published_snapshot = (
+            await self._get_published_snapshot(workflow) if workflow.is_published else None
+        )
         if use_published_snapshot:
             snapshot = published_snapshot
             if not snapshot:
@@ -164,7 +230,9 @@ class WorkflowDefinitionService:
 
         items: list[WorkflowDefinition] = []
         for workflow in workflows:
-            published_snapshot = await self._get_published_snapshot(workflow) if workflow.is_published else None
+            published_snapshot = (
+                await self._get_published_snapshot(workflow) if workflow.is_published else None
+            )
             snapshot = published_snapshot if use_published_snapshot else None
             if use_published_snapshot and snapshot is None:
                 continue
@@ -183,11 +251,13 @@ class WorkflowDefinitionService:
         workspace_id: str,
         user_id: str,
         data: WorkflowDefinitionUpdate,
-    ) -> Optional[WorkflowDefinition]:
+    ) -> WorkflowDefinition | None:
         """保存工作流草稿。"""
         await self.ensure_schema(self.session)
 
-        workflow = await self._get_definition_orm(workflow_id=workflow_id, workspace_id=workspace_id)
+        workflow = await self._get_definition_orm(
+            workflow_id=workflow_id, workspace_id=workspace_id
+        )
         if not workflow:
             return None
 
@@ -231,7 +301,9 @@ class WorkflowDefinitionService:
                     "restore_provenance": restore_provenance,
                     "restored_from_version_id": restore_provenance.get("restored_from_version_id"),
                     "restored_from_version": restore_provenance.get("restored_from_version"),
-                    "restore_source_snapshot_type": restore_provenance.get("restore_source_snapshot_type"),
+                    "restore_source_snapshot_type": restore_provenance.get(
+                        "restore_source_snapshot_type"
+                    ),
                 },
                 source_version_id=restore_provenance.get("restored_from_version_id"),
             )
@@ -248,17 +320,23 @@ class WorkflowDefinitionService:
         user_id: str,
         *,
         change_log: str = "",
-    ) -> tuple[Optional[WorkflowDefinition], WorkflowValidationResult, Optional[WorkflowVersionORM]]:
+    ) -> tuple[WorkflowDefinition | None, WorkflowValidationResult, WorkflowVersionORM | None]:
         """发布工作流当前草稿。"""
         await self.ensure_schema(self.session)
 
-        workflow = await self._get_definition_orm(workflow_id=workflow_id, workspace_id=workspace_id)
+        workflow = await self._get_definition_orm(
+            workflow_id=workflow_id, workspace_id=workspace_id
+        )
         if not workflow:
-            return None, WorkflowValidationResult(
-                mode=WorkflowValidationMode.PUBLISH,
-                is_valid=False,
-                errors=["工作流不存在"],
-            ), None
+            return (
+                None,
+                WorkflowValidationResult(
+                    mode=WorkflowValidationMode.PUBLISH,
+                    is_valid=False,
+                    errors=["工作流不存在"],
+                ),
+                None,
+            )
 
         definition = self._orm_to_model(workflow)
         validation = self.validate(definition, mode=WorkflowValidationMode.PUBLISH)
@@ -285,7 +363,9 @@ class WorkflowDefinitionService:
                     "restore_provenance": restore_provenance,
                     "restored_from_version_id": restore_provenance.get("restored_from_version_id"),
                     "restored_from_version": restore_provenance.get("restored_from_version"),
-                    "restore_source_snapshot_type": restore_provenance.get("restore_source_snapshot_type"),
+                    "restore_source_snapshot_type": restore_provenance.get(
+                        "restore_source_snapshot_type"
+                    ),
                 }
             )
         snapshot = await self._ensure_snapshot(
@@ -314,11 +394,13 @@ class WorkflowDefinitionService:
         self,
         workflow_id: str,
         workspace_id: str,
-    ) -> tuple[Optional[WorkflowDefinitionORM], list[WorkflowVersionORM]]:
+    ) -> tuple[WorkflowDefinitionORM | None, list[WorkflowVersionORM]]:
         """获取工作流版本历史。"""
         await self.ensure_schema(self.session)
 
-        workflow = await self._get_definition_orm(workflow_id=workflow_id, workspace_id=workspace_id)
+        workflow = await self._get_definition_orm(
+            workflow_id=workflow_id, workspace_id=workspace_id
+        )
         if not workflow:
             return None, []
 
@@ -335,11 +417,13 @@ class WorkflowDefinitionService:
         workflow_id: str,
         workspace_id: str,
         version_id: str,
-    ) -> tuple[Optional[WorkflowDefinitionORM], Optional[WorkflowVersionORM]]:
+    ) -> tuple[WorkflowDefinitionORM | None, WorkflowVersionORM | None]:
         """获取指定版本快照。"""
         await self.ensure_schema(self.session)
 
-        workflow = await self._get_definition_orm(workflow_id=workflow_id, workspace_id=workspace_id)
+        workflow = await self._get_definition_orm(
+            workflow_id=workflow_id, workspace_id=workspace_id
+        )
         if not workflow:
             return None, None
 
@@ -357,11 +441,13 @@ class WorkflowDefinitionService:
         workspace_id: str,
         version_a: int,
         version_b: int,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """对比两个版本的差异。"""
         await self.ensure_schema(self.session)
 
-        workflow = await self._get_definition_orm(workflow_id=workflow_id, workspace_id=workspace_id)
+        workflow = await self._get_definition_orm(
+            workflow_id=workflow_id, workspace_id=workspace_id
+        )
         if not workflow:
             return None
 
@@ -407,7 +493,7 @@ class WorkflowDefinitionService:
         version_id: str,
         *,
         change_log: str = "",
-    ) -> tuple[Optional[WorkflowDefinition], Optional[WorkflowVersionORM]]:
+    ) -> tuple[WorkflowDefinition | None, WorkflowVersionORM | None]:
         """从历史版本恢复到新的草稿版本。"""
         await self.ensure_schema(self.session)
 
@@ -495,10 +581,29 @@ class WorkflowDefinitionService:
         if not definition.nodes:
             errors.append("工作流必须至少包含一个节点")
 
-        input_nodes = [node for node in definition.nodes if node.type == "input"]
-        output_nodes = [node for node in definition.nodes if node.type == "output"]
-        process_nodes = [node for node in definition.nodes if node.type == "process"]
-        gate_nodes = [node for node in definition.nodes if node.type == "gate"]
+        runtime_types = {
+            node.id: self._resolve_runtime_node_type(node.type) for node in definition.nodes
+        }
+        input_nodes = [node for node in definition.nodes if runtime_types[node.id] == "input"]
+        output_nodes = [node for node in definition.nodes if runtime_types[node.id] == "output"]
+        process_nodes = [node for node in definition.nodes if runtime_types[node.id] == "process"]
+        gate_nodes = [node for node in definition.nodes if runtime_types[node.id] == "gate"]
+
+        runtime_warnings: set[str] = set()
+        for node in definition.nodes:
+            runtime_type = runtime_types[node.id]
+            label = (node.data.label or "").strip() or node.id
+            if runtime_type not in _SUPPORTED_RUNTIME_NODE_TYPES:
+                errors.append(
+                    f"节点 {label} 使用了暂不支持的类型 {node.type}，"
+                    "请改为受支持的运行时类别，或先补齐执行引擎语义。"
+                )
+                continue
+
+            if runtime_type != node.type:
+                runtime_warnings.add(
+                    f"节点 {label} 的类型 {node.type} 当前按 {runtime_type} 类别参与发布校验与编译预览。"
+                )
 
         if not input_nodes:
             errors.append("工作流必须包含至少一个输入节点")
@@ -548,35 +653,38 @@ class WorkflowDefinitionService:
 
         for node in definition.nodes:
             label = (node.data.label or "").strip()
+            runtime_type = runtime_types[node.id]
             if not label:
                 errors.append(f"节点 {node.id} 缺少名称")
 
-            if node.id not in incoming and node.type not in {"input"}:
+            if node.id not in incoming and runtime_type not in {"input"}:
                 if mode == WorkflowValidationMode.PUBLISH:
                     errors.append(f"节点 {label or node.id} 没有上游连接")
                 else:
                     warnings.append(f"节点 {label or node.id} 没有上游连接")
 
-            if node.id not in outgoing and node.type not in {"output"}:
+            if node.id not in outgoing and runtime_type not in {"output"}:
                 if mode == WorkflowValidationMode.PUBLISH:
                     errors.append(f"节点 {label or node.id} 没有下游连接")
                 else:
                     warnings.append(f"节点 {label or node.id} 没有下游连接")
 
-            if node.id not in incoming and node.id not in outgoing and node.type not in {"input", "output"}:
+            if (
+                node.id not in incoming
+                and node.id not in outgoing
+                and runtime_type not in {"input", "output"}
+            ):
                 warnings.append(f"节点 {label or node.id} 是孤立节点，没有连接")
 
             if mode == WorkflowValidationMode.PUBLISH:
                 config = node.data.config or {}
-                required_fields = _REQUIRED_NODE_CONFIG_FIELDS.get(node.type, [])
+                required_fields = self._get_required_node_config_fields(node.type, runtime_type)
                 missing_fields = [
-                    field
-                    for field in required_fields
-                    if config.get(field) in (None, "", [])
+                    field for field in required_fields if config.get(field) in (None, "", [])
                 ]
                 if missing_fields:
                     errors.append(
-                        f"节点 {label or node.id} 缺少必要配置：{', '.join(missing_fields)}"
+                        f"节点 {label or node.id} 缺少必要配置: {', '.join(missing_fields)}"
                     )
 
         if mode == WorkflowValidationMode.PUBLISH and definition.edges:
@@ -601,12 +709,14 @@ class WorkflowDefinitionService:
             ]
 
             if unreachable:
-                errors.append(f"存在无法从输入节点到达的节点：{', '.join(unreachable)}")
+                errors.append(f"存在无法从输入节点到达的节点: {', '.join(unreachable)}")
             if dead_end:
-                errors.append(f"存在无法流向输出节点的节点：{', '.join(dead_end)}")
+                errors.append(f"存在无法流向输出节点的节点: {', '.join(dead_end)}")
 
             if input_nodes and output_nodes and not (reachable_from_input & exit_ids):
                 errors.append("发布前至少需要一条从输入节点到输出节点的完整路径")
+
+        warnings.extend(sorted(runtime_warnings))
 
         return WorkflowValidationResult(
             mode=mode,
@@ -631,12 +741,20 @@ class WorkflowDefinitionService:
             "",
             "graph = StateGraph(WorkflowState)",
             "",
+            "# 说明: 扩展节点类型会先映射到当前运行时支持的五大类别。",
+            "# 这里生成的是兼容预览，不代表执行引擎已经拥有全部专用 handler。",
+            "",
             "# 添加节点",
         ]
 
         for node in definition.nodes:
             node_name = node.id.replace("-", "_")
-            code_lines.append(f"graph.add_node('{node_name}', {node.type}_handler)")
+            runtime_type = self._resolve_runtime_node_type(node.type)
+            if runtime_type != node.type:
+                code_lines.append(
+                    f"# 节点 {node.data.label or node.id}: 原始类型 {node.type} -> 兼容映射 {runtime_type}"
+                )
+            code_lines.append(f"graph.add_node('{node_name}', {runtime_type}_handler)")
 
         code_lines.append("")
         code_lines.append("# 添加边")
@@ -645,18 +763,32 @@ class WorkflowDefinitionService:
             target = edge.target.replace("-", "_")
             code_lines.append(f"graph.add_edge('{source}', '{target}')")
 
-        if input_nodes := [node for node in definition.nodes if node.type == "input"]:
+        if input_nodes := [
+            node
+            for node in definition.nodes
+            if self._resolve_runtime_node_type(node.type) == "input"
+        ]:
             entry = input_nodes[0].id.replace("-", "_")
             code_lines.extend(["", "# 设置入口", f"graph.set_entry_point('{entry}')"])
 
         code_lines.extend(["", "# 编译图", "workflow = graph.compile()"])
         return WorkflowCompileResult(success=True, graph_code="\n".join(code_lines))
 
+    def _resolve_runtime_node_type(self, node_type: str) -> str:
+        normalized = node_type.strip().lower().replace("-", "_")
+        return _RUNTIME_NODE_TYPE_ALIASES.get(normalized, normalized)
+
+    def _get_required_node_config_fields(self, node_type: str, runtime_type: str) -> list[str]:
+        normalized = node_type.strip().lower().replace("-", "_")
+        if normalized in _REQUIRED_NODE_CONFIG_FIELDS_BY_TYPE:
+            return _REQUIRED_NODE_CONFIG_FIELDS_BY_TYPE[normalized]
+        return _REQUIRED_RUNTIME_NODE_CONFIG_FIELDS.get(runtime_type, [])
+
     def version_to_dict(
         self,
         version: WorkflowVersionORM,
         *,
-        published_version_id: Optional[str] = None,
+        published_version_id: str | None = None,
     ) -> dict[str, Any]:
         """序列化版本快照。"""
         metadata = version.metadata_json or {}
@@ -683,7 +815,7 @@ class WorkflowDefinitionService:
         workflow_id: str,
         workspace_id: str,
         published_only: bool = False,
-    ) -> Optional[WorkflowDefinitionORM]:
+    ) -> WorkflowDefinitionORM | None:
         statement = select(WorkflowDefinitionORM).where(
             WorkflowDefinitionORM.id == workflow_id,
             WorkflowDefinitionORM.workspace_id == workspace_id,
@@ -698,7 +830,7 @@ class WorkflowDefinitionService:
     async def _get_published_snapshot(
         self,
         workflow: WorkflowDefinitionORM,
-    ) -> Optional[WorkflowVersionORM]:
+    ) -> WorkflowVersionORM | None:
         if workflow.published_version_id:
             result = await self.session.execute(
                 select(WorkflowVersionORM).where(
@@ -728,7 +860,7 @@ class WorkflowDefinitionService:
         self,
         workflow_id: str,
         version_number: int,
-    ) -> Optional[WorkflowVersionORM]:
+    ) -> WorkflowVersionORM | None:
         result = await self.session.execute(
             select(WorkflowVersionORM)
             .where(
@@ -741,8 +873,8 @@ class WorkflowDefinitionService:
 
     def _extract_restore_provenance(
         self,
-        metadata: Optional[dict[str, Any]],
-    ) -> Optional[dict[str, Any]]:
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
         if not metadata:
             return None
 
@@ -756,7 +888,7 @@ class WorkflowDefinitionService:
     async def _backfill_published_snapshot(
         self,
         workflow: WorkflowDefinitionORM,
-    ) -> Optional[WorkflowVersionORM]:
+    ) -> WorkflowVersionORM | None:
         if not workflow.is_published:
             return None
 
@@ -816,7 +948,9 @@ class WorkflowDefinitionService:
             return snapshot
 
         result = await self.session.execute(
-            select(WorkflowVersionORM.id).where(WorkflowVersionORM.workflow_id == workflow.id).limit(1)
+            select(WorkflowVersionORM.id)
+            .where(WorkflowVersionORM.workflow_id == workflow.id)
+            .limit(1)
         )
         if result.scalar_one_or_none() is not None:
             return None
@@ -854,7 +988,7 @@ class WorkflowDefinitionService:
         self,
         workflow: WorkflowDefinitionORM,
         version_number: int,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         if workflow.version == version_number:
             return {
                 "version": workflow.version,
@@ -891,8 +1025,8 @@ class WorkflowDefinitionService:
         user_id: str,
         snapshot_type: str,
         change_log: str,
-        metadata: Optional[dict[str, Any]] = None,
-        source_version_id: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        source_version_id: str | None = None,
         force_refresh: bool = False,
     ) -> WorkflowVersionORM:
         """为当前草稿版本创建或更新唯一快照。"""
@@ -960,8 +1094,8 @@ class WorkflowDefinitionService:
         self,
         orm: WorkflowDefinitionORM,
         *,
-        snapshot: Optional[WorkflowVersionORM] = None,
-        published_snapshot: Optional[WorkflowVersionORM] = None,
+        snapshot: WorkflowVersionORM | None = None,
+        published_snapshot: WorkflowVersionORM | None = None,
     ) -> WorkflowDefinition:
         source_name = snapshot.name if snapshot else orm.name
         source_description = snapshot.description if snapshot else orm.description
