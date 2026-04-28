@@ -29,16 +29,14 @@ export default function RootLayout({
       data-theme="dark"
       data-theme-preference="system"
     >
-      <head>
-        <script
-          id="promptchain-theme-init"
-          dangerouslySetInnerHTML={{ __html: buildThemeInitScript() }}
-        />
-      </head>
       <body
         suppressHydrationWarning
         style={fontVariableStyle}
       >
+        <script
+          id="promptchain-theme-init"
+          dangerouslySetInnerHTML={{ __html: buildThemeInitScript() }}
+        />
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
