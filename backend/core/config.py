@@ -13,35 +13,41 @@ load_dotenv()
 
 
 class Settings:
-    """应用配置（从环境变量读取）"""
+    """应用配置（从环境变量读取）
 
-    # 服务配置
-    API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
-    API_PORT: int = int(os.getenv("API_PORT", "8000"))
-    DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
+    在 __init__ 时读取环境变量，确保每次创建新实例都获取当前的环境值。
+    这样便于单元测试中通过 monkeypatch 动态修改环境变量。
+    """
 
-    # 数据库配置
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain",
-    )
-
-    # LLM 配置
-    DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
-    DEFAULT_MODEL_NAME: str = os.getenv("DEFAULT_MODEL_NAME", "gpt-4o")
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GITHUB_MODEL_TOKEN: str = os.getenv("GITHUB_MODEL_TOKEN", "")
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-
-    # CORS 配置
-    CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "*").split(",")
-
-    # 应用信息
+    # ...existing code...
     APP_TITLE: str = "PromptChain API"
     APP_DESCRIPTION: str = "基于 Prompt Chain 的自动化内容生成系统"
     APP_VERSION: str = "1.0.0"
+
+    def __init__(self):
+        """在初始化时动态读取环境变量，支持测试中的 monkeypatch。"""
+        # 服务配置
+        self.API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
+        self.API_PORT: int = int(os.getenv("API_PORT", "8000"))
+        self.DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
+
+        # 数据库配置
+        self.DATABASE_URL: str = os.getenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain",
+        )
+
+        # LLM 配置 - 关键修改：这里现在在 __init__ 中读取，支持 monkeypatch
+        self.DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
+        self.DEFAULT_MODEL_NAME: str = os.getenv("DEFAULT_MODEL_NAME", "gpt-4o")
+        self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+        self.ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+        self.GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+        self.GITHUB_MODEL_TOKEN: str = os.getenv("GITHUB_MODEL_TOKEN", "")
+        self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+        # CORS 配置
+        self.CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "*").split(",")
 
 
 @lru_cache
