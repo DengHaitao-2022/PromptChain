@@ -140,7 +140,7 @@ class OllamaProvider(LLMProvider):
         self.base_url = _read_env("OLLAMA_BASE_URL") or DEFAULT_OLLAMA_BASE_URL
 
     def get_model(self, model_name: str | None = None, **kwargs) -> BaseChatModel:
-        from langchain_community.chat_models import ChatOllama
+        from langchain_ollama import ChatOllama
 
         return ChatOllama(
             model=self.resolve_model_name(model_name),

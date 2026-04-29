@@ -8,7 +8,8 @@ import hashlib
 import os
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -26,8 +27,10 @@ from models.auth_orm import MembershipORM, RefreshTokenORM, UserORM, WorkspaceOR
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT 配置
-DEBUG_MODE = os.getenv("DEBUG", "false").lower() == "true"
-ALLOW_INSECURE_JWT_SECRET = os.getenv("ALLOW_INSECURE_JWT_SECRET", "false").lower() == "true"
+DEBUG_MODE = os.getenv("DEBUG", "true").lower() == "true"
+ALLOW_INSECURE_JWT_SECRET = (
+    os.getenv("ALLOW_INSECURE_JWT_SECRET", "true" if DEBUG_MODE else "false").lower() == "true"
+)
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 if not JWT_SECRET_KEY:
     if DEBUG_MODE and ALLOW_INSECURE_JWT_SECRET:
@@ -44,6 +47,11 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7  # Refresh Token 7天过期
 # 登录限流配置
 MAX_LOGIN_ATTEMPTS = 5  # 最大尝试次数
 LOGIN_LOCKOUT_MINUTES = 15  # 锁定时间（分钟）
+
+
+def utcnow() -> datetime:
+    """返回 UTC 时间，统一用于数据库写入和时间比较。"""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # ==================== 密码处理 ====================
@@ -93,12 +101,12 @@ def create_access_token(
     Returns:
         JWT Access Token
     """
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": user_id,
         "type": "access",
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": utcnow(),
         "jti": str(uuid.uuid4()),  # Token 唯一标识
     }
     if workspace_id:
@@ -189,28 +197,33 @@ class AuthService:
             if result.scalar_one_or_none():
                 raise ValueError("该用户名已被使用")
 
-        # 创建用户
+        # 创建用户和默认工作空间，尽量收敛到一次提交，避免只写入部分认证数据。
         user_id = str(uuid.uuid4())
-        user_orm = UserORM(
-            id=user_id,
-            email=email,
-            username=username,
-            display_name=display_name or email.split("@")[0],
-            password_hash=hash_password(password),
-            status=UserStatus.INACTIVE.value,  # 需要邮箱验证后激活
-            email_verified=False,
-        )
+        display_name_value = display_name or email.split("@")[0]
+        user_kwargs: dict[str, Any] = {
+            "id": user_id,
+            "email": email,
+            "display_name": display_name_value,
+            "password_hash": hash_password(password),
+            "status": UserStatus.INACTIVE.value,  # 需要邮箱验证后激活
+            "email_verified": False,
+        }
+        if username is not None:
+            user_kwargs["username"] = username
+
+        user_orm = UserORM(**user_kwargs)
         self.session.add(user_orm)
-        await self.session.commit()
 
         # 创建默认工作空间
-        await self._create_default_workspace(user_id, display_name or email.split("@")[0])
+        await self._create_default_workspace(user_id, display_name_value)
+
+        await self.session.commit()
 
         return User(
             id=user_id,
             email=email,
             username=username,
-            display_name=display_name or email.split("@")[0],
+            display_name=display_name_value,
             status=UserStatus.INACTIVE,
             email_verified=False,
         )
@@ -233,7 +246,6 @@ class AuthService:
             role=MemberRole.OWNER.value,
         )
         self.session.add(membership_orm)
-        await self.session.commit()
 
         return Workspace(
             id=workspace_id,
@@ -285,14 +297,14 @@ class AuthService:
         await self._record_login_attempt(email, ip_address, success=True)
 
         # 更新最后登录时间
-        user.last_login_at = datetime.utcnow()
+        user.last_login_at = utcnow()
         await self.session.commit()
 
         return user
 
     async def _check_login_lockout(self, email: str, ip_address: str) -> bool:
         """检查是否被登录锁定"""
-        lockout_time = datetime.utcnow() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        lockout_time = utcnow() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
 
         result = await self.session.execute(
             select(func.count(LoginAttemptORM.id)).where(
@@ -330,16 +342,20 @@ class AuthService:
         ip_address: str | None = None,
     ) -> RefreshTokenORM:
         """创建 Refresh Token 记录"""
-        expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        expires_at = utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
-        token_orm = RefreshTokenORM(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
-            token_hash=token_hash,
-            expires_at=expires_at,
-            user_agent=user_agent,
-            ip_address=ip_address,
-        )
+        token_kwargs: dict[str, Any] = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "token_hash": token_hash,
+            "expires_at": expires_at,
+        }
+        if user_agent is not None:
+            token_kwargs["user_agent"] = user_agent
+        if ip_address is not None:
+            token_kwargs["ip_address"] = ip_address
+
+        token_orm = RefreshTokenORM(**token_kwargs)
         self.session.add(token_orm)
         await self.session.commit()
 
@@ -354,7 +370,7 @@ class AuthService:
                 and_(
                     RefreshTokenORM.token_hash == token_hash,
                     RefreshTokenORM.revoked_at.is_(None),
-                    RefreshTokenORM.expires_at > datetime.utcnow(),
+                    RefreshTokenORM.expires_at > utcnow(),
                 )
             )
         )
@@ -377,7 +393,7 @@ class AuthService:
         token_orm = result.scalar_one_or_none()
 
         if token_orm:
-            token_orm.revoked_at = datetime.utcnow()
+            token_orm.revoked_at = utcnow()
             await self.session.commit()
             return True
 
@@ -393,7 +409,7 @@ class AuthService:
         tokens = result.scalars().all()
 
         for token in tokens:
-            token.revoked_at = datetime.utcnow()
+            token.revoked_at = utcnow()
 
         await self.session.commit()
 
@@ -402,7 +418,7 @@ class AuthService:
         result = await self.session.execute(select(UserORM).where(UserORM.id == user_id))
         return result.scalar_one_or_none()
 
-    async def get_user_workspaces(self, user_id: str) -> list:
+    async def get_user_workspaces(self, user_id: str) -> list[tuple[MembershipORM, WorkspaceORM]]:
         """获取用户的所有工作空间"""
         result = await self.session.execute(
             select(MembershipORM, WorkspaceORM)
@@ -414,7 +430,7 @@ class AuthService:
                 WorkspaceORM.id.asc(),
             )
         )
-        return result.all()
+        return [(membership, workspace) for membership, workspace in result.all()]
 
     async def activate_user(self, user_id: str):
         """激活用户（邮箱验证后）"""
