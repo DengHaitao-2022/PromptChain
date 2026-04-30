@@ -248,10 +248,20 @@ export const workflowDefinitionApi = {
   list: () =>
     requestResult<{ workflows: WorkflowDefinition[] }>('/api/workflows'),
 
+  // 获取首页匿名可见的已发布工作流列表（使用统一 Result 包装）
+  listPublic: () =>
+    requestResult<{ workflows: WorkflowDefinition[] }>('/api/workflows/public'),
+
   // 获取特定工作流的版本（使用统一 Result 包装）
   getVersions: (workflowId: string) =>
     requestResult<{ versions: WorkflowVersion[] }>(
       `/api/workflows/${workflowId}/versions`
+    ),
+
+  // 获取首页匿名可见工作流的已发布版本（使用统一 Result 包装）
+  getPublicVersions: (workflowId: string) =>
+    requestResult<{ versions: WorkflowVersion[] }>(
+      `/api/workflows/public/${workflowId}/versions`
     ),
 };
 

@@ -109,12 +109,12 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-left: 14px;
+  padding-left: 30px;
 }
 
 .pipelineLine {
   position: absolute;
-  left: 11px;
+  left: 12px;
   top: 10px;
   bottom: 10px;
   width: 2px;
@@ -127,8 +127,13 @@
   width: 100%;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(180deg, rgba(56, 189, 248, 0.1), rgba(56, 189, 248, 0.94) 56%, rgba(245, 158, 11, 0.72));
-  box-shadow: 0 0 18px rgba(56, 189, 248, 0.2);
+  background: linear-gradient(
+    180deg,
+    var(--page-highlight-soft, rgba(56, 189, 248, 0.1)),
+    var(--page-highlight-strong, #7dd3fc) 56%,
+    var(--page-accent, #f59e0b)
+  );
+  box-shadow: 0 0 18px var(--page-highlight-soft, rgba(56, 189, 248, 0.2));
   transform-origin: top center;
   transform: scaleY(0.36);
   transition: transform 260ms ease-out;
@@ -185,8 +190,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid rgba(56, 189, 248, 0.18);
+  background: var(--page-icon-bg, rgba(56, 189, 248, 0.1));
+  border: 1px solid var(--page-icon-border, rgba(56, 189, 248, 0.18));
   color: var(--page-highlight-strong, #7dd3fc);
 }
 
@@ -221,6 +226,10 @@
 }
 
 .telemetryCard {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
   min-height: 110px;
   padding: 16px;
   border-radius: 20px;
@@ -230,22 +239,26 @@
 
 .telemetryLabel {
   display: inline-flex;
-  margin-top: 12px;
+  margin: 0;
+  align-items: center;
   color: var(--page-highlight-strong, #7dd3fc);
-  font-size: 0.72rem;
+  font-size: 0.78rem;
+  line-height: 1.2;
   font-family: var(--font-mono);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
 }
 
 .telemetryCard strong {
   display: block;
-  margin-top: 8px;
+  grid-column: 1 / -1;
+  margin-top: 16px;
   color: var(--page-text, #f8fbff);
   font-size: 1rem;
 }
 
 .telemetryCard p {
+  grid-column: 1 / -1;
   margin: 8px 0 0;
   color: var(--page-muted-strong, #8ea3ba);
   font-size: 0.8rem;
