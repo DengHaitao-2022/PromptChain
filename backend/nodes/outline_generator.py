@@ -21,7 +21,12 @@ from models import (
     NodeRunStatus,
     Outline,
 )
-from services import get_artifact_store, get_current_model_info, get_structured_llm
+from services import (
+    get_artifact_store,
+    get_current_model_info,
+    get_structured_llm,
+    invoke_with_llm_retry,
+)
 
 OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰、逻辑连贯的文章提纲。
 
@@ -124,16 +129,18 @@ async def generate_outline(state: dict) -> dict:
 
         # 调用 LLM
         start_time = datetime.utcnow()
-        outline: Outline = await chain.ainvoke(
-            {
-                "goal": intent_card.goal,
-                "topic": intent_card.topic,
-                "audience": intent_card.audience.value,
-                "tone": intent_card.tone.value,
-                "length": intent_card.length,
-                "must_include": ", ".join(intent_card.must_include) or "无特殊要求",
-                "must_exclude": ", ".join(intent_card.must_exclude) or "无",
-            }
+        outline: Outline = await invoke_with_llm_retry(
+            lambda: chain.ainvoke(
+                {
+                    "goal": intent_card.goal,
+                    "topic": intent_card.topic,
+                    "audience": intent_card.audience.value,
+                    "tone": intent_card.tone.value,
+                    "length": intent_card.length,
+                    "must_include": ", ".join(intent_card.must_include) or "无特殊要求",
+                    "must_exclude": ", ".join(intent_card.must_exclude) or "无",
+                }
+            )
         )
         end_time = datetime.utcnow()
 
@@ -189,6 +196,8 @@ async def generate_outline(state: dict) -> dict:
             "outline_artifact_id": artifact.id,
             "outline_node_run_id": node_run.id,
             "awaiting_outline_approval": True,
+            "outline_approved": False,
+            "user_decision": None,
             "outline_feedback": None,  # 清除反馈
         }
 
@@ -211,7 +220,7 @@ async def approve_outline(state: dict) -> dict:
         - outline_approved: bool
         - outline_feedback: str (如果需要重新生成)
     """
-    outline: Outline = state["outline"]
+    outline = Outline.model_validate(state["outline"])
     user_decision = state.get("user_decision", {"action": "approve"})
     workflow_run_id = state["workflow_run_id"]
     store = get_artifact_store()
@@ -250,7 +259,7 @@ async def approve_outline(state: dict) -> dict:
             approved_outline.is_approved = True
 
             artifact = await store.create_artifact(
-                type=ArtifactType.OUTLINE,
+                artifact_type=ArtifactType.OUTLINE,
                 content=approved_outline.model_dump(),
                 workflow_run_id=workflow_run_id,
                 node_run_id=node_run.id,
@@ -287,6 +296,7 @@ async def approve_outline(state: dict) -> dict:
                 "outline_artifact_id": artifact.id,
                 "outline_approved": True,
                 "awaiting_outline_approval": False,
+                "user_decision": None,
             }
 
         if action == "modify":
@@ -296,7 +306,7 @@ async def approve_outline(state: dict) -> dict:
             modified_outline.is_approved = True
 
             artifact = await store.create_artifact(
-                type=ArtifactType.OUTLINE,
+                artifact_type=ArtifactType.OUTLINE,
                 content=modified_outline.model_dump(),
                 workflow_run_id=workflow_run_id,
                 node_run_id=node_run.id,
@@ -333,6 +343,7 @@ async def approve_outline(state: dict) -> dict:
                 "outline_artifact_id": artifact.id,
                 "outline_approved": True,
                 "awaiting_outline_approval": False,
+                "user_decision": None,
             }
 
         node_run.complete(NodeRunStatus.COMPLETED)
@@ -357,6 +368,7 @@ async def approve_outline(state: dict) -> dict:
             "outline": None,
             "outline_approved": False,
             "awaiting_outline_approval": False,
+            "user_decision": None,
             "outline_feedback": user_decision.get("feedback", "请重新生成提纲"),
         }
     except Exception as e:

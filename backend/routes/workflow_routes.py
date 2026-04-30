@@ -274,13 +274,10 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
             action="事实核查审批",
             paused_detail="当前工作流已手动暂停，请先恢复后再处理事实核查审批。",
         )
-        result = await workflow.resume(
+        result = await workflow.approve_fact_check(
             workflow_run_id=workflow_run_id,
-            user_input={
-                "fact_check_decisions": body.decisions,
-                "manual_corrections": body.manual_corrections,
-                "awaiting_fact_check_approval": False,
-            },
+            decisions=body.decisions,
+            manual_corrections=body.manual_corrections,
         )
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
         return _build_workflow_response(

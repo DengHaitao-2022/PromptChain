@@ -12,6 +12,12 @@ from db.postgres_store import (
 )
 
 from .artifact_store import ArtifactStore, get_artifact_store
+from .llm_errors import (
+    format_workflow_error,
+    is_llm_rate_limit_error,
+    is_llm_service_error,
+    is_retryable_llm_error,
+)
 from .llm_provider import (
     AnthropicProvider,
     GitHubProvider,
@@ -24,6 +30,7 @@ from .llm_provider import (
     get_llm,
     get_structured_llm,
 )
+from .llm_retry import invoke_with_llm_retry
 from .rerun_service import RerunService, get_rerun_service
 from .trace_service import TraceService, get_trace_service
 
@@ -46,6 +53,11 @@ __all__ = [
     "get_llm",
     "get_structured_llm",
     "get_current_model_info",
+    "format_workflow_error",
+    "is_llm_rate_limit_error",
+    "is_retryable_llm_error",
+    "is_llm_service_error",
+    "invoke_with_llm_retry",
     # rerun_service
     "RerunService",
     "get_rerun_service",

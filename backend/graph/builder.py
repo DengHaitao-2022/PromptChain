@@ -104,6 +104,7 @@ def build_content_generation_graph():
         "generate_outline",
         should_regenerate_outline,
         {
+            "approve_outline": "approve_outline",
             "regenerate": "generate_outline",
             "generate_content": "generate_content",
             END: END,  # 暂停等待用户审批
@@ -126,6 +127,7 @@ def build_content_generation_graph():
         "check_facts",
         should_proceed_after_fact_check,
         {
+            "approve_fact_check": "approve_fact_check",
             "finalize": "finalize",
             END: END,  # 暂停等待用户确认高风险项
         },

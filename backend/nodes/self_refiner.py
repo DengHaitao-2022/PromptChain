@@ -13,7 +13,15 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from models import ArtifactType, IntentCard, LLMCallRecord, NodeRun, NodeRunStatus, OutlineSection
-from services import get_artifact_store, get_current_model_info, get_llm, get_structured_llm
+from services import (
+    format_workflow_error,
+    get_artifact_store,
+    get_current_model_info,
+    get_llm,
+    get_structured_llm,
+    invoke_with_llm_retry,
+    is_llm_rate_limit_error,
+)
 
 
 class RefinementFeedback(BaseModel):
@@ -104,6 +112,39 @@ def _build_section_order(state: dict, sections: dict[str, str]) -> list[str]:
     ]
 
 
+async def _create_final_content_artifact(
+    store,
+    state: dict,
+    workflow_run_id: str,
+    node_run_id: str,
+    sections: dict[str, str],
+    section_artifact_ids: dict[str, str],
+    refinement_history: list[dict],
+    *,
+    skipped_reason: str | None = None,
+):
+    return await store.create_artifact(
+        artifact_type=ArtifactType.FINAL_CONTENT,
+        content={
+            "sections": sections,
+            "section_order": _build_section_order(state, sections),
+            "compiled_content": _build_compiled_content(state, sections),
+            "refinement_history": refinement_history,
+            "total_iterations": len(refinement_history),
+            "refinement_skipped_reason": skipped_reason,
+        },
+        workflow_run_id=workflow_run_id,
+        node_run_id=node_run_id,
+        parent_version_id=state.get("final_content_artifact_id"),
+        metadata={
+            "section_artifact_ids": section_artifact_ids,
+            "total_iterations": len(refinement_history),
+            "refinement_skipped": skipped_reason is not None,
+            "refinement_skipped_reason": skipped_reason,
+        },
+    )
+
+
 async def generate_feedback(state: dict, section_id: str, content: str) -> RefinementFeedback:
     """为单个章节生成反馈"""
     intent_card: IntentCard = state["intent_card"]
@@ -122,16 +163,18 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
     prompt = ChatPromptTemplate.from_template(FEEDBACK_PROMPT)
     chain = prompt | llm
 
-    feedback = await chain.ainvoke(
-        {
-            "audience": intent_card.audience.value,
-            "tone": intent_card.tone.value,
-            "target_words": target_words,
-            "section_title": section_title,
-            "section_id": section_id,
-            "content": content,
-            "current_words": len(content),
-        }
+    feedback = await invoke_with_llm_retry(
+        lambda: chain.ainvoke(
+            {
+                "audience": intent_card.audience.value,
+                "tone": intent_card.tone.value,
+                "target_words": target_words,
+                "section_title": section_title,
+                "section_id": section_id,
+                "content": content,
+                "current_words": len(content),
+            }
+        )
     )
 
     return feedback
@@ -156,7 +199,9 @@ async def refine_section(
 质量评分: {feedback.quality_score}/10
 """
 
-    result = await chain.ainvoke({"original_content": original_content, "feedback": feedback_text})
+    result = await invoke_with_llm_retry(
+        lambda: chain.ainvoke({"original_content": original_content, "feedback": feedback_text})
+    )
 
     return result.content
 
@@ -189,11 +234,12 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
     )
     await store.create_node_run(node_run)
 
+    current_content = dict(draft_sections)
+    refinement_history: list[dict] = []
+    latest_section_artifact_ids = dict(state.get("section_artifact_ids", {}))
+
     try:
-        current_content = dict(draft_sections)
-        refinement_history = []
         section_lookup = _build_section_lookup(state)
-        latest_section_artifact_ids = dict(state.get("section_artifact_ids", {}))
 
         for iteration in range(max_iterations):
             iteration_record = {
@@ -211,7 +257,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
 
                 feedback_list.append(feedback)
                 feedback_artifact = await store.create_artifact(
-                    type=ArtifactType.REFINEMENT_FEEDBACK,
+                    artifact_type=ArtifactType.REFINEMENT_FEEDBACK,
                     content={
                         "iteration": iteration + 1,
                         "section_id": section_id,
@@ -264,7 +310,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
 
                 current_content[feedback.section_id] = refined_content
                 refined_section_artifact = await store.create_artifact(
-                    type=ArtifactType.SECTION_CONTENT,
+                    artifact_type=ArtifactType.SECTION_CONTENT,
                     content=_build_section_artifact_content(section, refined_content),
                     workflow_run_id=workflow_run_id,
                     node_run_id=node_run.id,
@@ -298,22 +344,14 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
             refinement_history.append(iteration_record)
 
         # 创建最终内容 Artifact
-        artifact = await store.create_artifact(
-            type=ArtifactType.FINAL_CONTENT,
-            content={
-                "sections": current_content,
-                "section_order": _build_section_order(state, current_content),
-                "compiled_content": _build_compiled_content(state, current_content),
-                "refinement_history": refinement_history,
-                "total_iterations": len(refinement_history),
-            },
-            workflow_run_id=workflow_run_id,
-            node_run_id=node_run.id,
-            parent_version_id=state.get("final_content_artifact_id"),
-            metadata={
-                "section_artifact_ids": latest_section_artifact_ids,
-                "total_iterations": len(refinement_history),
-            },
+        artifact = await _create_final_content_artifact(
+            store,
+            state,
+            workflow_run_id,
+            node_run.id,
+            current_content,
+            latest_section_artifact_ids,
+            refinement_history,
         )
         node_run.output_artifact_ids.append(artifact.id)
 
@@ -330,6 +368,39 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
         }
 
     except Exception as e:
+        if is_llm_rate_limit_error(e) and current_content:
+            skipped_reason = format_workflow_error(e)
+            refinement_history.append(
+                {
+                    "iteration": len(refinement_history) + 1,
+                    "feedbacks": [],
+                    "revised_sections": [],
+                    "skipped": True,
+                    "reason": skipped_reason,
+                }
+            )
+            artifact = await _create_final_content_artifact(
+                store,
+                state,
+                workflow_run_id,
+                node_run.id,
+                current_content,
+                latest_section_artifact_ids,
+                refinement_history,
+                skipped_reason=skipped_reason,
+            )
+            node_run.output_artifact_ids.append(artifact.id)
+            node_run.complete(NodeRunStatus.COMPLETED)
+            await store.update_node_run(node_run)
+            return {
+                **state,
+                "final_content": current_content,
+                "final_content_artifact_id": artifact.id,
+                "refinement_history": refinement_history,
+                "section_artifact_ids": latest_section_artifact_ids,
+                "refinement_skipped_reason": skipped_reason,
+            }
+
         node_run.complete(NodeRunStatus.FAILED, str(e))
         await store.update_node_run(node_run)
         raise

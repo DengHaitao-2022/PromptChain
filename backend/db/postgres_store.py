@@ -362,6 +362,7 @@ class PostgresArtifactStore:
                     .where(ArtifactORM.workflow_run_id == workflow_run_id)
                     .where(ArtifactORM.type == artifact_type.value)
                     .order_by(ArtifactORM.version.desc())
+                    .limit(1)
                 )
                 latest = result.scalar_one_or_none()
                 version = latest.version + 1 if latest else 1
