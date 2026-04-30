@@ -1,26 +1,15 @@
+import type { CSSProperties } from "react";
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { buildThemeInitScript } from "@/lib/theme";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-inter",
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-jetbrains-mono",
-});
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-space-grotesk",
-});
+// 避免 next/font/google 在本地网络不可达时阻塞页面编译，直接提供离线安全的字体变量回退。
+const fontVariableStyle = {
+  "--font-inter": "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  "--font-jetbrains-mono": "'JetBrains Mono', 'SFMono-Regular', 'SFMono', 'Fira Code', monospace",
+  "--font-space-grotesk": "'Space Grotesk', Inter, system-ui, sans-serif",
+} as CSSProperties;
 
 export const metadata: Metadata = {
   title: "PromptChain - AI驱动的内容生成平台",
@@ -40,16 +29,14 @@ export default function RootLayout({
       data-theme="dark"
       data-theme-preference="system"
     >
-      <head>
+      <body
+        suppressHydrationWarning
+        style={fontVariableStyle}
+      >
         <script
           id="promptchain-theme-init"
           dangerouslySetInnerHTML={{ __html: buildThemeInitScript() }}
         />
-      </head>
-      <body
-        suppressHydrationWarning
-        className={`${inter.variable} ${jetbrainsMono.variable} ${spaceGrotesk.variable}`}
-      >
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
