@@ -246,6 +246,62 @@ class WorkflowDefinitionService:
             )
         return items
 
+    async def list_public_published(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[WorkflowDefinition]:
+        """列出首页匿名可见的已发布工作流。"""
+        await self.ensure_schema(self.session)
+
+        statement = (
+            select(WorkflowDefinitionORM)
+            .where(
+                WorkflowDefinitionORM.is_deleted == 0,
+                WorkflowDefinitionORM.is_published == 1,
+            )
+            .order_by(WorkflowDefinitionORM.updated_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+
+        result = await self.session.execute(statement)
+        workflows = result.scalars().all()
+
+        items: list[WorkflowDefinition] = []
+        for workflow in workflows:
+            published_snapshot = await self._get_published_snapshot(workflow)
+            if not published_snapshot:
+                continue
+            items.append(
+                self._orm_to_model(
+                    workflow,
+                    snapshot=published_snapshot,
+                    published_snapshot=published_snapshot,
+                )
+            )
+        return items
+
+    async def get_public_published_version(
+        self,
+        workflow_id: str,
+    ) -> tuple[WorkflowDefinitionORM | None, WorkflowVersionORM | None]:
+        """获取匿名可见工作流的已发布版本快照。"""
+        await self.ensure_schema(self.session)
+
+        result = await self.session.execute(
+            select(WorkflowDefinitionORM).where(
+                WorkflowDefinitionORM.id == workflow_id,
+                WorkflowDefinitionORM.is_deleted == 0,
+                WorkflowDefinitionORM.is_published == 1,
+            )
+        )
+        workflow = result.scalar_one_or_none()
+        if not workflow:
+            return None, None
+
+        return workflow, await self._get_published_snapshot(workflow)
+
     async def update(
         self,
         workflow_id: str,
