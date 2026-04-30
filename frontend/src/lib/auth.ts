@@ -5,7 +5,7 @@
  * 最终授权仍以服务端校验为准。
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const PREFERRED_WORKSPACE_STORAGE_KEY = 'promptchain:workspace_id';
 
 export type UserStatus = 'active' | 'inactive' | 'suspended';
@@ -193,7 +193,7 @@ function persistPreferredWorkspace(workspaceId: string | null) {
  * 登录
  */
 export async function login(data: LoginRequest): Promise<AuthResponse> {
-  const response = await fetch(`${API_BASE}/auth/login`, {
+  const response = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -211,7 +211,7 @@ export async function login(data: LoginRequest): Promise<AuthResponse> {
  * 注册
  */
 export async function register(data: RegisterRequest): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/auth/register`, {
+  const response = await fetch(`${API_BASE}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -242,7 +242,7 @@ export async function logout(): Promise<void> {
 export async function refreshToken(): Promise<boolean> {
   try {
     const workspaceId = getPreferredWorkspace();
-    const response = await fetch(`${API_BASE}/auth/refresh`, {
+    const response = await fetch(`${API_BASE}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -259,7 +259,7 @@ export async function refreshToken(): Promise<boolean> {
  */
 export async function getCurrentUser(): Promise<AuthState | null> {
   try {
-    const response = await fetch(`${API_BASE}/me`, {
+    const response = await fetch(`${API_BASE}/api/me`, {
       credentials: 'include',
     });
 
@@ -267,7 +267,7 @@ export async function getCurrentUser(): Promise<AuthState | null> {
       if (response.status === 401) {
         const refreshed = await refreshToken();
         if (refreshed) {
-          const retryResponse = await fetch(`${API_BASE}/me`, {
+          const retryResponse = await fetch(`${API_BASE}/api/me`, {
             credentials: 'include',
           });
 
@@ -290,7 +290,7 @@ export async function getCurrentUser(): Promise<AuthState | null> {
  * 切换工作空间
  */
 export async function switchWorkspace(workspaceId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/workspace-context/switch`, {
+  const response = await fetch(`${API_BASE}/api/workspace-context/switch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -308,7 +308,7 @@ export async function switchWorkspace(workspaceId: string): Promise<void> {
  * 验证邮箱
  */
 export async function verifyEmail(token: string): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/auth/verify-email`, {
+  const response = await fetch(`${API_BASE}/api/auth/verify-email`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token }),
@@ -325,7 +325,7 @@ export async function verifyEmail(token: string): Promise<{ message: string }> {
  * 忘记密码
  */
 export async function forgotPassword(email: string): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/auth/forgot-password`, {
+  const response = await fetch(`${API_BASE}/api/auth/forgot-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email }),
@@ -342,7 +342,7 @@ export async function forgotPassword(email: string): Promise<{ message: string }
  * 重置密码
  */
 export async function resetPassword(token: string, password: string): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/auth/reset-password`, {
+  const response = await fetch(`${API_BASE}/api/auth/reset-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, password }),
@@ -359,7 +359,7 @@ export async function resetPassword(token: string, password: string): Promise<{ 
  * 获取工作空间成员
  */
 export async function listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]> {
-  const response = await fetch(`${API_BASE}/workspaces/${workspaceId}/members`, {
+  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/members`, {
     credentials: 'include',
   });
 
@@ -378,7 +378,7 @@ export async function inviteWorkspaceMember(
   workspaceId: string,
   payload: InviteMemberRequest,
 ): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/workspaces/${workspaceId}/invite`, {
+  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/invite`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -399,7 +399,7 @@ export async function updateWorkspaceMemberRole(
   membershipId: string,
   role: Exclude<Role, 'owner'>,
 ): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/memberships/${membershipId}`, {
+  const response = await fetch(`${API_BASE}/api/memberships/${membershipId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -417,7 +417,7 @@ export async function updateWorkspaceMemberRole(
  * 移除成员
  */
 export async function removeWorkspaceMember(membershipId: string): Promise<{ message: string }> {
-  const response = await fetch(`${API_BASE}/memberships/${membershipId}`, {
+  const response = await fetch(`${API_BASE}/api/memberships/${membershipId}`, {
     method: 'DELETE',
     credentials: 'include',
   });
@@ -436,7 +436,7 @@ export async function updateWorkspaceMemberAccess(
   userId: string,
   status: WorkspaceAccessStatus,
 ): Promise<{ message: string; workspace_access?: WorkspaceAccessStatus }> {
-  const response = await fetch(`${API_BASE}/admin/users/${userId}/status`, {
+  const response = await fetch(`${API_BASE}/api/admin/users/${userId}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',

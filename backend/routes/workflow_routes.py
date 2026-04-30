@@ -32,7 +32,8 @@ from routes.workflow_helpers import (
     _simplify_state,
 )
 
-router = APIRouter(prefix="/api/workflow", tags=["workflow"])
+# 由 app.py 统一补齐 /api 前缀，这里只保留资源级前缀，避免重复拼接
+router = APIRouter(prefix="/workflow", tags=["workflow"])
 logger = logging.getLogger(__name__)
 INTERNAL_SERVER_ERROR = "Internal server error"
 

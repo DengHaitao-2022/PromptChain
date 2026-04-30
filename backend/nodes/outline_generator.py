@@ -151,7 +151,7 @@ async def generate_outline(state: dict) -> dict:
         # 创建 Artifact
         parent_artifact_id = state.get("outline_artifact_id")  # 如果是重新生成
         artifact = await store.create_artifact(
-            type=ArtifactType.OUTLINE,
+            artifact_type=ArtifactType.OUTLINE,
             content=outline.model_dump(),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,

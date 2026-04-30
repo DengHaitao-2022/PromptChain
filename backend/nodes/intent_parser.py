@@ -126,7 +126,7 @@ async def parse_intent(state: dict) -> dict:
 
         # 创建 Artifact
         artifact = await store.create_artifact(
-            type=ArtifactType.INTENT_CARD,
+            artifact_type=ArtifactType.INTENT_CARD,
             content=intent_card.model_dump(),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,
@@ -226,7 +226,7 @@ async def clarify_intent(state: dict) -> dict:
         # 创建新版本 Artifact
         parent_artifact_id = state.get("intent_card_artifact_id")
         artifact = await store.create_artifact(
-            type=ArtifactType.INTENT_CARD,
+            artifact_type=ArtifactType.INTENT_CARD,
             content=updated_intent_card.model_dump(),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,

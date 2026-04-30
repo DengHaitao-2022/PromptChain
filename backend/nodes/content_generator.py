@@ -167,7 +167,7 @@ async def generate_all_sections(state: dict) -> dict:
 
             # 创建章节 Artifact
             artifact = await store.create_artifact(
-                type=ArtifactType.SECTION_CONTENT,
+                artifact_type=ArtifactType.SECTION_CONTENT,
                 content=_build_section_artifact_content(section, content),
                 workflow_run_id=workflow_run_id,
                 node_run_id=node_run.id,
