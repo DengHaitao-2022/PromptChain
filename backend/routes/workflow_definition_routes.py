@@ -93,6 +93,25 @@ async def list_workflows(
         )
 
 
+@router.get("/public")
+async def list_public_workflows(
+    limit: int = 50,
+    offset: int = 0,
+):
+    """获取首页匿名可见的已发布工作流列表。"""
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        service = WorkflowDefinitionService(session)
+        workflows = await service.list_public_published(limit=limit, offset=offset)
+
+        return Result.success(
+            data={
+                "workflows": [workflow.model_dump() for workflow in workflows],
+                "total": len(workflows),
+            }
+        )
+
+
 @router.post("")
 async def create_workflow(
     request: Request,

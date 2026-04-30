@@ -15,6 +15,7 @@ import {
   ScrollText,
   ShieldCheck,
   Sparkles,
+  UserPlus,
   Waypoints,
 } from 'lucide-react';
 import styles from './page.module.css';
@@ -264,7 +265,7 @@ export default function Home() {
     const fetchWorkflows = async () => {
       try {
         setError(null);
-        const response = await workflowDefinitionApi.list();
+        const response = await workflowDefinitionApi.listPublic();
         const workflowData = response.workflows || [];
 
         const hasPublished = workflowData.some((w: WorkflowDefinition) => 'is_published' in w);
@@ -303,7 +304,7 @@ export default function Home() {
     const fetchVersions = async () => {
       try {
         setError(null);
-        const response = await workflowDefinitionApi.getVersions(selectedWorkflow);
+        const response = await workflowDefinitionApi.getPublicVersions(selectedWorkflow);
         const versionData = response.versions || [];
         setVersions(versionData);
         if (versionData.length > 0) {
@@ -542,7 +543,13 @@ export default function Home() {
                 运行历史
               </Link>
             </nav>
-            <ThemeSwitcher />
+            <div className={styles.headerActions}>
+              <ThemeSwitcher className={styles.headerTheme} showStatus={false} compact />
+              <Link href="/register" className={styles.registerButton}>
+                <UserPlus size={15} aria-hidden="true" />
+                注册
+              </Link>
+            </div>
           </div>
         </div>
       </header>
@@ -556,8 +563,8 @@ export default function Home() {
             </div>
 
             <h1 className={styles.heroTitle}>
-              把模糊需求
-              <span className={styles.heroTitleAccent}>编排成可发布内容</span>
+              让灵感进入
+              <span className={styles.heroTitleAccent}>可追踪的 AI 生产线</span>
             </h1>
 
             <p className={styles.heroSubtitle}>

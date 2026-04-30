@@ -122,6 +122,37 @@ async def list_versions(
         )
 
 
+@router.get("/public/{workflow_id}/versions")
+async def list_public_versions(
+    workflow_id: str,
+):
+    """获取首页匿名可见工作流的已发布版本。"""
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        service = WorkflowDefinitionService(session)
+        workflow, published_snapshot = await service.get_public_published_version(workflow_id)
+        if workflow is None or published_snapshot is None:
+            return Result.not_found(message="工作流不存在")
+
+        return Result.success(
+            data={
+                "workflow_id": workflow_id,
+                "current_version": published_snapshot.version,
+                "is_published": True,
+                "published_version_id": workflow.published_version_id,
+                "published_at": workflow.published_at.isoformat()
+                if workflow.published_at
+                else None,
+                "versions": [
+                    service.version_to_dict(
+                        published_snapshot,
+                        published_version_id=workflow.published_version_id,
+                    )
+                ],
+            }
+        )
+
+
 @router.get("/{workflow_id}/versions/compare")
 async def compare_versions(
     request: Request,
