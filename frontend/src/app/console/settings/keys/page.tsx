@@ -7,9 +7,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { KeyRound, LockKeyhole, Plus, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { apiUrl } from '@/lib/api-config';
 import styles from '../settings.module.css';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
 interface Secret {
   id: string;
@@ -47,8 +46,8 @@ export default function KeysPage() {
 
     try {
       const [secretsRes, keysRes] = await Promise.all([
-        fetch(`${API_BASE}/admin/secrets`, { credentials: 'include' }),
-        fetch(`${API_BASE}/admin/api-keys`, { credentials: 'include' }),
+        fetch(apiUrl('/admin/secrets'), { credentials: 'include' }),
+        fetch(apiUrl('/admin/api-keys'), { credentials: 'include' }),
       ]);
 
       if (secretsRes.ok) {

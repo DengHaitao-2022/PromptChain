@@ -4,7 +4,7 @@
  * 与后端 FastAPI 通信的统一接口
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { apiUrl, serviceUrl } from './api-config';
 
 // 类型定义
 export type WorkflowStatus =
@@ -198,7 +198,7 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const url = apiUrl(endpoint);
 
   const response = await fetch(url, {
     headers: {
@@ -246,22 +246,22 @@ async function requestResult<T>(
 export const workflowDefinitionApi = {
   // 获取工作流列表（使用统一 Result 包装）
   list: () =>
-    requestResult<{ workflows: WorkflowDefinition[] }>('/api/workflows'),
+    requestResult<{ workflows: WorkflowDefinition[] }>('/workflows'),
 
   // 获取首页匿名可见的已发布工作流列表（使用统一 Result 包装）
   listPublic: () =>
-    requestResult<{ workflows: WorkflowDefinition[] }>('/api/workflows/public'),
+    requestResult<{ workflows: WorkflowDefinition[] }>('/workflows/public'),
 
   // 获取特定工作流的版本（使用统一 Result 包装）
   getVersions: (workflowId: string) =>
     requestResult<{ versions: WorkflowVersion[] }>(
-      `/api/workflows/${workflowId}/versions`
+      `/workflows/${workflowId}/versions`
     ),
 
   // 获取首页匿名可见工作流的已发布版本（使用统一 Result 包装）
   getPublicVersions: (workflowId: string) =>
     requestResult<{ versions: WorkflowVersion[] }>(
-      `/api/workflows/public/${workflowId}/versions`
+      `/workflows/public/${workflowId}/versions`
     ),
 };
 
@@ -269,7 +269,7 @@ export const workflowDefinitionApi = {
 export const workflowApi = {
   // 启动新工作流
   start: (userInput: string, workflowDefinitionId?: string, workflowVersionId?: string) =>
-    request<WorkflowResponse>('/api/workflow/start', {
+    request<WorkflowResponse>('/workflow/start', {
       method: 'POST',
       body: JSON.stringify({
         user_input: userInput,
@@ -279,11 +279,11 @@ export const workflowApi = {
     }),
 
   // 获取运行记录列表
-  getRuns: () => request<{ data: { runs: WorkflowRunSummary[] } }>('/api/workflow/runs'),
+  getRuns: () => request<{ data: { runs: WorkflowRunSummary[] } }>('/workflow/runs'),
 
   // 获取工作流状态
   getStatus: (workflowRunId: string) =>
-    request<WorkflowResponse>(`/api/workflow/${workflowRunId}`),
+    request<WorkflowResponse>(`/workflow/${workflowRunId}`),
 
   // 审批提纲
   approveOutline: (
@@ -292,7 +292,7 @@ export const workflowApi = {
     feedback?: string,
     modifiedOutline?: Outline
   ) =>
-    request<WorkflowResponse>(`/api/workflow/${workflowRunId}/approve-outline`, {
+    request<WorkflowResponse>(`/workflow/${workflowRunId}/approve-outline`, {
       method: 'POST',
       body: JSON.stringify({
         action,
@@ -303,7 +303,7 @@ export const workflowApi = {
 
   // 澄清回答
   clarify: (workflowRunId: string, clarifications: Record<string, string>) =>
-    request<WorkflowResponse>(`/api/workflow/${workflowRunId}/clarify`, {
+    request<WorkflowResponse>(`/workflow/${workflowRunId}/clarify`, {
       method: 'POST',
       body: JSON.stringify({ clarifications }),
     }),
@@ -314,7 +314,7 @@ export const workflowApi = {
     decisions: Record<string, FactCheckDecision>,
     manualCorrections: Record<string, string> = {}
   ) =>
-    request<WorkflowResponse>(`/api/workflow/${workflowRunId}/approve-fact-check`, {
+    request<WorkflowResponse>(`/workflow/${workflowRunId}/approve-fact-check`, {
       method: 'POST',
       body: JSON.stringify({
         decisions,
@@ -324,14 +324,14 @@ export const workflowApi = {
 
   // 手动暂停
   pause: (workflowRunId: string, reason?: string) =>
-    request<WorkflowResponse>(`/api/workflow/${workflowRunId}/pause`, {
+    request<WorkflowResponse>(`/workflow/${workflowRunId}/pause`, {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
 
   // 恢复手动暂停
   resume: (workflowRunId: string) =>
-    request<WorkflowResponse>(`/api/workflow/${workflowRunId}/resume`, {
+    request<WorkflowResponse>(`/workflow/${workflowRunId}/resume`, {
       method: 'POST',
       body: JSON.stringify({}),
     }),
@@ -339,7 +339,7 @@ export const workflowApi = {
   // 获取重跑选项
   getRerunOptions: (workflowRunId: string) =>
     request<{ options: Record<string, unknown>[] }>(
-      `/api/workflow/${workflowRunId}/rerun-options`
+      `/workflow/${workflowRunId}/rerun-options`
     ),
 
   // 执行重跑
@@ -349,7 +349,7 @@ export const workflowApi = {
     updatedInput?: Record<string, unknown>,
     reason?: string
   ) =>
-    request<Record<string, unknown>>(`/api/workflow/${workflowRunId}/rerun`, {
+    request<Record<string, unknown>>(`/workflow/${workflowRunId}/rerun`, {
       method: 'POST',
       body: JSON.stringify({
         from_node: fromNode,
@@ -363,26 +363,38 @@ export const workflowApi = {
 export const traceApi = {
   // 获取工作流追踪
   getWorkflowTrace: (workflowRunId: string) =>
-    request<WorkflowTrace>(`/api/trace/${workflowRunId}`),
+    request<WorkflowTrace>(`/trace/${workflowRunId}`),
 
   // 获取节点详情
   getNodeDetail: (nodeRunId: string) =>
-    request<Record<string, unknown>>(`/api/trace/node/${nodeRunId}`),
+    request<Record<string, unknown>>(`/trace/node/${nodeRunId}`),
 };
 
 // Artifact API
 export const artifactApi = {
   // 获取 Artifact
   get: (artifactId: string) =>
-    request<Record<string, unknown>>(`/api/artifact/${artifactId}`),
+    request<Record<string, unknown>>(`/artifact/${artifactId}`),
 
   // 获取版本历史
   getHistory: (artifactId: string) =>
     request<{ history: Record<string, unknown>[] }>(
-      `/api/artifact/${artifactId}/history`
+      `/artifact/${artifactId}/history`
     ),
 };
 
 // 健康检查
 export const healthCheck = () =>
-  request<{ status: string; service: string; version: string }>('/');
+  fetch(serviceUrl('/'), {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    credentials: 'include',
+  }).then(async (response) => {
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json() as Promise<{ status: string; service: string; version: string }>;
+  });

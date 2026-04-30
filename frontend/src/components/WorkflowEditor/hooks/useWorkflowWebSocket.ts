@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+import { webSocketUrl } from '@/lib/api-config';
 
 // ==================== 类型定义 ====================
 
@@ -44,7 +43,7 @@ export function useWorkflowWebSocket(
   const connect = useCallback(() => {
     if (!workflowRunId) return;
 
-    const ws = new WebSocket(`${WS_BASE}/ws/workflow/${workflowRunId}`);
+    const ws = new WebSocket(webSocketUrl(`/ws/workflow/${workflowRunId}`));
 
     ws.onopen = () => {
       setConnected(true);
@@ -132,7 +131,7 @@ export function useUserNotifications(
   useEffect(() => {
     if (!userId) return;
 
-    const ws = new WebSocket(`${WS_BASE}/ws/user/${userId}`);
+    const ws = new WebSocket(webSocketUrl(`/ws/user/${userId}`));
 
     ws.onopen = () => {
       setConnected(true);
