@@ -28,9 +28,9 @@ from models import (
 )
 from services import (
     get_artifact_store,
-    get_current_model_info,
-    get_llm,
-    get_structured_llm,
+    get_current_model_info_for_workspace,
+    get_llm_for_workspace,
+    get_structured_llm_for_workspace,
     invoke_with_llm_retry,
 )
 
@@ -253,11 +253,22 @@ def _build_final_content_payload(
 # ==================== CoVe 四步验证链 ====================
 
 
-async def extract_fact_claims(content: str, section_id: str) -> list[FactClaim]:
+async def extract_fact_claims(
+    content: str,
+    section_id: str,
+    workspace_id: str | None = None,
+    model_provider_id: str | None = None,
+    model_name: str | None = None,
+) -> list[FactClaim]:
     """
     步骤1：从内容中提取事实性声明
     """
-    llm = get_structured_llm(ClaimList)
+    llm = await get_structured_llm_for_workspace(
+        ClaimList,
+        workspace_id,
+        model=model_name,
+        model_provider_id=model_provider_id,
+    )
     prompt = ChatPromptTemplate.from_template(EXTRACT_CLAIMS_PROMPT)
     chain = prompt | llm
 
@@ -270,11 +281,21 @@ async def extract_fact_claims(content: str, section_id: str) -> list[FactClaim]:
     return result.claims
 
 
-async def generate_verification_question(claim: FactClaim) -> str:
+async def generate_verification_question(
+    claim: FactClaim,
+    workspace_id: str | None = None,
+    model_provider_id: str | None = None,
+    model_name: str | None = None,
+) -> str:
     """
     步骤2：为声明生成验证问题
     """
-    llm = get_llm(temperature=0.3)
+    llm = await get_llm_for_workspace(
+        workspace_id,
+        model=model_name,
+        model_provider_id=model_provider_id,
+        temperature=0.3,
+    )
     prompt = ChatPromptTemplate.from_template(GENERATE_VERIFICATION_QUESTIONS_PROMPT)
     chain = prompt | llm
 
@@ -285,13 +306,23 @@ async def generate_verification_question(claim: FactClaim) -> str:
     return result.content.strip()
 
 
-async def execute_verification(question: str) -> str:
+async def execute_verification(
+    question: str,
+    workspace_id: str | None = None,
+    model_provider_id: str | None = None,
+    model_name: str | None = None,
+) -> str:
     """
     步骤3：独立回答验证问题（Factored模式）
 
     关键：不提供原始声明作为上下文，避免确认偏误
     """
-    llm = get_llm(temperature=0.2)  # 低温度以获得更确定的答案
+    llm = await get_llm_for_workspace(
+        workspace_id,
+        model=model_name,
+        model_provider_id=model_provider_id,
+        temperature=0.2,
+    )  # 低温度以获得更确定的答案
     prompt = ChatPromptTemplate.from_template(EXECUTE_VERIFICATION_PROMPT)
     chain = prompt | llm
 
@@ -301,12 +332,22 @@ async def execute_verification(question: str) -> str:
 
 
 async def evaluate_claim_accuracy(
-    claim: FactClaim, verification_question: str, verification_answer: str
+    claim: FactClaim,
+    verification_question: str,
+    verification_answer: str,
+    workspace_id: str | None = None,
+    model_provider_id: str | None = None,
+    model_name: str | None = None,
 ) -> VerificationResult:
     """
     步骤4：评估声明准确性
     """
-    llm = get_structured_llm(VerificationEvaluation)
+    llm = await get_structured_llm_for_workspace(
+        VerificationEvaluation,
+        workspace_id,
+        model=model_name,
+        model_provider_id=model_provider_id,
+    )
     prompt = ChatPromptTemplate.from_template(EVALUATE_CLAIM_PROMPT)
     chain = prompt | llm
 
@@ -350,6 +391,9 @@ async def check_facts(state: dict) -> dict:
     # 获取要核查的内容
     content_dict = state.get("final_content") or state.get("draft_sections", {})
     workflow_run_id = state["workflow_run_id"]
+    workspace_id = state.get("workspace_id")
+    model_provider_id = state.get("model_provider_id")
+    model_name = state.get("model_name")
     store = get_artifact_store()
 
     # 创建节点运行记录
@@ -378,13 +422,23 @@ async def check_facts(state: dict) -> dict:
         for section_id, content in content_dict.items():
             # 步骤1：提取事实声明
             start_time = datetime.utcnow()
-            claims = await extract_fact_claims(content, section_id)
+            claims = await extract_fact_claims(
+                content,
+                section_id,
+                workspace_id,
+                model_provider_id,
+                model_name,
+            )
             end_time = datetime.utcnow()
 
             all_claims.extend(claims)
 
             # 记录LLM调用（动态获取模型配置）
-            model_info = get_current_model_info()
+            model_info = await get_current_model_info_for_workspace(
+                workspace_id,
+                model_provider_id=model_provider_id,
+                model=model_name,
+            )
             llm_call = LLMCallRecord(
                 model=model_info["model"],
                 provider=model_info["provider"],
@@ -398,19 +452,40 @@ async def check_facts(state: dict) -> dict:
             for claim in claims:
                 # 步骤2：生成验证问题
                 start_time = datetime.utcnow()
-                question = await generate_verification_question(claim)
+                question = await generate_verification_question(
+                    claim,
+                    workspace_id,
+                    model_provider_id,
+                    model_name,
+                )
 
                 # 步骤3：独立执行验证
-                answer = await execute_verification(question)
+                answer = await execute_verification(
+                    question,
+                    workspace_id,
+                    model_provider_id,
+                    model_name,
+                )
 
                 # 步骤4：评估准确性
-                result = await evaluate_claim_accuracy(claim, question, answer)
+                result = await evaluate_claim_accuracy(
+                    claim,
+                    question,
+                    answer,
+                    workspace_id,
+                    model_provider_id,
+                    model_name,
+                )
                 end_time = datetime.utcnow()
 
                 all_results.append(result)
 
                 # 记录LLM调用
-                model_info = get_current_model_info()
+                model_info = await get_current_model_info_for_workspace(
+                    workspace_id,
+                    model_provider_id=model_provider_id,
+                    model=model_name,
+                )
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],

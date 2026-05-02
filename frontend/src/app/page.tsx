@@ -21,7 +21,14 @@ import {
 import styles from './page.module.css';
 import { HomeWorkflowPreview } from '@/components/HomeWorkflowPreview/HomeWorkflowPreview';
 import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher';
-import { workflowDefinitionApi, workflowApi, WorkflowDefinition, WorkflowVersion } from '@/lib/api';
+import {
+  modelProviderApi,
+  workflowDefinitionApi,
+  workflowApi,
+  ModelProviderSummary,
+  WorkflowDefinition,
+  WorkflowVersion,
+} from '@/lib/api';
 
 type LaunchState = 'idle' | 'launching' | 'handoff';
 
@@ -133,6 +140,22 @@ const trustSignals: TrustSignal[] = [
   },
 ];
 
+const modelProviderLabels: Record<string, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google Gemini',
+  github: 'GitHub Models',
+  ollama: 'Ollama',
+};
+
+function getModelProviderLabel(provider: string) {
+  return modelProviderLabels[provider] || provider;
+}
+
+function getModelProviderModel(provider: ModelProviderSummary) {
+  return provider.config?.model || provider.config?.model_name || '供应商默认模型';
+}
+
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
@@ -155,6 +178,8 @@ export default function Home() {
   const [versions, setVersions] = useState<WorkflowVersion[]>([]);
   const [selectedWorkflow, setSelectedWorkflow] = useState<string>('');
   const [selectedVersion, setSelectedVersion] = useState<string>('');
+  const [modelProviders, setModelProviders] = useState<ModelProviderSummary[]>([]);
+  const [selectedModelProviderId, setSelectedModelProviderId] = useState<string>('');
   const [publishedCompatibilityMessage, setPublishedCompatibilityMessage] = useState<string | null>(null);
 
   const railRef = useRef<HTMLElement | null>(null);
@@ -292,6 +317,26 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const fetchModelProviders = async () => {
+      try {
+        const response = await modelProviderApi.list();
+        const launchableProviders = (response.providers || []).filter(
+          (provider) => provider.enabled && provider.runtime_supported
+        );
+        setModelProviders(launchableProviders);
+        setSelectedModelProviderId(
+          launchableProviders.find((provider) => provider.is_default)?.id || ''
+        );
+      } catch {
+        setModelProviders([]);
+        setSelectedModelProviderId('');
+      }
+    };
+
+    fetchModelProviders();
+  }, []);
+
+  useEffect(() => {
     if (!selectedWorkflow) {
       setVersions([]);
       setSelectedVersion('');
@@ -350,7 +395,9 @@ export default function Home() {
     setLaunchState('launching');
 
     try {
-      const result = await workflowApi.start(userInput.trim(), selectedWorkflow, selectedVersion);
+      const result = await workflowApi.start(userInput.trim(), selectedWorkflow, selectedVersion, {
+        modelProviderId: selectedModelProviderId || undefined,
+      });
 
       setWorkflowRunId(result.workflow_run_id);
       setLaunchState('handoff');
@@ -420,12 +467,17 @@ export default function Home() {
   };
 
   const isLaunchDisabled = !userInput.trim() || isLoading || workflows.length === 0 || versions.length === 0;
+  const selectedModelProvider = modelProviders.find(
+    (provider) => provider.id === selectedModelProviderId
+  );
 
   let currentLaunchHint = launchState === 'launching'
     ? '正在依次编排意图解析、提纲生成与事实核查节点。'
     : launchState === 'handoff'
       ? `工作流 ${workflowRunId?.slice(0, 8) ?? '准备中'} 已建立，准备进入详情页。`
-      : '点击后会先完成首页启动反馈，再跳转到工作流详情。';
+      : selectedModelProvider
+        ? `本次将使用「${selectedModelProvider.name} · ${getModelProviderModel(selectedModelProvider)}」作为基模。`
+        : '点击后会先完成首页启动反馈，再跳转到工作流详情。';
 
   if (workflows.length === 0) {
     currentLaunchHint = '没有可用的工作流，请联系管理员配置。';
@@ -655,6 +707,23 @@ export default function Home() {
                         )}
                       </select>
                     </div>
+                    <div className={styles.selectWrapper} style={{ flex: '1 1 220px' }}>
+                      <label htmlFor="model-provider-select" className={styles.selectLabel}>基模</label>
+                      <select
+                        id="model-provider-select"
+                        className={styles.customSelect}
+                        value={selectedModelProviderId}
+                        onChange={(event) => setSelectedModelProviderId(event.target.value)}
+                        disabled={isLoading}
+                      >
+                        <option value="">工作空间默认模型</option>
+                        {modelProviders.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.name} · {getModelProviderLabel(provider.provider)} · {getModelProviderModel(provider)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   {publishedCompatibilityMessage && (
@@ -662,6 +731,12 @@ export default function Home() {
                       {publishedCompatibilityMessage}
                     </div>
                   )}
+
+                  {modelProviders.length === 0 ? (
+                    <div className={styles.compatibilityNote}>
+                      未读取到可选模型配置，本次启动将使用工作空间默认模型或后端环境变量。
+                    </div>
+                  ) : null}
 
                   {isSuggestionPanelVisible ? (
                     <div className={styles.inputHints} role="region" aria-label="快捷提示模板">

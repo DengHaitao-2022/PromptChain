@@ -20,7 +20,12 @@ from models import (
     Outline,
     OutlineSection,
 )
-from services import get_artifact_store, get_current_model_info, get_llm, invoke_with_llm_retry
+from services import (
+    get_artifact_store,
+    get_current_model_info_for_workspace,
+    get_llm_for_workspace,
+    invoke_with_llm_retry,
+)
 
 SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据以下信息撰写文章的一个章节。
 
@@ -84,7 +89,12 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
     intent_card: IntentCard = state["intent_card"]
     outline: Outline = state["outline"]
 
-    llm = get_llm(temperature=0.7)
+    llm = await get_llm_for_workspace(
+        state.get("workspace_id"),
+        model=state.get("model_name"),
+        model_provider_id=state.get("model_provider_id"),
+        temperature=0.7,
+    )
     prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
     chain = prompt | llm
 
@@ -157,7 +167,11 @@ async def generate_all_sections(state: dict) -> dict:
             generated_sections[section.id] = content
 
             # 记录 LLM 调用（动态获取模型配置）
-            model_info = get_current_model_info()
+            model_info = await get_current_model_info_for_workspace(
+                state.get("workspace_id"),
+                model_provider_id=state.get("model_provider_id"),
+                model=state.get("model_name"),
+            )
             llm_call = LLMCallRecord(
                 model=model_info["model"],
                 provider=model_info["provider"],
@@ -292,7 +306,11 @@ async def regenerate_section(state: dict) -> dict:
         section_artifact_ids[section_id] = artifact.id
 
         # 完成节点
-        model_info = get_current_model_info()
+        model_info = await get_current_model_info_for_workspace(
+            state.get("workspace_id"),
+            model_provider_id=state.get("model_provider_id"),
+            model=state.get("model_name"),
+        )
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],

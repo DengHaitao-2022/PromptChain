@@ -27,8 +27,11 @@ from .llm_provider import (
     OllamaProvider,
     OpenAIProvider,
     get_current_model_info,
+    get_current_model_info_for_workspace,
     get_llm,
+    get_llm_for_workspace,
     get_structured_llm,
+    get_structured_llm_for_workspace,
 )
 from .llm_retry import invoke_with_llm_retry
 from .rerun_service import RerunService, get_rerun_service
@@ -51,8 +54,11 @@ __all__ = [
     "GitHubProvider",
     "OllamaProvider",
     "get_llm",
+    "get_llm_for_workspace",
     "get_structured_llm",
+    "get_structured_llm_for_workspace",
     "get_current_model_info",
+    "get_current_model_info_for_workspace",
     "format_workflow_error",
     "is_llm_rate_limit_error",
     "is_retryable_llm_error",

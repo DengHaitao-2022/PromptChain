@@ -4,16 +4,11 @@
 提供模型配置、密钥管理、API Key 管理、审计日志、Dashboard 等功能
 """
 
-import base64
 import hashlib
-import logging
-import os
 import secrets
 import uuid
 from datetime import datetime, timedelta
-from functools import lru_cache
 
-from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import and_, desc, func
@@ -31,15 +26,22 @@ from models.admin_orm import ApiKeyORM, AuditLogORM, ModelProviderORM, SecretORM
 from models.auth_models import UserStatus
 from models.auth_orm import MembershipORM, UserORM
 from routes.auth_routes import get_current_user
-from services.auth_service import JWT_SECRET_KEY
+from services.llm_provider import (
+    LLMProviderFactory,
+    get_current_model_info_for_workspace,
+)
 from services.permission_service import (
     PermissionService,
     resolve_membership_role,
     serialize_membership_role,
 )
+from services.secret_crypto import (
+    decrypt_config_value,
+    encrypt_config_value,
+    encrypt_secret,
+)
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 class UpdateUserStatusRequest(BaseModel):
@@ -49,6 +51,9 @@ class UpdateUserStatusRequest(BaseModel):
 
 
 # ==================== 辅助函数 ====================
+
+_RUNTIME_DEFAULT_CONFIG_KEY = "_runtime_default"
+_SENSITIVE_CONFIG_KEYWORDS = ("key", "secret", "token", "credential", "password")
 
 
 async def get_workspace_id_from_request(request: Request) -> str:
@@ -60,36 +65,94 @@ async def get_workspace_id_from_request(request: Request) -> str:
     return workspace_id
 
 
-def _derive_fernet_key(source: str) -> bytes:
-    """从任意字符串稳定导出 Fernet key。"""
-    digest = hashlib.sha256(source.encode("utf-8")).digest()
-    return base64.urlsafe_b64encode(digest)
+def _is_sensitive_config_key(key: str) -> bool:
+    """识别模型配置中的敏感字段。"""
+    lowered_key = key.lower()
+    return any(keyword in lowered_key for keyword in _SENSITIVE_CONFIG_KEYWORDS)
 
 
-@lru_cache
-def _get_fernet() -> Fernet:
-    """获取密钥加密器，优先使用显式配置的 SECRETS_ENCRYPTION_KEY。"""
-    configured_key = os.getenv("SECRETS_ENCRYPTION_KEY", "").strip()
-    if configured_key:
-        return Fernet(configured_key.encode("utf-8"))
+def _prepare_model_config(
+    current_config: dict | None,
+    incoming_config: dict | None,
+    *,
+    set_as_default: bool | None = None,
+) -> dict:
+    """合并并加密模型配置；空密钥或掩码值表示沿用旧值。"""
+    prepared = dict(current_config or {})
 
-    # 兼容：未配置专用密钥时，使用 JWT_SECRET_KEY 派生，避免明文/伪加密存储。
-    logger.warning("SECRETS_ENCRYPTION_KEY 未配置，使用 JWT_SECRET_KEY 派生临时密钥")
-    return Fernet(_derive_fernet_key(JWT_SECRET_KEY))
+    for key, value in (incoming_config or {}).items():
+        if key == _RUNTIME_DEFAULT_CONFIG_KEY:
+            continue
+        if value in (None, "", "***"):
+            continue
+
+        if _is_sensitive_config_key(key):
+            prepared[key] = encrypt_config_value(value)
+        else:
+            prepared[key] = value
+
+    if set_as_default is True:
+        prepared[_RUNTIME_DEFAULT_CONFIG_KEY] = True
+    elif set_as_default is False:
+        prepared.pop(_RUNTIME_DEFAULT_CONFIG_KEY, None)
+
+    return prepared
 
 
-def encrypt_secret(value: str) -> str:
-    """加密密钥。"""
-    return _get_fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+def _mask_model_config(config: dict | None) -> dict:
+    """返回前端可展示的脱敏配置，隐藏内部运行标记。"""
+    masked: dict = {}
+    for key, value in (config or {}).items():
+        if key == _RUNTIME_DEFAULT_CONFIG_KEY:
+            continue
+        if _is_sensitive_config_key(key):
+            masked[key] = "***" if value not in (None, "") else ""
+        else:
+            masked[key] = decrypt_config_value(value)
+    return masked
 
 
-def decrypt_secret(ciphertext: str) -> str:
-    """解密密钥，兼容历史 Base64 存储。"""
-    try:
-        return _get_fernet().decrypt(ciphertext.encode("utf-8")).decode("utf-8")
-    except InvalidToken:
-        # 历史数据兼容：旧版本用 Base64 存储。
-        return base64.b64decode(ciphertext.encode("utf-8")).decode("utf-8")
+def _is_default_model_provider(provider: ModelProviderORM) -> bool:
+    """判断模型供应商是否是当前工作空间运行默认。"""
+    return bool((provider.config or {}).get(_RUNTIME_DEFAULT_CONFIG_KEY))
+
+
+def _model_provider_to_response(provider: ModelProviderORM) -> dict:
+    """统一模型供应商列表响应，避免敏感配置外泄。"""
+    supported_providers = set(LLMProviderFactory.get_supported_provider_names())
+    return {
+        "id": provider.id,
+        "provider": provider.provider,
+        "name": provider.name,
+        "description": provider.description,
+        "enabled": provider.enabled,
+        "is_default": _is_default_model_provider(provider),
+        "runtime_supported": provider.provider in supported_providers,
+        "created_at": provider.created_at,
+        "updated_at": provider.updated_at,
+        "config": _mask_model_config(provider.config),
+    }
+
+
+async def _clear_workspace_default_model_provider(
+    session,
+    workspace_id: str,
+    *,
+    exclude_provider_id: str | None = None,
+) -> None:
+    """清理同一工作空间内其他默认标记，确保运行入口唯一。"""
+    result = await session.execute(
+        select(ModelProviderORM).where(ModelProviderORM.workspace_id == workspace_id)
+    )
+    for provider in result.scalars().all():
+        if exclude_provider_id and provider.id == exclude_provider_id:
+            continue
+        if _is_default_model_provider(provider):
+            provider.config = _prepare_model_config(
+                provider.config,
+                None,
+                set_as_default=False,
+            )
 
 
 async def log_audit(
@@ -341,31 +404,35 @@ async def list_model_providers(request: Request):
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "model_provider", "read")
 
-        # 获取列表
         result = await session.execute(
-            select(ModelProviderORM).where(ModelProviderORM.workspace_id == workspace_id)
+            select(ModelProviderORM)
+            .where(ModelProviderORM.workspace_id == workspace_id)
+            .order_by(desc(ModelProviderORM.updated_at), desc(ModelProviderORM.created_at))
         )
         providers = result.scalars().all()
 
-        # 脱敏返回
         return {
-            "providers": [
-                {
-                    "id": p.id,
-                    "provider": p.provider,
-                    "name": p.name,
-                    "description": p.description,
-                    "enabled": p.enabled,
-                    "created_at": p.created_at,
-                    # config 中的敏感信息需要脱敏
-                    "config": {
-                        k: "***" if "key" in k.lower() or "secret" in k.lower() else v
-                        for k, v in (p.config or {}).items()
-                    },
-                }
-                for p in providers
-            ]
+            "providers": [_model_provider_to_response(provider) for provider in providers],
+            "supported_providers": LLMProviderFactory.get_supported_provider_names(),
         }
+
+
+@router.get("/admin/model-providers/runtime")
+async def get_model_provider_runtime(request: Request):
+    """获取当前工作空间实际运行模型配置读模型。"""
+    payload = await get_current_user(request)
+    user_id = payload["sub"]
+    workspace_id = await get_workspace_id_from_request(request)
+
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        permission_service = PermissionService(session)
+        await permission_service.require_permission(user_id, workspace_id, "model_provider", "read")
+
+    return {
+        "runtime": await get_current_model_info_for_workspace(workspace_id),
+        "supported_providers": LLMProviderFactory.get_supported_provider_names(),
+    }
 
 
 @router.post("/admin/model-providers")
@@ -385,15 +452,30 @@ async def create_model_provider(request: Request, body: ModelProviderCreate):
             user_id, workspace_id, "model_provider", "create"
         )
 
-        # 创建
+        result = await session.execute(
+            select(func.count(ModelProviderORM.id)).where(
+                ModelProviderORM.workspace_id == workspace_id
+            )
+        )
+        is_first_provider = (result.scalar() or 0) == 0
+        set_as_default = body.set_as_default or is_first_provider
+        if set_as_default:
+            await _clear_workspace_default_model_provider(session, workspace_id)
+
+        config = _prepare_model_config(
+            None,
+            body.config,
+            set_as_default=set_as_default,
+        )
+
         provider = ModelProviderORM(
             id=str(uuid.uuid4()),
             workspace_id=workspace_id,
             provider=body.provider.value,
             name=body.name,
             description=body.description,
-            enabled=body.enabled,
-            config=body.config,
+            enabled=True if set_as_default else body.enabled,
+            config=config,
             created_by=user_id,
         )
         session.add(provider)
@@ -411,7 +493,11 @@ async def create_model_provider(request: Request, body: ModelProviderCreate):
 
         await session.commit()
 
-        return {"id": provider.id, "message": "模型供应商配置已创建"}
+        return {
+            "id": provider.id,
+            "message": "模型供应商配置已创建",
+            "provider": _model_provider_to_response(provider),
+        }
 
 
 @router.patch("/admin/model-providers/{provider_id}")
@@ -451,8 +537,25 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
             provider.description = body.description
         if body.enabled is not None:
             provider.enabled = body.enabled
-        if body.config is not None:
-            provider.config = body.config
+        if body.config is not None or body.set_as_default is not None:
+            provider.config = _prepare_model_config(
+                provider.config,
+                body.config,
+                set_as_default=body.set_as_default,
+            )
+        if body.set_as_default is True:
+            provider.enabled = True
+            await _clear_workspace_default_model_provider(
+                session,
+                workspace_id,
+                exclude_provider_id=provider.id,
+            )
+        elif body.enabled is False and _is_default_model_provider(provider):
+            provider.config = _prepare_model_config(
+                provider.config,
+                None,
+                set_as_default=False,
+            )
 
         await log_audit(
             session,
@@ -465,7 +568,10 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
 
         await session.commit()
 
-        return {"message": "模型供应商配置已更新"}
+        return {
+            "message": "模型供应商配置已更新",
+            "provider": _model_provider_to_response(provider),
+        }
 
 
 @router.delete("/admin/model-providers/{provider_id}")

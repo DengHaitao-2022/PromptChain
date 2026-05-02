@@ -69,6 +69,10 @@ class ContentGenerationWorkflow:
         state: GraphState = {
             "user_input": workflow_run.user_input,
             "workflow_run_id": workflow_run.id,
+            "workspace_id": (workflow_run.metadata or {}).get("workspace_id"),
+            "user_id": (workflow_run.metadata or {}).get("user_id"),
+            "model_provider_id": (workflow_run.metadata or {}).get("model_provider_id"),
+            "model_name": (workflow_run.metadata or {}).get("model_name"),
             "workflow_definition_id": workflow_run.workflow_definition_id,
             "workflow_version_id": workflow_run.workflow_version_id,
             "workflow_context": workflow_context,
@@ -474,13 +478,28 @@ class ContentGenerationWorkflow:
         user_input: str,
         workflow_definition_id: str | None = None,
         workflow_version_id: str | None = None,
+        workspace_id: str | None = None,
+        user_id: str | None = None,
+        model_provider_id: str | None = None,
+        model_name: str | None = None,
     ) -> dict:
         """启动新的工作流，并在后台逐节点推进。"""
+        metadata = {}
+        if workspace_id:
+            metadata["workspace_id"] = workspace_id
+        if user_id:
+            metadata["user_id"] = user_id
+        if model_provider_id:
+            metadata["model_provider_id"] = model_provider_id
+        if model_name:
+            metadata["model_name"] = model_name
+
         workflow_run = WorkflowRun(
             user_input=user_input,
             status=WorkflowRunStatus.RUNNING,
             workflow_definition_id=workflow_definition_id,
             workflow_version_id=workflow_version_id,
+            metadata=metadata,
         )
         await self.store.create_workflow_run(workflow_run)
 

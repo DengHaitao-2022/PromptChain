@@ -20,6 +20,8 @@ class ModelProviderType(StrEnum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
+    GITHUB = "github"
+    OLLAMA = "ollama"
     AZURE = "azure"
     LOCAL = "local"
     CUSTOM = "custom"
@@ -78,6 +80,7 @@ class ModelProviderCreate(ModelProviderBase):
     config: dict[str, Any] = Field(
         default_factory=dict, description="配置信息，如 api_key, base_url 等"
     )
+    set_as_default: bool = Field(default=False, description="是否设为当前工作空间运行默认模型")
 
 
 class ModelProviderUpdate(BaseModel):
@@ -87,6 +90,9 @@ class ModelProviderUpdate(BaseModel):
     description: str | None = None
     enabled: bool | None = None
     config: dict[str, Any] | None = None
+    set_as_default: bool | None = Field(
+        default=None, description="是否设为当前工作空间运行默认模型"
+    )
 
 
 class ModelProvider(ModelProviderBase):
