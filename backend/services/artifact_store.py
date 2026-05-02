@@ -36,7 +36,8 @@ class ArtifactStore:
 
     async def create_artifact(
         self,
-        artifact_type: ArtifactType | None,
+        artifact_type: ArtifactType | None = None,
+        *,
         content: Any,
         workflow_run_id: str,
         node_run_id: str,
@@ -50,6 +51,7 @@ class ArtifactStore:
         - 如果是首次创建，version = 1
         - 如果是 rerun/修改，version = parent.version + 1
         """
+        # 兼容旧调用：历史代码可能使用 `type=` 传参，这里统一归一为 artifact_type。
         if artifact_type is None:
             artifact_type = kwargs.get("type")
         if artifact_type is None:
@@ -205,4 +207,5 @@ def get_artifact_store() -> ArtifactStore | PostgresArtifactStore:
     if _artifact_store is None:
         backend = _resolve_runtime_store_backend()
         _artifact_store = ArtifactStore() if backend == "memory" else get_postgres_store()
+    assert _artifact_store is not None
     return _artifact_store
