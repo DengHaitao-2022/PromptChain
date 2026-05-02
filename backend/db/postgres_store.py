@@ -329,7 +329,8 @@ class PostgresArtifactStore:
 
     async def create_artifact(
         self,
-        artifact_type: ArtifactType | None,
+        artifact_type: ArtifactType | None = None,
+        *,
         content: Any,
         workflow_run_id: str,
         node_run_id: str,
@@ -342,6 +343,7 @@ class PostgresArtifactStore:
         import json
 
         await self._ensure_initialized()
+        # 兼容旧调用：历史代码可能使用 `type=` 传参，这里统一归一为 artifact_type。
         if artifact_type is None:
             artifact_type = kwargs.get("type")
         if artifact_type is None:
