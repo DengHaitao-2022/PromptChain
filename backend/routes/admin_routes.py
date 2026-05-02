@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import and_, desc, func
 from sqlalchemy.future import select
@@ -27,10 +27,11 @@ from models.admin_models import (
     ModelProviderUpdate,
     SecretCreate,
 )
-from models.admin_orm import ApiKeyORM, AuditLogORM, ModelProviderORM, SecretORM
+from models.admin_orm import ApiKeyORM, ModelProviderORM, SecretORM
 from models.auth_models import UserStatus
 from models.auth_orm import MembershipORM, UserORM
 from routes.auth_routes import get_current_user
+from services.audit_log_service import AuditLogService, AuditOutcome
 from services.auth_service import JWT_SECRET_KEY
 from services.permission_service import (
     PermissionService,
@@ -102,20 +103,26 @@ async def log_audit(
     detail: dict | None = None,
     ip_address: str | None = None,
     user_agent: str | None = None,
+    request: Request | None = None,
+    outcome: AuditOutcome = "success",
+    target_snapshot: dict | None = None,
 ):
-    """记录审计日志"""
-    audit_log = AuditLogORM(
-        id=str(uuid.uuid4()),
+    """记录审计日志，保留旧调用形态并委托给统一审计服务。"""
+    audit_log = await AuditLogService(session).record(
         workspace_id=workspace_id,
-        user_id=user_id,
+        actor_user_id=user_id,
         action=action.value,
+        request=request,
+        outcome=outcome,
         target_type=target_type,
         target_id=target_id,
         detail=detail or {},
-        ip_address=ip_address,
-        user_agent=user_agent,
+        target_snapshot=target_snapshot,
     )
-    session.add(audit_log)
+    if ip_address and not audit_log.ip_address:
+        audit_log.ip_address = ip_address
+    if user_agent and not audit_log.user_agent:
+        audit_log.user_agent = user_agent
 
 
 # ==================== Dashboard API ====================
@@ -313,6 +320,7 @@ async def update_user_status(request: Request, target_user_id: str, body: Update
             },
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("User-Agent"),
+            request=request,
         )
         await session.commit()
 
@@ -407,6 +415,13 @@ async def create_model_provider(request: Request, body: ModelProviderCreate):
             "model_provider",
             provider.id,
             {"name": body.name, "provider": body.provider.value},
+            request=request,
+            target_snapshot={
+                "id": provider.id,
+                "name": provider.name,
+                "provider": provider.provider,
+                "enabled": provider.enabled,
+            },
         )
 
         await session.commit()
@@ -461,6 +476,25 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
             AuditAction.MODEL_PROVIDER_UPDATE,
             "model_provider",
             provider_id,
+            {
+                "updated_fields": [
+                    key
+                    for key, value in {
+                        "name": body.name,
+                        "description": body.description,
+                        "enabled": body.enabled,
+                        "config": body.config,
+                    }.items()
+                    if value is not None
+                ]
+            },
+            request=request,
+            target_snapshot={
+                "id": provider.id,
+                "name": provider.name,
+                "provider": provider.provider,
+                "enabled": provider.enabled,
+            },
         )
 
         await session.commit()
@@ -506,6 +540,12 @@ async def delete_model_provider(request: Request, provider_id: str):
             "model_provider",
             provider_id,
             {"name": provider.name},
+            request=request,
+            target_snapshot={
+                "id": provider.id,
+                "name": provider.name,
+                "provider": provider.provider,
+            },
         )
 
         await session.delete(provider)
@@ -587,6 +627,8 @@ async def create_secret(request: Request, body: SecretCreate):
             "secret",
             secret.id,
             {"name": body.name},
+            request=request,
+            target_snapshot={"id": secret.id, "name": secret.name, "last4": secret.last4},
         )
 
         await session.commit()
@@ -626,6 +668,8 @@ async def delete_secret(request: Request, secret_id: str):
             "secret",
             secret_id,
             {"name": secret.name},
+            request=request,
+            target_snapshot={"id": secret.id, "name": secret.name, "last4": secret.last4},
         )
 
         await session.delete(secret)
@@ -719,7 +763,14 @@ async def create_api_key(request: Request, body: ApiKeyCreate):
             AuditAction.API_KEY_CREATE,
             "api_key",
             api_key.id,
-            {"name": body.name},
+            {"name": body.name, "scopes": [s.value for s in body.scopes]},
+            request=request,
+            target_snapshot={
+                "id": api_key.id,
+                "name": api_key.name,
+                "key_prefix": api_key.key_prefix,
+                "expires_at": expires_at,
+            },
         )
 
         await session.commit()
@@ -770,6 +821,13 @@ async def revoke_api_key(request: Request, key_id: str):
             "api_key",
             key_id,
             {"name": api_key.name},
+            request=request,
+            target_snapshot={
+                "id": api_key.id,
+                "name": api_key.name,
+                "key_prefix": api_key.key_prefix,
+                "revoked_at": api_key.revoked_at,
+            },
         )
 
         await session.commit()
@@ -783,10 +841,16 @@ async def revoke_api_key(request: Request, key_id: str):
 @router.get("/admin/audit-logs")
 async def list_audit_logs(
     request: Request,
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     action: str | None = None,
+    outcome: str | None = None,
     user_id_filter: str | None = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    request_id: str | None = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
 ):
     """
     获取审计日志列表
@@ -800,47 +864,17 @@ async def list_audit_logs(
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "audit_log", "read")
 
-        # 构建查询
-        query = select(AuditLogORM).where(AuditLogORM.workspace_id == workspace_id)
-
-        if action:
-            query = query.where(AuditLogORM.action == action)
-        if user_id_filter:
-            query = query.where(AuditLogORM.user_id == user_id_filter)
-
-        query = query.order_by(desc(AuditLogORM.created_at))
-        query = query.offset((page - 1) * page_size).limit(page_size)
-
-        result = await session.execute(query)
-        logs = result.scalars().all()
-
-        # 获取总数
-        count_query = select(func.count(AuditLogORM.id)).where(
-            AuditLogORM.workspace_id == workspace_id
+        audit_service = AuditLogService(session)
+        return await audit_service.list_logs(
+            workspace_id=workspace_id,
+            page=page,
+            page_size=page_size,
+            action=action,
+            outcome=outcome,
+            user_id=user_id_filter,
+            target_type=target_type,
+            target_id=target_id,
+            request_id=request_id,
+            start_time=start_time,
+            end_time=end_time,
         )
-        if action:
-            count_query = count_query.where(AuditLogORM.action == action)
-        if user_id_filter:
-            count_query = count_query.where(AuditLogORM.user_id == user_id_filter)
-
-        result = await session.execute(count_query)
-        total = result.scalar() or 0
-
-        return {
-            "logs": [
-                {
-                    "id": log.id,
-                    "user_id": log.user_id,
-                    "action": log.action,
-                    "target_type": log.target_type,
-                    "target_id": log.target_id,
-                    "detail": log.detail,
-                    "ip_address": log.ip_address,
-                    "created_at": log.created_at,
-                }
-                for log in logs
-            ],
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-        }

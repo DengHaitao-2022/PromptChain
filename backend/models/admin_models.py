@@ -39,7 +39,9 @@ class AuditAction(StrEnum):
     WORKSPACE_CREATE = "workspace.create"
     WORKSPACE_UPDATE = "workspace.update"
     WORKSPACE_DELETE = "workspace.delete"
+    WORKSPACE_SWITCH = "workspace.switch"
     MEMBER_INVITE = "workspace.member_invite"
+    MEMBER_ACCEPT = "workspace.member_accept"
     MEMBER_REMOVE = "workspace.member_remove"
     MEMBER_ROLE_CHANGE = "workspace.member_role_change"
 
@@ -49,6 +51,12 @@ class AuditAction(StrEnum):
     WORKFLOW_DELETE = "workflow.delete"
     WORKFLOW_PUBLISH = "workflow.publish"
     WORKFLOW_RUN = "workflow.run"
+    WORKFLOW_PAUSE = "workflow.pause"
+    WORKFLOW_RESUME = "workflow.resume"
+    WORKFLOW_APPROVE = "workflow.approve"
+    WORKFLOW_CLARIFY = "workflow.clarify"
+    WORKFLOW_RERUN = "workflow.rerun"
+    WORKFLOW_RESTORE = "workflow.restore"
 
     # 配置相关
     MODEL_PROVIDER_CREATE = "model_provider.create"

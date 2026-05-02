@@ -9,6 +9,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 import routes.workflow_helpers as workflow_helpers
+from db.postgres_store import get_postgres_store
+from models.admin_models import AuditAction
 from routes.workflow_helpers import (
     _GATE_STATUSES,
     ApproveFactCheckRequest,
@@ -31,11 +33,64 @@ from routes.workflow_helpers import (
     _now_iso,
     _simplify_state,
 )
+from services.audit_log_service import AuditLogService
 
 # 由 app.py 统一补齐 /api 前缀，这里只保留资源级前缀，避免重复拼接
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 logger = logging.getLogger(__name__)
 INTERNAL_SERVER_ERROR = "Internal server error"
+
+
+def _workflow_run_snapshot(workflow_run) -> dict:
+    """构建审计用运行记录快照，避免把完整输入内容重复写入审计表。"""
+    if workflow_run is None:
+        return {}
+    status = getattr(workflow_run, "status", None)
+    return {
+        "id": getattr(workflow_run, "id", None),
+        "workflow_name": getattr(workflow_run, "workflow_name", None),
+        "workflow_definition_id": getattr(workflow_run, "workflow_definition_id", None),
+        "workflow_version_id": getattr(workflow_run, "workflow_version_id", None),
+        "status": status.value if hasattr(status, "value") else status,
+        "current_node": getattr(workflow_run, "current_node", None),
+    }
+
+
+async def _audit_actor_context(request: Request, workflow_run) -> tuple[str, str]:
+    from routes.auth_routes import get_current_user
+
+    user = await get_current_user(request)
+    user_id = user.get("sub") or user.get("id")
+    metadata = workflow_helpers._ensure_workflow_metadata(workflow_run) if workflow_run else {}
+    workspace_id = metadata.get("workspace_id") or user.get("workspace_id")
+    if not user_id or not workspace_id:
+        raise HTTPException(status_code=400, detail="缺少审计所需的用户或工作空间上下文")
+    return user_id, workspace_id
+
+
+async def _record_workflow_audit(
+    request: Request,
+    *,
+    actor_user_id: str,
+    workspace_id: str,
+    action: AuditAction,
+    workflow_run_id: str,
+    detail: dict | None = None,
+    workflow_run=None,
+) -> None:
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            request=request,
+            target_type="workflow_run",
+            target_id=workflow_run_id,
+            detail=detail or {},
+            target_snapshot=_workflow_run_snapshot(workflow_run),
+        )
+        await session.commit()
 
 
 @router.post("/start", response_model=WorkflowResponse)
@@ -69,6 +124,20 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
             or workflow_run
         )
         status = _normalize_status(result["status"])
+        await _record_workflow_audit(
+            request,
+            actor_user_id=user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.WORKFLOW_RUN,
+            workflow_run_id=result["workflow_run_id"],
+            detail={
+                "workflow_definition_id": body.workflow_definition_id,
+                "workflow_version_id": body.workflow_version_id,
+                "input_length": len(body.user_input),
+                "status": status,
+            },
+            workflow_run=workflow_run,
+        )
         return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
             status=status,
@@ -86,7 +155,7 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
 async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWorkflowRequest):
     """用户主动暂停工作流"""
     try:
-        await workflow_helpers.require_workflow_run_access(
+        access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
         store, workflow, workflow_run, graph_state, status = await _load_runtime_context(
@@ -126,6 +195,16 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
             "source": "user",
         }
         await store.update_workflow_run(refreshed_workflow_run)
+        actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
+        await _record_workflow_audit(
+            request,
+            actor_user_id=actor_user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.WORKFLOW_PAUSE,
+            workflow_run_id=workflow_run_id,
+            detail={"reason": body.reason, "current_node": refreshed_workflow_run.current_node},
+            workflow_run=refreshed_workflow_run,
+        )
         return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
             status=_normalize_status(result["status"]),
@@ -145,7 +224,7 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
 async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkflowRequest):
     """恢复用户手动暂停的工作流"""
     try:
-        await workflow_helpers.require_workflow_run_access(
+        access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
         store, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
@@ -172,6 +251,16 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
             "source": previous_pause.get("source") or "user",
         }
         await store.update_workflow_run(refreshed_workflow_run)
+        actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
+        await _record_workflow_audit(
+            request,
+            actor_user_id=actor_user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.WORKFLOW_RESUME,
+            workflow_run_id=workflow_run_id,
+            detail={"current_node": refreshed_workflow_run.current_node},
+            workflow_run=refreshed_workflow_run,
+        )
 
         return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
@@ -199,7 +288,7 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
     - regenerate: 重新生成（可提供 feedback）
     """
     try:
-        await workflow_helpers.require_workflow_run_access(
+        access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
         _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
@@ -216,6 +305,21 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
             modified_outline=body.modified_outline,
         )
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+        actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
+        await _record_workflow_audit(
+            request,
+            actor_user_id=actor_user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.WORKFLOW_APPROVE,
+            workflow_run_id=workflow_run_id,
+            detail={
+                "gate_type": "outline_approval",
+                "decision": body.action,
+                "has_feedback": bool(body.feedback),
+                "has_modified_outline": body.modified_outline is not None,
+            },
+            workflow_run=refreshed_workflow_run,
+        )
         return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
             status=_normalize_status(result["status"]),
@@ -233,7 +337,7 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
 async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRequest):
     """提供澄清回答"""
     try:
-        await workflow_helpers.require_workflow_run_access(
+        access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
         _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
@@ -247,6 +351,19 @@ async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRe
             workflow_run_id=workflow_run_id, user_input={"user_clarifications": body.clarifications}
         )
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+        actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
+        await _record_workflow_audit(
+            request,
+            actor_user_id=actor_user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.WORKFLOW_CLARIFY,
+            workflow_run_id=workflow_run_id,
+            detail={
+                "answered_fields": sorted(body.clarifications.keys()),
+                "answer_count": len(body.clarifications),
+            },
+            workflow_run=refreshed_workflow_run,
+        )
         return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
             status=_normalize_status(result["status"]),
@@ -264,7 +381,7 @@ async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRe
 async def approve_fact_check(workflow_run_id: str, request: Request, body: ApproveFactCheckRequest):
     """处理事实核查高风险项审批"""
     try:
-        await workflow_helpers.require_workflow_run_access(
+        access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
         _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
@@ -280,6 +397,20 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
             manual_corrections=body.manual_corrections,
         )
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+        actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
+        await _record_workflow_audit(
+            request,
+            actor_user_id=actor_user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.WORKFLOW_APPROVE,
+            workflow_run_id=workflow_run_id,
+            detail={
+                "gate_type": "fact_check",
+                "decision_count": len(body.decisions),
+                "manual_correction_count": len(body.manual_corrections),
+            },
+            workflow_run=refreshed_workflow_run,
+        )
         return _build_workflow_response(
             workflow_run_id=result["workflow_run_id"],
             status=_normalize_status(result["status"]),
@@ -386,6 +517,23 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
         result = await workflow.resume(new_workflow_run.id, preserved_state)
 
         simplified_state = _simplify_state(result["state"])
+        refreshed_new_workflow_run = (
+            await _get_workflow_run_if_exists(new_workflow_run.id) or new_workflow_run
+        )
+        await _record_workflow_audit(
+            request,
+            actor_user_id=user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.WORKFLOW_RERUN,
+            workflow_run_id=new_workflow_run.id,
+            detail={
+                "original_workflow_run_id": workflow_run_id,
+                "from_node": body.from_node,
+                "has_updated_input": body.updated_input is not None,
+                "reason": body.reason,
+            },
+            workflow_run=refreshed_new_workflow_run,
+        )
 
         return {
             "original_workflow_run_id": workflow_run_id,

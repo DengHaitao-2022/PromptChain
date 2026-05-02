@@ -12,6 +12,7 @@ from db.postgres_store import (
 )
 
 from .artifact_store import ArtifactStore, get_artifact_store
+from .audit_log_service import AuditLogService
 from .llm_errors import (
     format_workflow_error,
     is_llm_rate_limit_error,
@@ -37,6 +38,7 @@ from .trace_service import TraceService, get_trace_service
 __all__ = [
     # artifact_store
     "ArtifactStore",
+    "AuditLogService",
     "PostgresArtifactStore",
     "PostgresGraphCheckpointSaver",
     "get_artifact_store",

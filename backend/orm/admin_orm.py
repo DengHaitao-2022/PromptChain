@@ -82,14 +82,25 @@ class AuditLogORM(Base):
     __tablename__ = "audit_logs"
 
     id = Column(String(36), primary_key=True)
+    event_id = Column(String(64), nullable=True, index=True)
     workspace_id = Column(String(36), ForeignKey("workspaces.id"), nullable=False, index=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    request_id = Column(String(64), nullable=True, index=True)
+    trace_id = Column(String(64), nullable=True, index=True)
+    span_id = Column(String(32), nullable=True)
+    event_category = Column(String(50), nullable=True, index=True)
+    event_type = Column(String(50), nullable=True, index=True)
     action = Column(String(50), nullable=False, index=True)
+    outcome = Column(String(20), nullable=True, index=True)
     target_type = Column(String(50), nullable=True)
     target_id = Column(String(36), nullable=True)
+    actor_snapshot = Column(JSON, default=dict)
+    target_snapshot = Column(JSON, default=dict)
     detail = Column(JSON, default=dict)
+    metadata_json = Column(JSON, default=dict)
     ip_address = Column(String(50), nullable=True)
     user_agent = Column(String(500), nullable=True)
+    schema_version = Column(String(20), default="2026-05-02")
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     # 关系
