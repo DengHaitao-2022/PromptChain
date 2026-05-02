@@ -12,7 +12,9 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
 from db.postgres_store import get_postgres_store
+from models.admin_models import AuditAction
 from models.auth_models import UserStatus
+from services.audit_log_service import AuditLogService
 from services.auth_service import (
     AuthService,
     create_access_token,
@@ -296,6 +298,20 @@ async def register(request: Request, body: RegisterRequest):
 
             # 发送验证邮件
             await email_service.send_verification_email(user.id, user.email)
+            auth_context = await build_auth_context(user.id)
+            workspace = auth_context["workspace"]
+            if workspace:
+                await AuditLogService(session).record(
+                    workspace_id=workspace["id"],
+                    actor_user_id=user.id,
+                    action=AuditAction.USER_REGISTER,
+                    request=request,
+                    target_type="user",
+                    target_id=user.id,
+                    detail={"email_verified": False},
+                    target_snapshot=auth_context["user"],
+                )
+                await session.commit()
 
             return MessageResponse(message="注册成功，请查收验证邮件")
 
@@ -350,6 +366,18 @@ async def login(request: Request, response: Response, body: LoginRequest):
                 user_agent=user_agent,
                 ip_address=ip_address,
             )
+            if current_workspace:
+                await AuditLogService(session).record(
+                    workspace_id=current_workspace["id"],
+                    actor_user_id=user.id,
+                    action=AuditAction.USER_LOGIN,
+                    request=request,
+                    target_type="user",
+                    target_id=user.id,
+                    detail={"workspace_id": current_workspace["id"]},
+                    target_snapshot=auth_context["user"],
+                )
+                await session.commit()
 
             # 设置 Cookie
             set_auth_cookies(response, access_token, refresh_token_raw)
@@ -425,18 +453,29 @@ async def logout(request: Request, response: Response):
     """
     refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
 
-    if refresh_token:
-        store = get_postgres_store()
-        async with store.async_session() as session:
+    payload = await get_current_user_optional(request)
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        if refresh_token:
             auth_service = AuthService(session)
             await auth_service.revoke_refresh_token(refresh_token)
+        if payload and payload.get("workspace_id") and payload.get("sub"):
+            await AuditLogService(session).record(
+                workspace_id=payload["workspace_id"],
+                actor_user_id=payload["sub"],
+                action=AuditAction.USER_LOGOUT,
+                request=request,
+                target_type="user",
+                target_id=payload["sub"],
+            )
+            await session.commit()
 
     clear_auth_cookies(response)
     return MessageResponse(message="登出成功")
 
 
 @router.post("/auth/verify-email", response_model=MessageResponse)
-async def verify_email(body: VerifyEmailRequest):
+async def verify_email(request: Request, body: VerifyEmailRequest):
     """
     验证邮箱
 
@@ -454,12 +493,26 @@ async def verify_email(body: VerifyEmailRequest):
 
         # 激活用户
         await auth_service.activate_user(user_id)
+        auth_context = await build_auth_context(user_id)
+        workspace = auth_context["workspace"]
+        if workspace:
+            await AuditLogService(session).record(
+                workspace_id=workspace["id"],
+                actor_user_id=user_id,
+                action=AuditAction.USER_UPDATE,
+                request=request,
+                target_type="user",
+                target_id=user_id,
+                detail={"email_verified": True, "source": "email_verification"},
+                target_snapshot=auth_context["user"],
+            )
+            await session.commit()
 
         return MessageResponse(message="邮箱验证成功，您现在可以登录了")
 
 
 @router.post("/auth/forgot-password", response_model=MessageResponse)
-async def forgot_password(body: ForgotPasswordRequest):
+async def forgot_password(request: Request, body: ForgotPasswordRequest):
     """
     忘记密码
 
@@ -479,12 +532,26 @@ async def forgot_password(body: ForgotPasswordRequest):
         if user:
             email_service = EmailService(session)
             await email_service.send_password_reset_email(user.id, user.email)
+            auth_context = await build_auth_context(user.id)
+            workspace = auth_context["workspace"]
+            if workspace:
+                await AuditLogService(session).record(
+                    workspace_id=workspace["id"],
+                    actor_user_id=user.id,
+                    action=AuditAction.USER_PASSWORD_RESET,
+                    request=request,
+                    target_type="user",
+                    target_id=user.id,
+                    detail={"stage": "reset_email_requested"},
+                    target_snapshot=auth_context["user"],
+                )
+                await session.commit()
 
         return MessageResponse(message="如果该邮箱已注册，您将收到密码重置邮件")
 
 
 @router.post("/auth/reset-password", response_model=MessageResponse)
-async def reset_password(body: ResetPasswordRequest):
+async def reset_password(request: Request, body: ResetPasswordRequest):
     """
     重置密码
 
@@ -517,6 +584,20 @@ async def reset_password(body: ResetPasswordRequest):
 
         # 撤销所有 Refresh Token（强制重新登录）
         await auth_service.revoke_all_user_tokens(user_id)
+        auth_context = await build_auth_context(user_id)
+        workspace = auth_context["workspace"]
+        if workspace:
+            await AuditLogService(session).record(
+                workspace_id=workspace["id"],
+                actor_user_id=user_id,
+                action=AuditAction.USER_PASSWORD_RESET,
+                request=request,
+                target_type="user",
+                target_id=user_id,
+                detail={"stage": "password_changed", "revoked_refresh_tokens": True},
+                target_snapshot=auth_context["user"],
+            )
+            await session.commit()
 
         return MessageResponse(message="密码重置成功，请使用新密码登录")
 

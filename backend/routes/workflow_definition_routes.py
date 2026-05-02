@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from db.postgres_store import get_postgres_store
+from models.admin_models import AuditAction
 from models.auth_models import MemberRole
 from models.result import Result
 from models.workflow_definition import (
@@ -18,6 +19,7 @@ from models.workflow_definition import (
     WorkflowValidationMode,
 )
 from routes.auth_routes import get_current_user
+from services.audit_log_service import AuditLogService
 from services.permission_service import PermissionService
 from services.workflow_definition_service import WorkflowDefinitionService
 
@@ -129,6 +131,17 @@ async def create_workflow(
             user_id=user_id,
             data=data,
         )
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.WORKFLOW_CREATE,
+            request=request,
+            target_type="workflow",
+            target_id=workflow.id,
+            detail={"name": workflow.name, "version": workflow.version},
+            target_snapshot=workflow.model_dump(),
+        )
+        await session.commit()
         return Result.success(data=workflow.model_dump(), message="工作流已创建")
 
 
@@ -193,6 +206,24 @@ async def update_workflow(
         if not workflow:
             return Result.not_found(message="工作流不存在")
 
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.WORKFLOW_UPDATE,
+            request=request,
+            target_type="workflow",
+            target_id=workflow_id,
+            detail={
+                "updated_fields": [
+                    key
+                    for key, value in data.model_dump(exclude_unset=True).items()
+                    if value is not None
+                ],
+                "version": workflow.version,
+            },
+            target_snapshot=workflow.model_dump(),
+        )
+        await session.commit()
         return Result.success(data=workflow.model_dump(), message="工作流草稿已保存")
 
 
@@ -215,11 +246,26 @@ async def delete_workflow(
     store = get_postgres_store()
     async with store.async_session() as session:
         _, _, workspace_id, _ = await _require_workflow_role(request, session, action="delete")
+        user = await get_current_user(request)
+        user_id = _get_user_id(user)
         service = WorkflowDefinitionService(session)
+        workflow = await service.get_by_id(workflow_id=workflow_id, workspace_id=workspace_id)
+        workflow_snapshot = workflow.model_dump() if workflow else {}
         success = await service.delete(workflow_id=workflow_id, workspace_id=workspace_id)
         if not success:
             return Result.not_found(message="工作流不存在")
 
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.WORKFLOW_DELETE,
+            request=request,
+            target_type="workflow",
+            target_id=workflow_id,
+            detail={"soft_deleted": True},
+            target_snapshot=workflow_snapshot,
+        )
+        await session.commit()
         return Result.success(message="工作流已删除")
 
 
@@ -271,6 +317,21 @@ async def publish_workflow(
                 data={"validation": validation.model_dump()},
             )
 
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.WORKFLOW_PUBLISH,
+            request=request,
+            target_type="workflow",
+            target_id=workflow_id,
+            detail={
+                "change_log": body.change_log,
+                "published_version_id": snapshot.id,
+                "published_version": snapshot.version,
+            },
+            target_snapshot=workflow.model_dump(),
+        )
+        await session.commit()
         return Result.success(
             data={
                 "workflow": workflow.model_dump(),

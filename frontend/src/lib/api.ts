@@ -187,6 +187,52 @@ export interface WorkflowRunSummary {
   total_duration_ms: number | null;
 }
 
+export type AuditOutcome = 'success' | 'failure' | 'unknown';
+
+export interface AuditLogEntry {
+  id: string;
+  event_id: string;
+  workspace_id: string;
+  user_id: string;
+  request_id: string | null;
+  trace_id: string | null;
+  span_id: string | null;
+  event_category: string | null;
+  event_type: string | null;
+  action: string;
+  outcome: AuditOutcome | string;
+  target_type: string | null;
+  target_id: string | null;
+  actor_snapshot: Record<string, unknown>;
+  target_snapshot: Record<string, unknown>;
+  detail: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+  schema_version: string;
+  created_at: string | null;
+}
+
+export interface AuditLogListResponse {
+  logs: AuditLogEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface AuditLogQuery {
+  page?: number;
+  pageSize?: number;
+  action?: string;
+  outcome?: string;
+  userId?: string;
+  targetType?: string;
+  targetId?: string;
+  requestId?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
 export type WorkflowRealtimeEvent =
   | WorkflowConnectedEvent
   | WorkflowNodeEvent
@@ -368,6 +414,34 @@ export const traceApi = {
   // 获取节点详情
   getNodeDetail: (nodeRunId: string) =>
     request<Record<string, unknown>>(`/trace/node/${nodeRunId}`),
+};
+
+// 审计日志 API
+export const auditLogApi = {
+  list: (query: AuditLogQuery = {}) => {
+    const params = new URLSearchParams();
+    params.set('page', String(query.page ?? 1));
+    params.set('page_size', String(query.pageSize ?? 20));
+
+    const optionalParams: Array<[string, string | undefined]> = [
+      ['action', query.action],
+      ['outcome', query.outcome],
+      ['user_id_filter', query.userId],
+      ['target_type', query.targetType],
+      ['target_id', query.targetId],
+      ['request_id', query.requestId],
+      ['start_time', query.startTime],
+      ['end_time', query.endTime],
+    ];
+
+    optionalParams.forEach(([key, value]) => {
+      if (value?.trim()) {
+        params.set(key, value.trim());
+      }
+    });
+
+    return request<AuditLogListResponse>(`/admin/audit-logs?${params.toString()}`);
+  },
 };
 
 // Artifact API

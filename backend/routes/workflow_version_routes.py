@@ -10,9 +10,11 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from db.postgres_store import get_postgres_store
+from models.admin_models import AuditAction
 from models.auth_models import MemberRole
 from models.result import Result
 from routes.auth_routes import get_current_user
+from services.audit_log_service import AuditLogService
 from services.permission_service import PermissionService
 from services.workflow_definition_service import WorkflowDefinitionService
 
@@ -223,6 +225,21 @@ async def restore_version(
         if workflow is None or version is None:
             return Result.not_found(message="工作流或版本不存在")
 
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.WORKFLOW_RESTORE,
+            request=request,
+            target_type="workflow",
+            target_id=workflow_id,
+            detail={
+                "restored_from_version_id": version.id,
+                "restored_from_version": version.version,
+                "change_log": body.change_log,
+            },
+            target_snapshot=workflow.model_dump(),
+        )
+        await session.commit()
         return Result.success(
             data={
                 "workflow": workflow.model_dump(),
