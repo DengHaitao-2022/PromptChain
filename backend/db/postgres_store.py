@@ -178,8 +178,11 @@ class NodeRunORM(Base):
             error_message=model.error_message,
             input_artifact_ids=model.input_artifact_ids,
             output_artifact_ids=model.output_artifact_ids,
-            llm_calls=[call.model_dump() for call in model.llm_calls],
-            human_decision=model.human_decision.model_dump() if model.human_decision else None,
+            # 使用 mode='json' 确保 datetime 等非基础类型被序列化
+            llm_calls=[call.model_dump(mode="json") for call in model.llm_calls],
+            human_decision=model.human_decision.model_dump(mode="json")
+            if model.human_decision
+            else None,
             retry_count=model.retry_count,
             is_rerun=model.is_rerun,
             rerun_from_node_run_id=model.rerun_from_node_run_id,
@@ -359,6 +362,7 @@ class PostgresArtifactStore:
                     .where(ArtifactORM.workflow_run_id == workflow_run_id)
                     .where(ArtifactORM.type == artifact_type.value)
                     .order_by(ArtifactORM.version.desc())
+                    .limit(1)
                 )
                 latest = result.scalar_one_or_none()
                 version = latest.version + 1 if latest else 1
@@ -430,9 +434,12 @@ class PostgresArtifactStore:
                 orm.status = node_run.status.value
                 orm.error_message = node_run.error_message
                 orm.output_artifact_ids = node_run.output_artifact_ids
-                orm.llm_calls = [call.model_dump() for call in node_run.llm_calls]
+                # 使用 mode='json' 确保 datetime 等非基础类型被序列化
+                orm.llm_calls = [call.model_dump(mode="json") for call in node_run.llm_calls]
                 orm.human_decision = (
-                    node_run.human_decision.model_dump() if node_run.human_decision else None
+                    node_run.human_decision.model_dump(mode="json")
+                    if node_run.human_decision
+                    else None
                 )
                 await session.commit()
             return node_run

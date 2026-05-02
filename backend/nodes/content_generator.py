@@ -20,7 +20,7 @@ from models import (
     Outline,
     OutlineSection,
 )
-from services import get_artifact_store, get_current_model_info, get_llm
+from services import get_artifact_store, get_current_model_info, get_llm, invoke_with_llm_retry
 
 SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据以下信息撰写文章的一个章节。
 
@@ -88,16 +88,18 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
     prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
     chain = prompt | llm
 
-    result = await chain.ainvoke(
-        {
-            "article_title": outline.title,
-            "audience": intent_card.audience.value,
-            "tone": intent_card.tone.value,
-            "section_title": section.title,
-            "section_summary": section.summary,
-            "target_words": section.target_words,
-            "previous_sections": previous_content or "（这是第一个章节）",
-        }
+    result = await invoke_with_llm_retry(
+        lambda: chain.ainvoke(
+            {
+                "article_title": outline.title,
+                "audience": intent_card.audience.value,
+                "tone": intent_card.tone.value,
+                "section_title": section.title,
+                "section_summary": section.summary,
+                "target_words": section.target_words,
+                "previous_sections": previous_content or "（这是第一个章节）",
+            }
+        )
     )
 
     return result.content
@@ -167,7 +169,7 @@ async def generate_all_sections(state: dict) -> dict:
 
             # 创建章节 Artifact
             artifact = await store.create_artifact(
-                type=ArtifactType.SECTION_CONTENT,
+                artifact_type=ArtifactType.SECTION_CONTENT,
                 content=_build_section_artifact_content(section, content),
                 workflow_run_id=workflow_run_id,
                 node_run_id=node_run.id,
@@ -276,7 +278,7 @@ async def regenerate_section(state: dict) -> dict:
         # 创建新版本 Artifact
         parent_artifact_id = section_artifact_ids.get(section_id)
         artifact = await store.create_artifact(
-            type=ArtifactType.SECTION_CONTENT,
+            artifact_type=ArtifactType.SECTION_CONTENT,
             content=_build_section_artifact_content(target_section, new_content),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,

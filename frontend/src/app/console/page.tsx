@@ -21,9 +21,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { apiUrl } from '@/lib/api-config';
 import styles from './dashboard.module.css';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
 interface DashboardData {
   today_runs: number;
@@ -111,7 +110,7 @@ export default function DashboardPage() {
       }
 
       try {
-        const response = await fetch(`${API_BASE}/admin/dashboard`, {
+        const response = await fetch(apiUrl('/admin/dashboard'), {
           credentials: 'include',
         });
 

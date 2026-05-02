@@ -15,7 +15,8 @@ from routes.workflow_helpers import (
     _normalize_trace_payload,
 )
 
-router = APIRouter(prefix="/api", tags=["trace"])
+# 由 app.py 统一补齐 /api 前缀，这里保持资源路径本身不再携带根前缀
+router = APIRouter(tags=["trace"])
 logger = logging.getLogger(__name__)
 INTERNAL_SERVER_ERROR = "Internal server error"
 

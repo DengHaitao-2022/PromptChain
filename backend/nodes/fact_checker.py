@@ -26,7 +26,13 @@ from models import (
     NodeRunStatus,
     VerificationResult,
 )
-from services import get_artifact_store, get_current_model_info, get_llm, get_structured_llm
+from services import (
+    get_artifact_store,
+    get_current_model_info,
+    get_llm,
+    get_structured_llm,
+    invoke_with_llm_retry,
+)
 
 # ==================== Prompt 模板 ====================
 
@@ -255,7 +261,7 @@ async def extract_fact_claims(content: str, section_id: str) -> list[FactClaim]:
     prompt = ChatPromptTemplate.from_template(EXTRACT_CLAIMS_PROMPT)
     chain = prompt | llm
 
-    result: ClaimList = await chain.ainvoke({"content": content})
+    result: ClaimList = await invoke_with_llm_retry(lambda: chain.ainvoke({"content": content}))
 
     # 为每个claim设置section_id
     for claim in result.claims:
@@ -272,7 +278,9 @@ async def generate_verification_question(claim: FactClaim) -> str:
     prompt = ChatPromptTemplate.from_template(GENERATE_VERIFICATION_QUESTIONS_PROMPT)
     chain = prompt | llm
 
-    result = await chain.ainvoke({"claim_text": claim.text, "claim_category": claim.category})
+    result = await invoke_with_llm_retry(
+        lambda: chain.ainvoke({"claim_text": claim.text, "claim_category": claim.category})
+    )
 
     return result.content.strip()
 
@@ -287,7 +295,7 @@ async def execute_verification(question: str) -> str:
     prompt = ChatPromptTemplate.from_template(EXECUTE_VERIFICATION_PROMPT)
     chain = prompt | llm
 
-    result = await chain.ainvoke({"question": question})
+    result = await invoke_with_llm_retry(lambda: chain.ainvoke({"question": question}))
 
     return result.content.strip()
 
@@ -302,12 +310,14 @@ async def evaluate_claim_accuracy(
     prompt = ChatPromptTemplate.from_template(EVALUATE_CLAIM_PROMPT)
     chain = prompt | llm
 
-    evaluation: VerificationEvaluation = await chain.ainvoke(
-        {
-            "claim_text": claim.text,
-            "verification_question": verification_question,
-            "verification_answer": verification_answer,
-        }
+    evaluation: VerificationEvaluation = await invoke_with_llm_retry(
+        lambda: chain.ainvoke(
+            {
+                "claim_text": claim.text,
+                "verification_question": verification_question,
+                "verification_answer": verification_answer,
+            }
+        )
     )
 
     return VerificationResult(
@@ -416,7 +426,7 @@ async def check_facts(state: dict) -> dict:
 
         # 创建 Artifact
         artifact = await store.create_artifact(
-            type=ArtifactType.FACT_CHECK_REPORT,
+            artifact_type=ArtifactType.FACT_CHECK_REPORT,
             content=report.model_dump(),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,
@@ -452,6 +462,8 @@ async def check_facts(state: dict) -> dict:
                 "fact_check_report": report,
                 "fact_check_artifact_id": artifact.id,
                 "awaiting_fact_check_approval": True,
+                "fact_check_decisions": None,
+                "manual_corrections": None,
             }
 
         # 无高风险项，直接完成
@@ -464,6 +476,8 @@ async def check_facts(state: dict) -> dict:
             "fact_check_report": report,
             "fact_check_artifact_id": artifact.id,
             "awaiting_fact_check_approval": False,
+            "fact_check_decisions": None,
+            "manual_corrections": None,
         }
 
     except Exception as e:
@@ -482,7 +496,7 @@ async def approve_fact_check(state: dict) -> dict:
           decision: "confirm" | "use_suggestion" | "manual"
         - manual_corrections: Dict[claim_id, correction_text]
     """
-    report: FactCheckReport = state["fact_check_report"]
+    report = FactCheckReport.model_validate(state["fact_check_report"])
     decisions = state.get("fact_check_decisions", {})
     manual_corrections = state.get("manual_corrections", {})
     workflow_run_id = state["workflow_run_id"]
@@ -607,7 +621,7 @@ async def approve_fact_check(state: dict) -> dict:
 
         # 创建新版本 Artifact
         report_artifact = await store.create_artifact(
-            type=ArtifactType.FACT_CHECK_REPORT,
+            artifact_type=ArtifactType.FACT_CHECK_REPORT,
             content=report.model_dump(),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,
@@ -624,7 +638,7 @@ async def approve_fact_check(state: dict) -> dict:
         node_run.output_artifact_ids.append(report_artifact.id)
 
         final_content_artifact = await store.create_artifact(
-            type=ArtifactType.FINAL_CONTENT,
+            artifact_type=ArtifactType.FINAL_CONTENT,
             content=_build_final_content_payload(
                 state,
                 updated_final_content,
@@ -674,6 +688,8 @@ async def approve_fact_check(state: dict) -> dict:
             "fact_check_report": report,
             "fact_check_artifact_id": report_artifact.id,
             "awaiting_fact_check_approval": False,
+            "fact_check_decisions": None,
+            "manual_corrections": None,
             "fact_corrections": applied_corrections,
             "final_content": updated_final_content,
             "final_content_artifact_id": final_content_artifact.id,

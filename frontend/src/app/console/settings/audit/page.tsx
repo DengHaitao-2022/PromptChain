@@ -7,9 +7,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { apiUrl } from '@/lib/api-config';
 import styles from '../settings.module.css';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 const PAGE_SIZE = 20;
 
 interface AuditLog {
@@ -76,7 +76,7 @@ export default function AuditPage() {
 
     try {
       const response = await fetch(
-        `${API_BASE}/admin/audit-logs?page=${page}&page_size=${PAGE_SIZE}`,
+        apiUrl(`/admin/audit-logs?page=${page}&page_size=${PAGE_SIZE}`),
         { credentials: 'include' },
       );
 

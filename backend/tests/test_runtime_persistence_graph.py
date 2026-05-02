@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import services.artifact_store as artifact_store_module
 from db import postgres_store as postgres_store_module
 from db.postgres_store import PostgresArtifactStore
+from graph.conditions import should_proceed_after_fact_check, should_regenerate_outline
 from graph.content_generation_graph import ContentGenerationWorkflow
 from models.artifact import WorkflowRun
 
@@ -76,6 +77,31 @@ def test_runtime_schema_statements_include_workflow_reference_columns():
     assert any("ADD COLUMN IF NOT EXISTS workflow_version_id" in stmt for stmt in statements)
 
 
+def test_outline_gate_routes_pending_decision_to_approval_node():
+    route = should_regenerate_outline(
+        {
+            "outline": {"title": "原提纲"},
+            "outline_approved": False,
+            "awaiting_outline_approval": False,
+            "user_decision": {"action": "modify", "modified_outline": {"title": "新提纲"}},
+        }
+    )
+
+    assert route == "approve_outline"
+
+
+def test_fact_check_gate_routes_pending_decisions_to_approval_node():
+    route = should_proceed_after_fact_check(
+        {
+            "fact_check_report": {"results": []},
+            "awaiting_fact_check_approval": False,
+            "fact_check_decisions": {"claim-1": "confirm"},
+        }
+    )
+
+    assert route == "approve_fact_check"
+
+
 class _FakeGraph:
     def __init__(self):
         self.updated = []
@@ -132,3 +158,74 @@ async def test_resume_updates_checkpoint_state_before_continuing():
     assert workflow.graph.updated[0][1] == {"user_clarifications": {"tone": "正式"}}
     assert workflow.graph.invoked[0][0] is None
     assert result["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_approve_outline_resumes_from_generate_outline_checkpoint():
+    workflow = object.__new__(ContentGenerationWorkflow)
+    workflow.graph = _FakeGraph()
+
+    async def fake_drive(
+        workflow_run_id: str,
+        *,
+        initial_state=None,
+        config=None,
+        emit_resumed=False,
+    ):
+        workflow.graph.invoked.append((None, config, emit_resumed))
+        return {
+            "workflow_run_id": workflow_run_id,
+            "state": {"outline_approved": True},
+            "status": "running",
+        }
+
+    workflow._drive_workflow = fake_drive
+
+    await ContentGenerationWorkflow.approve_outline(
+        workflow,
+        workflow_run_id="wf-123",
+        action="approve",
+        feedback="",
+    )
+
+    assert workflow.graph.updated[0][1] == {
+        "user_decision": {"action": "approve", "feedback": ""},
+        "awaiting_outline_approval": False,
+    }
+    assert workflow.graph.updated[0][2] == "generate_outline"
+
+
+@pytest.mark.asyncio
+async def test_approve_fact_check_resumes_from_check_facts_checkpoint():
+    workflow = object.__new__(ContentGenerationWorkflow)
+    workflow.graph = _FakeGraph()
+
+    async def fake_drive(
+        workflow_run_id: str,
+        *,
+        initial_state=None,
+        config=None,
+        emit_resumed=False,
+    ):
+        workflow.graph.invoked.append((None, config, emit_resumed))
+        return {
+            "workflow_run_id": workflow_run_id,
+            "state": {"awaiting_fact_check_approval": False},
+            "status": "running",
+        }
+
+    workflow._drive_workflow = fake_drive
+
+    await ContentGenerationWorkflow.approve_fact_check(
+        workflow,
+        workflow_run_id="wf-123",
+        decisions={"claim-1": "confirm"},
+        manual_corrections={},
+    )
+
+    assert workflow.graph.updated[0][1] == {
+        "fact_check_decisions": {"claim-1": "confirm"},
+        "manual_corrections": {},
+        "awaiting_fact_check_approval": False,
+    }
+    assert workflow.graph.updated[0][2] == "check_facts"

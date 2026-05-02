@@ -14,7 +14,7 @@ from typing import Any
 from graph.builder import build_content_generation_graph
 from graph.state import GraphState
 from models import WorkflowRun, WorkflowRunStatus
-from services import get_artifact_store
+from services import format_workflow_error, get_artifact_store
 
 
 class ContentGenerationWorkflow:
@@ -161,6 +161,10 @@ class ContentGenerationWorkflow:
             metadata["pause_reason"] = state.get("pause_reason")
         elif workflow_run.status != WorkflowRunStatus.PAUSED:
             metadata["pause_reason"] = None
+        if state.get("error"):
+            metadata["error"] = state.get("error")
+        elif workflow_run.status != WorkflowRunStatus.FAILED:
+            metadata.pop("error", None)
 
         if checkpoint_id is not None:
             metadata["checkpoint_id"] = checkpoint_id
@@ -184,6 +188,68 @@ class ContentGenerationWorkflow:
             "failed",
             {"error": error, "current_node": workflow_run.current_node},
         )
+
+    async def _capture_graph_failure(
+        self,
+        workflow_run_id: str,
+        current_config: dict,
+        current_node: str | None,
+        exc: Exception,
+        fallback_state: dict | None = None,
+    ) -> dict:
+        """把节点异常写入图状态，避免审批/恢复接口直接抛 500。"""
+        public_error = format_workflow_error(exc)
+        snapshot = await self._safe_get_state(current_config)
+        state = dict(snapshot.values) if snapshot is not None else dict(fallback_state or {})
+        state["error"] = public_error
+        if current_node:
+            state["current_node"] = current_node
+
+        failed_snapshot = snapshot
+        try:
+            failed_config = await self.graph.aupdate_state(
+                current_config,
+                {"error": public_error, "current_node": current_node},
+            )
+            failed_snapshot = await self._safe_get_state(failed_config)
+            if failed_snapshot is not None:
+                state = dict(failed_snapshot.values)
+                state["error"] = public_error
+                if current_node:
+                    state["current_node"] = current_node
+        except Exception:
+            failed_snapshot = snapshot
+
+        workflow_run = await self._sync_workflow_run(
+            workflow_run_id,
+            state,
+            failed_snapshot,
+        )
+
+        latest_node_run = await self._get_latest_node_run(workflow_run_id)
+        if current_node:
+            await self._emit_node_status(
+                workflow_run_id,
+                current_node,
+                "failed",
+                {
+                    "node_run_id": latest_node_run.id if latest_node_run else None,
+                    "status": latest_node_run.status.value if latest_node_run else "failed",
+                    "duration_ms": latest_node_run.duration_ms if latest_node_run else None,
+                    "error": public_error,
+                },
+            )
+        await self._emit_workflow_status(
+            workflow_run_id,
+            "failed",
+            {"error": public_error, "current_node": workflow_run.current_node or current_node},
+        )
+
+        return {
+            "workflow_run_id": workflow_run_id,
+            "state": state,
+            "status": "failed",
+        }
 
     # ==================== 图驱动引擎 ====================
 
@@ -266,7 +332,16 @@ class ContentGenerationWorkflow:
                         {"current_node": current_node},
                     )
 
-                result = await self.graph.ainvoke(invoke_input, current_config)
+                try:
+                    result = await self.graph.ainvoke(invoke_input, current_config)
+                except Exception as exc:
+                    return await self._capture_graph_failure(
+                        workflow_run_id,
+                        current_config,
+                        current_node,
+                        exc,
+                        fallback_state=invoke_input,
+                    )
                 invoke_input = None
 
                 snapshot_after = await self._safe_get_state(self._base_config(workflow_run_id))
@@ -449,6 +524,34 @@ class ContentGenerationWorkflow:
             emit_resumed=True,
         )
 
+    async def _resume_from_node(
+        self,
+        workflow_run_id: str,
+        user_input: dict,
+        *,
+        as_node: str,
+    ) -> dict:
+        """从指定 Gate 前置节点恢复，让 LangGraph 正确进入对应审批节点。"""
+        base_config = self._base_config(workflow_run_id)
+        snapshot = await self._safe_get_state(base_config)
+
+        if snapshot is None:
+            workflow_run = await self.store.get_workflow_run(workflow_run_id)
+            if workflow_run is None:
+                raise ValueError(f"WorkflowRun not found: {workflow_run_id}")
+            initial_state = await self._build_initial_state(workflow_run, user_input)
+            return await self._drive_workflow(
+                workflow_run_id,
+                initial_state=initial_state,
+            )
+
+        updated_config = await self.graph.aupdate_state(base_config, user_input, as_node=as_node)
+        return await self._drive_workflow(
+            workflow_run_id,
+            config=updated_config,
+            emit_resumed=True,
+        )
+
     async def pause(self, workflow_run_id: str, reason: str = "") -> dict:
         """请求手动暂停，当前节点完成后停在下一份 checkpoint。"""
         workflow_run = await self.store.get_workflow_run(workflow_run_id)
@@ -553,8 +656,27 @@ class ContentGenerationWorkflow:
         if modified_outline:
             user_decision["modified_outline"] = modified_outline
 
-        return await self.resume(
-            workflow_run_id, {"user_decision": user_decision, "awaiting_outline_approval": False}
+        return await self._resume_from_node(
+            workflow_run_id,
+            {"user_decision": user_decision, "awaiting_outline_approval": False},
+            as_node="generate_outline",
+        )
+
+    async def approve_fact_check(
+        self,
+        workflow_run_id: str,
+        decisions: dict[str, str],
+        manual_corrections: dict[str, str] | None = None,
+    ) -> dict:
+        """处理事实核查审批，并从事实核查节点恢复到审批节点。"""
+        return await self._resume_from_node(
+            workflow_run_id,
+            {
+                "fact_check_decisions": decisions,
+                "manual_corrections": manual_corrections or {},
+                "awaiting_fact_check_approval": False,
+            },
+            as_node="check_facts",
         )
 
     def _get_workflow_status(self, state: dict) -> str:

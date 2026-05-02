@@ -1,9 +1,68 @@
 .page {
-    min-height: 100vh;
-    background:
+    --workflow-page-bg:
         radial-gradient(circle at top right, rgba(88, 166, 255, 0.12), transparent 28%),
         radial-gradient(circle at bottom left, rgba(210, 153, 34, 0.08), transparent 24%),
         var(--color-bg-primary);
+    --workflow-header-bg: rgba(13, 17, 23, 0.88);
+    --workflow-surface-bg: rgba(22, 27, 34, 0.94);
+    --workflow-surface-bg-soft: rgba(22, 27, 34, 0.9);
+    --workflow-surface-bg-muted: rgba(13, 17, 23, 0.5);
+    --workflow-surface-bg-subtle: rgba(13, 17, 23, 0.44);
+    --workflow-surface-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+    --workflow-surface-sheen-soft: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 24%);
+    --workflow-border-subtle: rgba(240, 246, 252, 0.08);
+    --workflow-border-muted: rgba(240, 246, 252, 0.12);
+    --workflow-control-bg: rgba(255, 255, 255, 0.03);
+    --workflow-control-bg-soft: rgba(255, 255, 255, 0.04);
+    --workflow-control-hover-bg: rgba(88, 166, 255, 0.08);
+    --workflow-focus-ring: rgba(88, 166, 255, 0.24);
+    --workflow-brand-soft: rgba(88, 166, 255, 0.08);
+    --workflow-brand-border: rgba(88, 166, 255, 0.22);
+    --workflow-success-soft: rgba(63, 185, 80, 0.08);
+    --workflow-success-border: rgba(63, 185, 80, 0.22);
+    --workflow-warning-soft: rgba(210, 153, 34, 0.08);
+    --workflow-warning-border: rgba(210, 153, 34, 0.22);
+    --workflow-danger-soft: rgba(248, 81, 73, 0.08);
+    --workflow-danger-border: rgba(248, 81, 73, 0.22);
+    --workflow-raw-bg: rgba(13, 17, 23, 0.68);
+    --workflow-shadow-panel: 0 18px 48px rgba(0, 0, 0, 0.22);
+    --workflow-shadow-card: 0 18px 42px rgba(0, 0, 0, 0.16);
+    --workflow-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    min-height: 100vh;
+    background: var(--workflow-page-bg);
+    color: var(--color-text-primary);
+}
+
+:global(html[data-theme='light']) .page {
+    --workflow-page-bg:
+        radial-gradient(circle at top right, rgba(14, 165, 233, 0.14), transparent 32%),
+        radial-gradient(circle at bottom left, rgba(217, 119, 6, 0.08), transparent 28%),
+        linear-gradient(180deg, #f8fbfd 0%, #eef4f9 100%);
+    --workflow-header-bg: rgba(255, 255, 255, 0.9);
+    --workflow-surface-bg: rgba(255, 255, 255, 0.94);
+    --workflow-surface-bg-soft: rgba(255, 255, 255, 0.88);
+    --workflow-surface-bg-muted: rgba(248, 250, 252, 0.9);
+    --workflow-surface-bg-subtle: rgba(248, 250, 252, 0.86);
+    --workflow-surface-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 250, 252, 0.68));
+    --workflow-surface-sheen-soft: linear-gradient(180deg, rgba(255, 255, 255, 0.76), transparent 28%);
+    --workflow-border-subtle: rgba(15, 23, 42, 0.1);
+    --workflow-border-muted: rgba(15, 23, 42, 0.16);
+    --workflow-control-bg: rgba(248, 250, 252, 0.84);
+    --workflow-control-bg-soft: rgba(241, 245, 249, 0.9);
+    --workflow-control-hover-bg: rgba(2, 132, 199, 0.1);
+    --workflow-focus-ring: rgba(2, 132, 199, 0.18);
+    --workflow-brand-soft: rgba(2, 132, 199, 0.1);
+    --workflow-brand-border: rgba(2, 132, 199, 0.26);
+    --workflow-success-soft: rgba(22, 163, 74, 0.1);
+    --workflow-success-border: rgba(22, 163, 74, 0.22);
+    --workflow-warning-soft: rgba(180, 83, 9, 0.1);
+    --workflow-warning-border: rgba(180, 83, 9, 0.22);
+    --workflow-danger-soft: rgba(220, 38, 38, 0.1);
+    --workflow-danger-border: rgba(220, 38, 38, 0.22);
+    --workflow-raw-bg: #f8fafc;
+    --workflow-shadow-panel: 0 20px 60px rgba(15, 23, 42, 0.1);
+    --workflow-shadow-card: 0 16px 42px rgba(15, 23, 42, 0.08);
+    --workflow-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .header {
@@ -12,8 +71,8 @@
     justify-content: space-between;
     gap: var(--spacing-lg);
     padding: var(--spacing-md) var(--spacing-lg);
-    background: rgba(13, 17, 23, 0.88);
-    border-bottom: 1px solid rgba(240, 246, 252, 0.08);
+    background: var(--workflow-header-bg);
+    border-bottom: 1px solid var(--workflow-border-subtle);
     backdrop-filter: blur(18px);
 }
 
@@ -22,8 +81,8 @@
     align-items: center;
     gap: var(--spacing-sm);
     padding: 10px 14px;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    background: var(--workflow-control-bg);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: var(--radius-full);
     color: var(--color-text-secondary);
     cursor: pointer;
@@ -37,14 +96,14 @@
 .backButton:hover,
 .backButton:focus-visible {
     color: var(--color-text-primary);
-    border-color: rgba(88, 166, 255, 0.36);
-    background: rgba(88, 166, 255, 0.08);
+    border-color: var(--workflow-brand-border);
+    background: var(--workflow-control-hover-bg);
     transform: translateY(-1px);
 }
 
 .backButton:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.24);
+    box-shadow: 0 0 0 3px var(--workflow-focus-ring);
 }
 
 .backIcon {
@@ -88,8 +147,8 @@
     min-height: 36px;
     padding: 0 12px;
     border-radius: var(--radius-full);
-    border: 1px solid rgba(240, 246, 252, 0.08);
-    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--workflow-border-subtle);
+    background: var(--workflow-control-bg);
     color: var(--color-text-secondary);
 }
 
@@ -102,6 +161,25 @@
     font-size: 0.8125rem;
     font-family: var(--font-mono);
     color: var(--color-text-primary);
+}
+
+.pauseInfo {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 12px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--workflow-warning-border);
+    background: var(--workflow-warning-soft);
+    color: var(--color-warning);
+    font-size: 0.8125rem;
+}
+
+.pauseIcon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
 }
 
 .mainContent {
@@ -132,12 +210,12 @@
     justify-content: space-between;
     gap: var(--spacing-lg);
     padding: 14px 16px;
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: var(--radius-lg);
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)),
-        rgba(22, 27, 34, 0.9);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        var(--workflow-surface-sheen),
+        var(--workflow-surface-bg-soft);
+    box-shadow: var(--workflow-inset-highlight);
 }
 
 .statusStripMain {
@@ -154,8 +232,8 @@
     width: 44px;
     height: 44px;
     border-radius: 14px;
-    border: 1px solid rgba(240, 246, 252, 0.08);
-    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--workflow-border-subtle);
+    background: var(--workflow-control-bg-soft);
     flex-shrink: 0;
 }
 
@@ -185,7 +263,7 @@
     gap: var(--spacing-sm);
     padding: 10px 12px;
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--workflow-control-bg);
     color: var(--color-text-secondary);
     font-size: 0.8125rem;
     line-height: 1.5;
@@ -203,14 +281,14 @@
     gap: var(--spacing-lg);
     min-height: 520px;
     padding: var(--spacing-lg);
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: 20px;
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
-        rgba(22, 27, 34, 0.94);
+        var(--workflow-surface-sheen-soft),
+        var(--workflow-surface-bg);
     box-shadow:
-        0 18px 48px rgba(0, 0, 0, 0.22),
-        inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        var(--workflow-shadow-panel),
+        var(--workflow-inset-highlight);
 }
 
 .stageHeader {
@@ -219,7 +297,7 @@
     justify-content: space-between;
     gap: var(--spacing-lg);
     padding-bottom: var(--spacing-lg);
-    border-bottom: 1px solid rgba(240, 246, 252, 0.08);
+    border-bottom: 1px solid var(--workflow-border-subtle);
 }
 
 .stageHeaderMain {
@@ -261,9 +339,9 @@
     gap: 6px;
     min-height: 88px;
     padding: 14px 16px;
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--workflow-control-bg);
 }
 
 .metricLabel {
@@ -283,6 +361,10 @@
     animation: stageEnter 220ms ease-out;
 }
 
+.contentBlock {
+    color: var(--color-text-primary);
+}
+
 .runningStage,
 .completedStage,
 .failedStage {
@@ -295,9 +377,9 @@
 .completedHero,
 .failedStage {
     padding: var(--spacing-lg);
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: 18px;
-    background: rgba(13, 17, 23, 0.44);
+    background: var(--workflow-surface-bg-subtle);
 }
 
 .runningIntro {
@@ -341,8 +423,8 @@
     width: 60px;
     height: 60px;
     border-radius: 18px;
-    background: rgba(88, 166, 255, 0.12);
-    border: 1px solid rgba(88, 166, 255, 0.2);
+    background: var(--workflow-brand-soft);
+    border: 1px solid var(--workflow-brand-border);
     color: var(--color-brand-primary);
     box-shadow: 0 0 0 rgba(88, 166, 255, 0.24);
 }
@@ -352,8 +434,8 @@
 }
 
 .completedBadge {
-    background: rgba(63, 185, 80, 0.12);
-    border-color: rgba(63, 185, 80, 0.24);
+    background: var(--workflow-success-soft);
+    border-color: var(--workflow-success-border);
     color: var(--color-success);
 }
 
@@ -375,9 +457,9 @@
     flex-direction: column;
     gap: 6px;
     padding: 14px 16px;
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--workflow-control-bg);
     transition:
         border-color var(--transition-fast),
         transform var(--transition-fast),
@@ -386,8 +468,8 @@
 
 .liveItemActive {
     transform: translateY(-1px);
-    border-color: rgba(88, 166, 255, 0.36);
-    background: rgba(88, 166, 255, 0.08);
+    border-color: var(--workflow-brand-border);
+    background: var(--workflow-control-hover-bg);
 }
 
 .liveLabel {
@@ -428,9 +510,9 @@
     gap: 8px;
     min-height: 40px;
     padding: 0 14px;
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: var(--radius-full);
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--workflow-control-bg);
     color: var(--color-text-secondary);
     cursor: pointer;
     transition:
@@ -442,14 +524,14 @@
 .viewToggle:hover,
 .viewToggle:focus-visible,
 .viewToggleActive {
-    border-color: rgba(88, 166, 255, 0.34);
+    border-color: var(--workflow-brand-border);
     color: var(--color-text-primary);
-    background: rgba(88, 166, 255, 0.08);
+    background: var(--workflow-control-hover-bg);
 }
 
 .viewToggle:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+    box-shadow: 0 0 0 3px var(--workflow-focus-ring);
 }
 
 .toggleIcon {
@@ -469,11 +551,11 @@
     gap: var(--spacing-md);
     min-height: 220px;
     padding: var(--spacing-lg);
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: 18px;
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 24%),
-        rgba(13, 17, 23, 0.5);
+        var(--workflow-surface-sheen-soft),
+        var(--workflow-surface-bg-muted);
 }
 
 .previewCardHeader {
@@ -513,9 +595,9 @@
 .rawSurface {
     overflow: auto;
     padding: var(--spacing-lg);
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle);
     border-radius: 18px;
-    background: rgba(13, 17, 23, 0.68);
+    background: var(--workflow-raw-bg);
 }
 
 .rawSurface pre {
@@ -533,7 +615,7 @@
     gap: var(--spacing-md);
     align-items: flex-start;
     padding: var(--spacing-lg);
-    border: 1px dashed rgba(240, 246, 252, 0.12);
+    border: 1px dashed var(--workflow-border-muted);
     border-radius: 18px;
     color: var(--color-text-secondary);
 }
@@ -585,8 +667,8 @@
 
 .errorIconWrap,
 .failedIconWrap {
-    background: rgba(248, 81, 73, 0.12);
-    border-color: rgba(248, 81, 73, 0.24);
+    background: var(--workflow-danger-soft);
+    border-color: var(--workflow-danger-border);
     color: var(--color-danger);
 }
 
@@ -599,28 +681,33 @@
     margin: 0;
 }
 
+.errorText {
+    margin-top: var(--spacing-sm) !important;
+    color: var(--color-danger) !important;
+}
+
 .toneBrand {
     color: var(--color-brand-primary);
-    border-color: rgba(88, 166, 255, 0.22);
-    background: rgba(88, 166, 255, 0.08);
+    border-color: var(--workflow-brand-border);
+    background: var(--workflow-brand-soft);
 }
 
 .toneSuccess {
     color: var(--color-success);
-    border-color: rgba(63, 185, 80, 0.22);
-    background: rgba(63, 185, 80, 0.08);
+    border-color: var(--workflow-success-border);
+    background: var(--workflow-success-soft);
 }
 
 .toneWarning {
     color: var(--color-warning);
-    border-color: rgba(210, 153, 34, 0.22);
-    background: rgba(210, 153, 34, 0.08);
+    border-color: var(--workflow-warning-border);
+    background: var(--workflow-warning-soft);
 }
 
 .toneDanger {
     color: var(--color-danger);
-    border-color: rgba(248, 81, 73, 0.22);
-    background: rgba(248, 81, 73, 0.08);
+    border-color: var(--workflow-danger-border);
+    background: var(--workflow-danger-soft);
 }
 
 .toneMuted {

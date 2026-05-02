@@ -3,12 +3,12 @@
     flex-direction: column;
     gap: var(--spacing-lg);
     padding: var(--spacing-lg);
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
     border-radius: 20px;
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 24%),
-        rgba(22, 27, 34, 0.92);
-    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16);
+        var(--workflow-surface-sheen-soft, linear-gradient(180deg, transparent, transparent)),
+        var(--workflow-surface-bg-soft, var(--color-bg-secondary));
+    box-shadow: var(--workflow-shadow-card, var(--shadow-md));
 }
 
 .header {
@@ -39,7 +39,7 @@
     min-height: 32px;
     padding: 0 10px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
     color: var(--color-text-secondary);
     font-size: 0.75rem;
     white-space: nowrap;
@@ -70,12 +70,12 @@
 .interactive:hover,
 .interactive:focus-visible,
 .current {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
 }
 
 .interactive:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.18);
+    box-shadow: 0 0 0 3px var(--workflow-focus-ring, var(--pc-semantic-focus-ring));
 }
 
 .connector {
@@ -84,7 +84,7 @@
     top: -14px;
     width: 2px;
     height: 14px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--workflow-border-muted, var(--color-border));
 }
 
 .connectorCompleted {
@@ -110,8 +110,8 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    border: 1px solid rgba(240, 246, 252, 0.08);
-    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
     flex-shrink: 0;
 }
 
@@ -126,28 +126,28 @@
 
 .running .indicator {
     color: var(--color-brand-primary);
-    border-color: rgba(88, 166, 255, 0.24);
-    background: rgba(88, 166, 255, 0.1);
+    border-color: var(--workflow-brand-border, var(--color-border-hover));
+    background: var(--workflow-brand-soft, var(--pc-semantic-brand-soft));
     box-shadow: 0 0 0 rgba(88, 166, 255, 0.24);
     animation: pulseRing 1.4s ease-in-out infinite;
 }
 
 .completed .indicator {
     color: var(--color-success);
-    border-color: rgba(63, 185, 80, 0.24);
-    background: rgba(63, 185, 80, 0.08);
+    border-color: var(--workflow-success-border, color-mix(in srgb, var(--color-success) 24%, transparent));
+    background: var(--workflow-success-soft, color-mix(in srgb, var(--color-success) 10%, transparent));
 }
 
 .interrupted .indicator {
     color: var(--color-warning);
-    border-color: rgba(210, 153, 34, 0.24);
-    background: rgba(210, 153, 34, 0.08);
+    border-color: var(--workflow-warning-border, color-mix(in srgb, var(--color-warning) 24%, transparent));
+    background: var(--workflow-warning-soft, color-mix(in srgb, var(--color-warning) 10%, transparent));
 }
 
 .failed .indicator {
     color: var(--color-danger);
-    border-color: rgba(248, 81, 73, 0.24);
-    background: rgba(248, 81, 73, 0.08);
+    border-color: var(--workflow-danger-border, color-mix(in srgb, var(--color-danger) 24%, transparent));
+    background: var(--workflow-danger-soft, color-mix(in srgb, var(--color-danger) 10%, transparent));
 }
 
 .info {
@@ -191,7 +191,7 @@
     height: 28px;
     padding: 0 8px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
     color: var(--color-text-secondary);
     font-size: 0.75rem;
     flex-shrink: 0;

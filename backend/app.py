@@ -43,12 +43,14 @@ def _register_routes(application: FastAPI) -> None:
     # 内容工作流 API
     from routes.workflow_routes import router as workflow_router
 
-    application.include_router(workflow_router, tags=["workflow"])
+    # 统一在入口层补齐 /api 前缀，避免路由模块内部重复声明根路径
+    application.include_router(workflow_router, prefix="/api", tags=["workflow"])
 
     # Trace / Artifact API
     from routes.trace_routes import router as trace_router
 
-    application.include_router(trace_router, tags=["trace"])
+    # 统一在入口层补齐 /api 前缀，避免路由模块内部重复声明根路径
+    application.include_router(trace_router, prefix="/api", tags=["trace"])
 
     # 认证路由
     from routes.auth_routes import router as auth_router

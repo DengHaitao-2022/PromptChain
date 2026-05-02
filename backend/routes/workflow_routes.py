@@ -32,7 +32,8 @@ from routes.workflow_helpers import (
     _simplify_state,
 )
 
-router = APIRouter(prefix="/api/workflow", tags=["workflow"])
+# 由 app.py 统一补齐 /api 前缀，这里只保留资源级前缀，避免重复拼接
+router = APIRouter(prefix="/workflow", tags=["workflow"])
 logger = logging.getLogger(__name__)
 INTERNAL_SERVER_ERROR = "Internal server error"
 
@@ -273,13 +274,10 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
             action="事实核查审批",
             paused_detail="当前工作流已手动暂停，请先恢复后再处理事实核查审批。",
         )
-        result = await workflow.resume(
+        result = await workflow.approve_fact_check(
             workflow_run_id=workflow_run_id,
-            user_input={
-                "fact_check_decisions": body.decisions,
-                "manual_corrections": body.manual_corrections,
-                "awaiting_fact_check_approval": False,
-            },
+            decisions=body.decisions,
+            manual_corrections=body.manual_corrections,
         )
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
         return _build_workflow_response(

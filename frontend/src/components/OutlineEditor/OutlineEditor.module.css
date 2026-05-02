@@ -1,8 +1,8 @@
 .container {
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 22%),
-        rgba(22, 27, 34, 0.86);
-    border: 1px solid rgba(240, 246, 252, 0.08);
+        var(--workflow-surface-sheen-soft, linear-gradient(180deg, transparent, transparent)),
+        var(--workflow-surface-bg-soft, var(--color-bg-secondary));
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
     border-radius: 18px;
     padding: var(--spacing-lg);
 }
@@ -152,9 +152,9 @@
     gap: var(--spacing-sm);
     padding: 14px 16px;
     margin-top: var(--spacing-lg);
-    border: 1px solid rgba(240, 246, 252, 0.08);
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
     border-radius: 16px;
-    background: rgba(13, 17, 23, 0.46);
+    background: var(--workflow-surface-bg-subtle, var(--color-bg-secondary));
 }
 
 /* Dialog */

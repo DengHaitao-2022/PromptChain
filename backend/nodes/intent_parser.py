@@ -8,20 +8,28 @@
 """
 
 import json
+import re
 from datetime import datetime
 
 from langchain_core.prompts import ChatPromptTemplate
 
 from models import (
     ArtifactType,
+    Audience,
     HumanDecision,
     IntentCard,
     LLMCallRecord,
     NodeRun,
     NodeRunStatus,
+    Tone,
     Uncertainty,
 )
-from services import get_artifact_store, get_current_model_info, get_structured_llm
+from services import (
+    get_artifact_store,
+    get_current_model_info,
+    get_structured_llm,
+    invoke_with_llm_retry,
+)
 
 INTENT_EXTRACTION_PROMPT = """你是一个专业的内容规划助手。请根据用户的需求描述，提取结构化意图卡。
 
@@ -53,6 +61,122 @@ def _now_iso() -> str:
 
 def _serialize_questions(questions: list[Uncertainty]) -> list[dict]:
     return [question.model_dump() for question in questions]
+
+
+_NO_VALUE_ANSWERS = {"", "无", "暂无", "没有", "不需要", "无需", "否", "none", "null"}
+
+
+def _coerce_list_answer(value) -> list[str]:
+    """将澄清答案统一为字符串列表，避免单个文本破坏 IntentCard 校验。"""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        text = str(value).strip()
+        if text.lower() in _NO_VALUE_ANSWERS:
+            return []
+        raw_items = re.split("[\n,，、;\uff1b]+", text)
+    return [str(item).strip() for item in raw_items if str(item).strip()]
+
+
+def _merge_unique(items: list[str], additions: list[str]) -> list[str]:
+    merged = list(items)
+    existing = set(merged)
+    for item in additions:
+        if item not in existing:
+            merged.append(item)
+            existing.add(item)
+    return merged
+
+
+def _coerce_audience(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return Audience.GENERAL.value
+    for audience in Audience:
+        if text == audience.value:
+            return audience.value
+
+    lowered = text.lower()
+    if any(keyword in lowered for keyword in ["初学", "新手", "入门", "beginner"]):
+        return Audience.BEGINNER.value
+    if any(keyword in lowered for keyword in ["专家", "资深", "架构师", "高级", "expert"]):
+        return Audience.EXPERT.value
+    if any(
+        keyword in lowered
+        for keyword in ["开发", "工程师", "技术", "程序员", "developer", "engineer", "中级"]
+    ):
+        return Audience.INTERMEDIATE.value
+    return Audience.GENERAL.value
+
+
+def _coerce_tone(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return Tone.CASUAL.value
+    for tone in Tone:
+        if text == tone.value:
+            return tone.value
+
+    lowered = text.lower()
+    if any(keyword in lowered for keyword in ["学术", "专业", "论文", "academic"]):
+        return Tone.ACADEMIC.value
+    if any(keyword in lowered for keyword in ["正式", "严谨", "报告", "formal"]):
+        return Tone.FORMAL.value
+    if any(keyword in lowered for keyword in ["故事", "叙事", "story"]):
+        return Tone.STORYTELLING.value
+    return Tone.CASUAL.value
+
+
+def _coerce_length(value, fallback: int) -> int:
+    if isinstance(value, int):
+        return value
+    match = re.search(r"\d+", str(value or ""))
+    return int(match.group()) if match else fallback
+
+
+def _question_field(question) -> str | None:
+    if isinstance(question, dict):
+        return question.get("field")
+    return getattr(question, "field", None)
+
+
+def _apply_clarifications(intent_card: IntentCard, clarifications: dict) -> dict:
+    updated_data = intent_card.model_dump()
+    freeform_constraints: list[str] = []
+
+    for field, answer in clarifications.items():
+        if field == "audience":
+            updated_data[field] = _coerce_audience(answer)
+        elif field == "tone":
+            updated_data[field] = _coerce_tone(answer)
+        elif field == "length":
+            updated_data[field] = _coerce_length(answer, updated_data.get("length", 1500))
+        elif field in {"must_include", "must_exclude", "source_references"}:
+            updated_data[field] = _merge_unique(
+                updated_data.get(field, []),
+                _coerce_list_answer(answer),
+            )
+        elif field in updated_data:
+            normalized_answer = str(answer).strip()
+            updated_data[field] = (
+                None if normalized_answer.lower() in _NO_VALUE_ANSWERS else normalized_answer
+            )
+        else:
+            values = _coerce_list_answer(answer)
+            freeform_constraints.extend(f"{field}: {item}" for item in values)
+
+    if freeform_constraints:
+        updated_data["must_include"] = _merge_unique(
+            updated_data.get("must_include", []),
+            freeform_constraints,
+        )
+
+    updated_data["uncertainties"] = [
+        u for u in updated_data.get("uncertainties", []) if _question_field(u) not in clarifications
+    ]
+    return updated_data
 
 
 async def _update_gate_metadata(store, workflow_run_id: str, gate_payload: dict | None) -> None:
@@ -105,7 +229,9 @@ async def parse_intent(state: dict) -> dict:
 
         # 调用 LLM
         start_time = datetime.utcnow()
-        intent_card: IntentCard = await chain.ainvoke({"user_input": user_input})
+        intent_card: IntentCard = await invoke_with_llm_retry(
+            lambda: chain.ainvoke({"user_input": user_input})
+        )
         end_time = datetime.utcnow()
 
         # 记录 LLM 调用（动态获取模型配置）
@@ -126,7 +252,7 @@ async def parse_intent(state: dict) -> dict:
 
         # 创建 Artifact
         artifact = await store.create_artifact(
-            type=ArtifactType.INTENT_CARD,
+            artifact_type=ArtifactType.INTENT_CARD,
             content=intent_card.model_dump(),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,
@@ -185,7 +311,7 @@ async def clarify_intent(state: dict) -> dict:
         - intent_card: IntentCard (更新后)
         - needs_clarification: False
     """
-    intent_card = state["intent_card"]
+    intent_card = IntentCard.model_validate(state["intent_card"])
     clarifications = state.get("user_clarifications", {})
     workflow_run_id = state["workflow_run_id"]
     store = get_artifact_store()
@@ -210,23 +336,14 @@ async def clarify_intent(state: dict) -> dict:
             modified_content=clarifications,
         )
 
-        # 应用用户澄清
-        updated_data = intent_card.model_dump()
-        for field, answer in clarifications.items():
-            if field in updated_data:
-                updated_data[field] = answer
-
-        # 清除已解答的不确定点
-        updated_data["uncertainties"] = [
-            u for u in updated_data["uncertainties"] if u["field"] not in clarifications
-        ]
-
-        updated_intent_card = IntentCard.model_validate(updated_data)
+        updated_intent_card = IntentCard.model_validate(
+            _apply_clarifications(intent_card, clarifications)
+        )
 
         # 创建新版本 Artifact
         parent_artifact_id = state.get("intent_card_artifact_id")
         artifact = await store.create_artifact(
-            type=ArtifactType.INTENT_CARD,
+            artifact_type=ArtifactType.INTENT_CARD,
             content=updated_intent_card.model_dump(),
             workflow_run_id=workflow_run_id,
             node_run_id=node_run.id,

@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+import { apiUrl } from '@/lib/api-config';
 
 // ==================== 类型定义 ====================
 
@@ -79,7 +78,7 @@ export function useWorkflowApi() {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}${url}`, {
+      const response = await fetch(apiUrl(url), {
         ...options,
         credentials: 'include',
         headers: {
