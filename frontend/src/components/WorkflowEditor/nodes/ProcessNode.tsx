@@ -34,11 +34,15 @@ function ProcessNode({ data, selected }: NodeProps) {
             />
 
             <div className={styles.nodeHeader}>
-                <Cpu size={16} />
-                <span>{nodeData.label || '处理节点'}</span>
+                <span className={styles.nodeIcon} aria-hidden="true">
+                    <Cpu size={18} />
+                </span>
+                <span className={styles.nodeTitle}>{nodeData.label || '处理节点'}</span>
+                <span className={styles.nodeType}>处理</span>
             </div>
 
             <div className={styles.nodeContent}>
+                <p className={styles.nodeDescription}>LLM 内容生成与处理</p>
                 {nodeData.config?.modelName && (
                     <div className={styles.badge}>
                         {nodeData.config.modelName}

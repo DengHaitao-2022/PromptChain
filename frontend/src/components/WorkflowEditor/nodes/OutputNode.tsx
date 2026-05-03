@@ -32,11 +32,15 @@ function OutputNode({ data, selected }: NodeProps) {
             />
 
             <div className={styles.nodeHeader}>
-                <FileOutput size={16} />
-                <span>{nodeData.label || '输出节点'}</span>
+                <span className={styles.nodeIcon} aria-hidden="true">
+                    <FileOutput size={18} />
+                </span>
+                <span className={styles.nodeTitle}>{nodeData.label || '输出节点'}</span>
+                <span className={styles.nodeType}>输出</span>
             </div>
 
             <div className={styles.nodeContent}>
+                <p className={styles.nodeDescription}>工作流终点，输出结果</p>
                 {nodeData.config?.outputFormat && (
                     <div className={styles.badge}>
                         {nodeData.config.outputFormat.toUpperCase()}

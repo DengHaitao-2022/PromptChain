@@ -597,6 +597,7 @@
 @media (max-width: 1080px) {
   .heroInner,
   .contentGrid,
+  .heroSignalGrid,
   .metricsGrid,
   .runMetaGrid {
     grid-template-columns: 1fr;

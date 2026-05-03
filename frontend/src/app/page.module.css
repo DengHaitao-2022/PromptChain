@@ -838,6 +838,12 @@
   box-shadow: 0 0 0 4px var(--page-highlight-soft);
 }
 
+.selectGroup {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .selectWrapper {
   display: flex;
   flex-direction: column;
@@ -1364,15 +1370,24 @@
 
 @media (max-width: 768px) {
   .headerContent {
-    padding: 12px 16px;
-    flex-wrap: wrap;
-    gap: 12px;
+    padding: 16px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  .logo {
+    justify-content: center;
+    width: 100%;
   }
 
   .headerStatus {
     width: 100%;
-    gap: 12px;
-    justify-content: space-between;
+    gap: 16px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
   }
 
   .headerBadge {
@@ -1380,15 +1395,31 @@
   }
 
   .nav {
-    gap: 12px;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 16px;
   }
 
   .headerActions {
+    width: 100%;
     margin-left: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+  }
+
+  .registerButton {
+    width: 100%;
   }
 
   .main {
     padding: 32px 16px 72px;
+  }
+
+  .selectGroup {
+    grid-template-columns: 1fr;
   }
 
   .backgroundOrbPrimary {
@@ -1457,13 +1488,7 @@
   }
 }
 
-@media (max-width: 520px) {
-  .nav,
-  .headerActions {
-    width: 100%;
-    justify-content: space-between;
-  }
-}
+
 
 @media (prefers-reduced-motion: reduce) {
   .page::before,

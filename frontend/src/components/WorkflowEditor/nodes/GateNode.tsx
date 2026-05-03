@@ -43,11 +43,15 @@ function GateNode({ data, selected }: NodeProps) {
             />
 
             <div className={styles.nodeHeader}>
-                <UserCheck size={16} />
-                <span>{nodeData.label || '门控节点'}</span>
+                <span className={styles.nodeIcon} aria-hidden="true">
+                    <UserCheck size={18} />
+                </span>
+                <span className={styles.nodeTitle}>{nodeData.label || '门控节点'}</span>
+                <span className={styles.nodeType}>门控</span>
             </div>
 
             <div className={styles.nodeContent}>
+                <p className={styles.nodeDescription}>人机交互审批与编辑</p>
                 {nodeData.config?.gateType && (
                     <div className={styles.badge}>
                         {gateTypeLabels[nodeData.config.gateType] || nodeData.config.gateType}

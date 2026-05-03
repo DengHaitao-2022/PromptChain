@@ -33,11 +33,15 @@ function CheckerNode({ data, selected }: NodeProps) {
             />
 
             <div className={styles.nodeHeader}>
-                <ShieldCheck size={16} />
-                <span>{nodeData.label || '核查节点'}</span>
+                <span className={styles.nodeIcon} aria-hidden="true">
+                    <ShieldCheck size={18} />
+                </span>
+                <span className={styles.nodeTitle}>{nodeData.label || '核查节点'}</span>
+                <span className={styles.nodeType}>核查</span>
             </div>
 
             <div className={styles.nodeContent}>
+                <p className={styles.nodeDescription}>事实核查与置信度检测</p>
                 {nodeData.config?.confidenceThreshold && (
                     <div className={styles.badge}>
                         阈值: {(nodeData.config.confidenceThreshold * 100).toFixed(0)}%

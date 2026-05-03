@@ -161,6 +161,13 @@
   gap: 18px;
 }
 
+.sidebarFooter {
+  margin-top: auto;
+  padding-top: 24px;
+  display: flex;
+  justify-content: flex-start;
+}
+
 .navSection {
   display: flex;
   flex-direction: column;
@@ -268,6 +275,16 @@
   border-bottom: 1px solid var(--console-border-subtle);
   background: var(--console-topbar-bg);
   backdrop-filter: blur(22px);
+}
+
+.topbarLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menuButton {
+  display: none;
 }
 
 .topbarCopy {
@@ -476,19 +493,66 @@
 }
 
 @media (max-width: 1080px) {
-  .layout {
-    flex-direction: column;
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    width: 84px;
+    min-width: 84px;
+    height: 100vh;
+    padding: 14px 10px;
+    border-right: 1px solid var(--console-border);
+    border-bottom: none;
+    overflow: visible;
   }
 
-  .sidebar {
-    width: auto;
-    padding: 16px;
-    border-right: none;
-    border-bottom: 1px solid var(--console-border);
+  .sidebarHeader {
+    padding: 4px 0 18px;
+  }
+
+  .logoLink {
+    justify-content: center;
+  }
+
+  .logoBadge {
+    width: 48px;
+    height: 48px;
+    border-radius: 18px;
+  }
+
+  .logoCopy,
+  .sectionLabel,
+  .navLabel,
+  .arrow {
+    width: 0;
+    min-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
   }
 
   .nav {
-    gap: 12px;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .navSection {
+    position: relative;
+    align-items: center;
+  }
+
+  .navItem {
+    width: 52px;
+    min-height: 52px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    border-radius: 18px;
+  }
+
+  .navIcon {
+    width: 22px;
+    height: 22px;
   }
 
   .topbar {
@@ -498,31 +562,155 @@
   .content {
     padding: 18px;
   }
+
+  .subNav {
+    position: absolute;
+    left: 64px;
+    top: 0;
+    z-index: 40;
+    width: 224px;
+    padding: 10px;
+    border: 1px solid var(--console-border);
+    border-radius: 22px;
+    background: var(--console-dropdown-bg);
+    box-shadow: var(--console-shadow-lg);
+    backdrop-filter: blur(20px);
+  }
+
+  .subNavItem {
+    width: 100%;
+    min-height: 46px;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .subNav .navLabel {
+    width: auto;
+    min-width: 0;
+    opacity: 1;
+    overflow: visible;
+    pointer-events: auto;
+  }
 }
 
 @media (max-width: 760px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    width: 280px;
+    min-width: 280px;
+    height: 100vh;
+    padding: 24px 18px;
+    border-right: 1px solid var(--console-border);
+    border-bottom: none;
+    transform: translateX(-100%);
+    transition: transform 300ms ease;
+  }
+
+  .sidebarOpen {
+    transform: translateX(0);
+  }
+
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 300ms ease;
+    backdrop-filter: blur(4px);
+  }
+
+  .backdropOpen {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebarHeader {
+    padding: 6px 10px 24px;
+    margin-right: 0;
+  }
+
+  .logoCopy,
+  .sectionLabel,
+  .navLabel,
+  .arrow {
+    width: auto;
+    min-width: auto;
+    opacity: 1;
+    overflow: visible;
+    pointer-events: auto;
+  }
+
   .nav {
-    overflow-x: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 18px;
   }
 
   .navSection {
-    min-width: max-content;
-  }
-
-  .topbar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .topbarActions {
-    width: 100%;
     flex-direction: column;
     align-items: stretch;
   }
 
+  .navItem {
+    width: 100%;
+    min-height: 48px;
+    padding: 0 14px;
+    justify-content: flex-start;
+    gap: 12px;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px 16px;
+  }
+
+  .menuButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: var(--console-surface-alt);
+    border: 1px solid var(--console-border);
+    color: var(--console-text-primary);
+    cursor: pointer;
+  }
+
+  .topbarActions {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 12px;
+  }
+
   .workspaceSelect,
   .userButton {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  .subNav {
+    position: static;
     width: 100%;
+    padding: 0 0 0 14px;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
   }
 }
 

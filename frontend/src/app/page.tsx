@@ -614,8 +614,8 @@ export default function Home() {
                 />
 
                 <div className={styles.composerFooter}>
-                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                    <div className={styles.selectWrapper} style={{ flex: '1 1 200px' }}>
+                  <div className={styles.selectGroup}>
+                    <div className={styles.selectWrapper}>
                       <label htmlFor="workflow-select" className={styles.selectLabel}>工作流</label>
                       <select
                         id="workflow-select"
@@ -635,7 +635,7 @@ export default function Home() {
                         )}
                       </select>
                     </div>
-                    <div className={styles.selectWrapper} style={{ flex: '1 1 200px' }}>
+                    <div className={styles.selectWrapper}>
                       <label htmlFor="version-select" className={styles.selectLabel}>版本</label>
                       <select
                         id="version-select"

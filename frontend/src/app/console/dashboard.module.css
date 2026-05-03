@@ -517,6 +517,7 @@
 @media (max-width: 1080px) {
   .hero,
   .contentGrid,
+  .heroPanelMeta,
   .statsGrid {
     grid-template-columns: 1fr;
   }
