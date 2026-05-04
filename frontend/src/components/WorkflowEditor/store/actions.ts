@@ -5,7 +5,7 @@
 
 import { useMemo } from 'react';
 import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
-import type { Node, Edge, OnNodesChange, OnEdgesChange, OnConnect, Viewport } from '@xyflow/react';
+import type { Node, Edge, NodeChange, OnNodesChange, OnEdgesChange, OnConnect, Viewport } from '@xyflow/react';
 import { useWorkflowStoreInstance } from '../provider/WorkflowProvider';
 import { layoutGraph } from '../layout/elk/elk';
 import type { ElkLayoutOptions } from '../layout/elk/config';
@@ -13,6 +13,14 @@ import type { ElkLayoutOptions } from '../layout/elk/config';
 import { ydoc, yNodes, undoManager } from '../collaboration/yjs/ydoc';
 import { applyNodeChangesToYjs, applyEdgeChangesToYjs, setNodesToYjs, setEdgesToYjs } from '../collaboration/yjs/sync';
 import { updateSelection } from '../collaboration/yjs/awareness';
+
+function shouldPersistNodeChange(change: NodeChange): boolean {
+    return change.type !== 'dimensions';
+}
+
+function isSelectionNodeChange(change: NodeChange): boolean {
+    return change.type === 'select';
+}
 
 export function useWorkflowActions() {
 const store = useWorkflowStoreInstance();
@@ -37,23 +45,24 @@ const nextEdges = typeof edgesOrUpdater === 'function' ? edgesOrUpdater(currentE
 store.setState({ isDirty: true });
 },
 onNodesChange: ((changes) => {
-    // Apply layout/data changes to Yjs
-    ydoc.transact(() => {
-    applyNodeChangesToYjs(changes);
-}, 'local');
+    // dimensions 是 React Flow 的本地测量事件，写回受控 store 会形成测量 -> setState -> 再测量的循环。
+    const persistentChanges = changes.filter(shouldPersistNodeChange);
 
-// Only 'select' and 'dimensions' changes are handled entirely by Zustand locally
-    // ('dimensions' are synced to Yjs above, but 'select' is excluded, so we must compute the result array)
-    // Actually `applyNodeChanges` works well on local state. We still need it to compute selection bounds/state
-// Let's just apply it to our local cache completely, to instantly reflect selection and dragging.
-    store.setState((state) => ({
-        nodes: applyNodeChanges(changes, state.nodes),
-    isDirty: true,
-}));
+    if (persistentChanges.length > 0) {
+        ydoc.transact(() => {
+            applyNodeChangesToYjs(persistentChanges);
+        }, 'local');
 
-// Sync selection status to Awareness
-const currentSelected = store.getState().nodes.filter(n => n.selected).map(n => n.id);
-updateSelection(currentSelected);
+        store.setState((state) => ({
+            nodes: applyNodeChanges(persistentChanges, state.nodes),
+            isDirty: true,
+        }));
+    }
+
+    if (changes.some(isSelectionNodeChange)) {
+        const currentSelected = store.getState().nodes.filter(n => n.selected).map(n => n.id);
+        updateSelection(currentSelected);
+    }
 }) as OnNodesChange,
 onEdgesChange: ((changes) => {
 ydoc.transact(() => {

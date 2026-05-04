@@ -168,6 +168,20 @@
   justify-content: flex-start;
 }
 
+.sidebarThemeToggle {
+  width: 44px;
+  height: 44px;
+  border-color: var(--console-border);
+  background: var(--console-nav-bg);
+  color: var(--console-text-muted);
+}
+
+.sidebarThemeToggle:hover {
+  border-color: var(--console-border-strong);
+  background: var(--console-nav-hover-bg);
+  color: var(--console-text-primary);
+}
+
 .navSection {
   display: flex;
   flex-direction: column;
@@ -497,17 +511,17 @@
     position: sticky;
     top: 0;
     z-index: 30;
-    width: 84px;
-    min-width: 84px;
+    width: 72px;
+    min-width: 72px;
     height: 100vh;
-    padding: 14px 10px;
+    padding: 12px 8px;
     border-right: 1px solid var(--console-border);
     border-bottom: none;
     overflow: visible;
   }
 
   .sidebarHeader {
-    padding: 4px 0 18px;
+    padding: 2px 0 14px;
   }
 
   .logoLink {
@@ -515,9 +529,9 @@
   }
 
   .logoBadge {
-    width: 48px;
-    height: 48px;
-    border-radius: 18px;
+    width: 44px;
+    height: 44px;
+    border-radius: 16px;
   }
 
   .logoCopy,
@@ -532,27 +546,41 @@
   }
 
   .nav {
+    flex: 0 0 auto;
     align-items: center;
-    gap: 14px;
+    gap: 8px;
+  }
+
+  .sidebarFooter {
+    justify-content: center;
+    padding-top: 10px;
+  }
+
+  .sidebarThemeToggle {
+    width: 44px;
+    height: 44px;
+    border-radius: 16px;
+    box-shadow: none;
   }
 
   .navSection {
     position: relative;
     align-items: center;
+    gap: 6px;
   }
 
   .navItem {
-    width: 52px;
-    min-height: 52px;
+    width: 44px;
+    min-height: 44px;
     justify-content: center;
     gap: 0;
     padding: 0;
-    border-radius: 18px;
+    border-radius: 16px;
   }
 
   .navIcon {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
   }
 
   .topbar {
@@ -565,7 +593,7 @@
 
   .subNav {
     position: absolute;
-    left: 64px;
+    left: 56px;
     top: 0;
     z-index: 40;
     width: 224px;
@@ -711,6 +739,16 @@
     background: transparent;
     box-shadow: none;
     backdrop-filter: none;
+  }
+
+  .sidebarFooter {
+    justify-content: flex-start;
+  }
+
+  .sidebarThemeToggle {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
   }
 }
 

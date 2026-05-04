@@ -334,6 +334,14 @@
   filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.18));
 }
 
+.miniMapNodeThumb {
+  pointer-events: auto;
+}
+
+.miniMapNodeCard {
+  filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.16));
+}
+
 @media (max-width: 1080px) {
   .header {
     flex-direction: column;

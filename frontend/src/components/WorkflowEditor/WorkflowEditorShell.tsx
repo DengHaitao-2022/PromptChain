@@ -24,6 +24,7 @@ import { UserPresenceAvatarStack } from './collaboration/components/UserPresence
 import { RemoteSelectionHighlight } from './collaboration/components/RemoteSelectionHighlight';
 import { ConflictHintToast } from './collaboration/components/ConflictHintToast';
 import { getDefaultLabel } from './domain/schema';
+import { WORKFLOW_NODE_CARD_HEIGHT, WORKFLOW_NODE_CARD_WIDTH } from './domain/nodePresentation';
 import { registry } from './registry';
 import styles from './WorkflowEditor.module.css';
 import type { WorkflowEditorProps } from './index';
@@ -92,6 +93,8 @@ const readOnly = useWorkflowContext(selectReadOnly);
                 id: `${type}-${Date.now()}`,
                 type,
                 position,
+                initialWidth: WORKFLOW_NODE_CARD_WIDTH,
+                initialHeight: WORKFLOW_NODE_CARD_HEIGHT,
                 data: {
                     label: getDefaultLabel(type),
                     ...(registry.get(type)?.defaultData ?? {}),
@@ -258,7 +261,9 @@ const readOnly = useWorkflowContext(selectReadOnly);
                         <MiniMap
                             nodeColor={(node) => getMiniMapNodeColor(node.type)}
                             nodeStrokeColor={(node) => getMiniMapNodeStrokeColor(node.type)}
-                            nodeBorderRadius={16}
+                            nodeComponent={WorkflowMiniMapNode}
+                            nodeBorderRadius={18}
+                            nodeStrokeWidth={3}
                             maskColor="var(--editor-minimap-mask)"
                             pannable
                             zoomable
@@ -283,6 +288,98 @@ const readOnly = useWorkflowContext(selectReadOnly);
                 ) : null}
             </div>
         </div>
+    );
+}
+
+type WorkflowMiniMapNodeProps = {
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    color?: string;
+    strokeColor?: string;
+    strokeWidth?: number;
+    selected: boolean;
+    onClick?: (event: React.MouseEvent, id: string) => void;
+};
+
+function WorkflowMiniMapNode({
+    id,
+    x,
+    y,
+    width,
+    height,
+    color = '#e2e8f0',
+    strokeColor = '#64748b',
+    strokeWidth = 2,
+    selected,
+    onClick,
+}: WorkflowMiniMapNodeProps) {
+    const safeWidth = Math.max(width, WORKFLOW_NODE_CARD_WIDTH);
+    const safeHeight = Math.max(height, WORKFLOW_NODE_CARD_HEIGHT);
+    const radius = Math.min(24, safeHeight * 0.24);
+    const padding = Math.min(20, safeHeight * 0.18);
+    const iconSize = Math.min(40, safeHeight * 0.34);
+    const stripeWidth = Math.max(4, safeWidth * 0.018);
+    const textX = x + padding + iconSize + 14;
+    const textWidth = Math.max(42, safeWidth - padding * 2 - iconSize - 28);
+
+    return (
+        <g
+            className={styles.miniMapNodeThumb}
+            onClick={onClick ? (event) => onClick(event, id) : undefined}
+        >
+            <rect
+                className={styles.miniMapNodeCard}
+                x={x}
+                y={y}
+                width={safeWidth}
+                height={safeHeight}
+                rx={radius}
+                fill={color}
+                stroke={strokeColor}
+                strokeWidth={selected ? strokeWidth + 1 : strokeWidth}
+            />
+            <rect
+                x={x + padding}
+                y={y + padding}
+                width={stripeWidth}
+                height={safeHeight - padding * 2}
+                rx={stripeWidth}
+                fill={strokeColor}
+                opacity="0.9"
+            />
+            <rect
+                x={x + padding + stripeWidth + 12}
+                y={y + padding}
+                width={iconSize}
+                height={iconSize}
+                rx={Math.min(14, iconSize * 0.32)}
+                fill="rgba(255, 255, 255, 0.58)"
+                stroke={strokeColor}
+                strokeWidth={Math.max(1.5, strokeWidth * 0.45)}
+                opacity="0.86"
+            />
+            <rect
+                x={textX}
+                y={y + padding + 4}
+                width={textWidth * 0.58}
+                height={safeHeight * 0.12}
+                rx={safeHeight * 0.06}
+                fill={strokeColor}
+                opacity="0.76"
+            />
+            <rect
+                x={textX}
+                y={y + padding + iconSize * 0.62}
+                width={textWidth}
+                height={safeHeight * 0.1}
+                rx={safeHeight * 0.05}
+                fill={strokeColor}
+                opacity="0.28"
+            />
+        </g>
     );
 }
 

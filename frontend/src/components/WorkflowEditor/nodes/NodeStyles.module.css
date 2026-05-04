@@ -167,16 +167,40 @@
 }
 
 .handle {
-  width: 12px;
-  height: 12px;
-  background: var(--node-surface);
-  border: 2px solid var(--node-accent);
-  transition: all 0.2s ease;
+  width: 24px;
+  height: 20px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.node :global(.react-flow__handle-top) {
+  top: -8px;
+}
+
+.node :global(.react-flow__handle-bottom) {
+  bottom: -8px;
+}
+
+.node :global(.react-flow__handle-top),
+.node :global(.react-flow__handle-bottom) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0;
 }
 
 .handle:hover {
-  background: var(--node-accent);
-  border-color: var(--node-accent);
+  background: transparent;
+  border-color: transparent;
+}
+
+.node :global(.react-flow__handle-top:hover),
+.node :global(.react-flow__handle-bottom:hover) {
+  background: transparent;
+  border-color: transparent;
 }
 
 .inputNode {
