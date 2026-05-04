@@ -487,6 +487,98 @@
   transform: translateY(0);
 }
 
+.userProfileButton {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid var(--page-border-strong);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.32), transparent 42%),
+    linear-gradient(135deg, var(--page-highlight-soft), var(--page-surface));
+  color: var(--page-text);
+  text-decoration: none;
+  box-shadow: 0 12px 26px rgba(2, 6, 23, 0.18);
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.userProfileButton:hover {
+  border-color: var(--page-highlight-strong);
+  box-shadow: 0 16px 34px rgba(2, 6, 23, 0.24);
+  transform: translateY(-1px);
+}
+
+.userProfileButton:active {
+  transform: translateY(0);
+}
+
+.userAvatarImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.userAvatarInitial {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--page-text);
+  font-size: 0.92rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+
+:global(html[data-theme='light']) .userProfileButton {
+  border-color: rgba(15, 23, 42, 0.14);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.42), transparent 44%),
+    linear-gradient(135deg, #111827, #14534c);
+  color: #ffffff;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.14);
+}
+
+:global(html[data-theme='light']) .userAvatarInitial {
+  color: #ffffff;
+}
+
+.userButtonSkeleton {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--page-border);
+  background:
+    linear-gradient(90deg, transparent, var(--page-highlight-soft), transparent),
+    var(--page-surface);
+  background-size: 180% 100%, auto;
+  animation: avatarPulse 1.3s ease-in-out infinite;
+}
+
+@keyframes avatarPulse {
+  0%,
+  100% {
+    background-position: 180% 0, 0 0;
+    opacity: 0.68;
+  }
+
+  50% {
+    background-position: 0 0, 0 0;
+    opacity: 1;
+  }
+}
+
 .main {
   max-width: 1280px;
   margin: 0 auto;
@@ -1347,6 +1439,7 @@
 .logo:focus-visible,
 .navLink:focus-visible,
 .registerButton:focus-visible,
+.userProfileButton:focus-visible,
 .mainTextarea:focus-visible,
 .customSelect:focus-visible,
 .hintTag:focus-visible,

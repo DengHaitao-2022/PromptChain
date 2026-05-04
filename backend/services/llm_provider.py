@@ -13,12 +13,15 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
+from sqlalchemy import desc
+from sqlalchemy.future import select
 
 from core.config import get_settings
+from services.secret_crypto import decrypt_config_value
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_FALLBACK_MODEL = "gpt-4o"
@@ -200,6 +203,19 @@ class ProviderRegistration:
     credential_env: str | None = None
 
 
+@dataclass(frozen=True)
+class RuntimeModelConfig:
+    """运行时实际使用的模型配置。"""
+
+    provider: str
+    model: str
+    credential: str | None = None
+    base_url: str | None = None
+    provider_id: str | None = None
+    provider_name: str | None = None
+    source: str = "environment"
+
+
 # 统一 registry 只声明支持列表与默认元数据，避免分支判断散落到 helper 中。
 PROVIDER_REGISTRY: dict[str, ProviderRegistration] = {
     "openai": ProviderRegistration(
@@ -309,6 +325,285 @@ class LLMProviderFactory:
         """
         provider = cls.get_provider(provider_name)
         return provider.get_structured_output_model(schema, model_name, **kwargs)
+
+
+_MODEL_CONFIG_KEYS = ("model", "model_name")
+_BASE_URL_CONFIG_KEYS = ("base_url", "endpoint", "api_base")
+_CREDENTIAL_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
+    "openai": ("api_key", "openai_api_key"),
+    "anthropic": ("api_key", "anthropic_api_key"),
+    "google": ("api_key", "google_api_key", "gemini_api_key"),
+    "github": ("api_key", "github_model_token", "token"),
+}
+_RUNTIME_DEFAULT_CONFIG_KEY = "_runtime_default"
+
+
+def _clean_config_value(value: Any) -> str | None:
+    """读取用户配置值，兼容加密结构和空白值。"""
+    raw_value = decrypt_config_value(value)
+    if raw_value is None:
+        return None
+    normalized = str(raw_value).strip()
+    return normalized or None
+
+
+def _pick_config_value(config: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    """按候选 key 读取第一个有效配置值。"""
+    for key in keys:
+        if key in config:
+            value = _clean_config_value(config[key])
+            if value:
+                return value
+    return None
+
+
+def _is_runtime_default(config: dict[str, Any] | None) -> bool:
+    """判断配置是否被标记为运行默认。"""
+    return bool((config or {}).get(_RUNTIME_DEFAULT_CONFIG_KEY))
+
+
+def _build_environment_runtime_config(
+    provider_name: str | None = None,
+    model_name: str | None = None,
+) -> RuntimeModelConfig:
+    """构建环境变量来源的运行时配置。"""
+    registration = LLMProviderFactory.get_registration(provider_name)
+    credential = _read_env(registration.credential_env) if registration.credential_env else None
+    base_url = _read_env("OLLAMA_BASE_URL") if registration.name == "ollama" else None
+    if registration.name == "github":
+        base_url = DEFAULT_GITHUB_MODELS_BASE_URL
+
+    return RuntimeModelConfig(
+        provider=registration.name,
+        model=model_name or _resolve_model_override() or registration.default_model_name,
+        credential=credential,
+        base_url=base_url,
+        source="environment",
+    )
+
+
+def _build_workspace_runtime_config(provider_row: Any) -> RuntimeModelConfig:
+    """从工作空间模型供应商记录构建运行时配置。"""
+    registration = LLMProviderFactory.get_registration(provider_row.provider)
+    config = dict(provider_row.config or {})
+    credential_keys = _CREDENTIAL_CONFIG_KEYS.get(registration.name, ())
+    credential = _pick_config_value(config, credential_keys)
+    if credential is None and registration.credential_env:
+        credential = _read_env(registration.credential_env)
+
+    base_url = _pick_config_value(config, _BASE_URL_CONFIG_KEYS)
+    if base_url is None:
+        if registration.name == "ollama":
+            base_url = _read_env("OLLAMA_BASE_URL") or DEFAULT_OLLAMA_BASE_URL
+        elif registration.name == "github":
+            base_url = DEFAULT_GITHUB_MODELS_BASE_URL
+
+    return RuntimeModelConfig(
+        provider=registration.name,
+        model=_pick_config_value(config, _MODEL_CONFIG_KEYS) or registration.default_model_name,
+        credential=credential,
+        base_url=base_url,
+        provider_id=provider_row.id,
+        provider_name=provider_row.name,
+        source="workspace",
+    )
+
+
+def _build_model_from_runtime_config(
+    runtime_config: RuntimeModelConfig,
+    **kwargs,
+) -> BaseChatModel:
+    """根据运行时配置创建 LangChain 模型实例。"""
+    if runtime_config.provider == "openai":
+        from langchain_openai import ChatOpenAI
+
+        if not runtime_config.credential:
+            raise _build_missing_credential_error("openai", "OPENAI_API_KEY")
+        openai_kwargs: dict[str, Any] = {
+            "model": runtime_config.model,
+            "api_key": runtime_config.credential,
+            **kwargs,
+        }
+        if runtime_config.base_url:
+            openai_kwargs["base_url"] = runtime_config.base_url
+        return ChatOpenAI(**openai_kwargs)
+
+    if runtime_config.provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        if not runtime_config.credential:
+            raise _build_missing_credential_error("anthropic", "ANTHROPIC_API_KEY")
+        return ChatAnthropic(
+            model=runtime_config.model,
+            api_key=runtime_config.credential,
+            **kwargs,
+        )
+
+    if runtime_config.provider == "google":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        if not runtime_config.credential:
+            raise _build_missing_credential_error("google", "GEMINI_API_KEY")
+        return ChatGoogleGenerativeAI(
+            model=runtime_config.model,
+            google_api_key=runtime_config.credential,
+            **kwargs,
+        )
+
+    if runtime_config.provider == "github":
+        from langchain_openai import ChatOpenAI
+
+        if not runtime_config.credential:
+            raise _build_missing_credential_error("github", "GITHUB_MODEL_TOKEN")
+        return ChatOpenAI(
+            model=runtime_config.model,
+            base_url=runtime_config.base_url or DEFAULT_GITHUB_MODELS_BASE_URL,
+            api_key=runtime_config.credential,
+            **kwargs,
+        )
+
+    if runtime_config.provider == "ollama":
+        from langchain_ollama import ChatOllama
+
+        return ChatOllama(
+            model=runtime_config.model,
+            base_url=runtime_config.base_url or DEFAULT_OLLAMA_BASE_URL,
+            **kwargs,
+        )
+
+    raise _build_unsupported_provider_error(
+        runtime_config.provider,
+        LLMProviderFactory.get_supported_provider_names(),
+    )
+
+
+def _runtime_config_to_info(runtime_config: RuntimeModelConfig) -> dict[str, Any]:
+    """转换为可返回给前端或写入 LLMCallRecord 的脱敏读模型。"""
+    return {
+        "provider": runtime_config.provider,
+        "model": runtime_config.model,
+        "source": runtime_config.source,
+        "provider_id": runtime_config.provider_id,
+        "provider_name": runtime_config.provider_name,
+    }
+
+
+async def get_workspace_runtime_model_config(
+    workspace_id: str | None = None,
+    model_name: str | None = None,
+    model_provider_id: str | None = None,
+) -> RuntimeModelConfig:
+    """读取当前工作空间运行默认模型配置，缺省时回退到环境变量。"""
+    if not workspace_id:
+        return _build_environment_runtime_config(model_name=model_name)
+
+    from db.postgres_store import get_postgres_store
+    from models.admin_orm import ModelProviderORM
+
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        supported_providers = set(LLMProviderFactory.get_supported_provider_names())
+        selected_provider = None
+        if model_provider_id:
+            selected_result = await session.execute(
+                select(ModelProviderORM).where(
+                    ModelProviderORM.id == model_provider_id,
+                    ModelProviderORM.workspace_id == workspace_id,
+                    ModelProviderORM.enabled.is_(True),
+                )
+            )
+            selected_provider = selected_result.scalar_one_or_none()
+            if selected_provider and selected_provider.provider not in supported_providers:
+                selected_provider = None
+
+        result = await session.execute(
+            select(ModelProviderORM)
+            .where(
+                ModelProviderORM.workspace_id == workspace_id,
+                ModelProviderORM.enabled.is_(True),
+            )
+            .order_by(desc(ModelProviderORM.updated_at), desc(ModelProviderORM.created_at))
+        )
+        providers = [
+            provider
+            for provider in result.scalars().all()
+            if provider.provider in supported_providers
+        ]
+
+    if selected_provider is None and not providers:
+        return _build_environment_runtime_config(model_name=model_name)
+
+    selected_provider = selected_provider or next(
+        (provider for provider in providers if _is_runtime_default(provider.config)),
+        providers[0],
+    )
+    runtime_config = _build_workspace_runtime_config(selected_provider)
+    if model_name:
+        return RuntimeModelConfig(
+            provider=runtime_config.provider,
+            model=model_name,
+            credential=runtime_config.credential,
+            base_url=runtime_config.base_url,
+            provider_id=runtime_config.provider_id,
+            provider_name=runtime_config.provider_name,
+            source=runtime_config.source,
+        )
+    return runtime_config
+
+
+async def get_llm_for_workspace(
+    workspace_id: str | None = None,
+    model: str | None = None,
+    model_provider_id: str | None = None,
+    **kwargs,
+) -> BaseChatModel:
+    """按工作空间动态配置获取 LLM；未配置时沿用环境变量。"""
+    runtime_config = await get_workspace_runtime_model_config(
+        workspace_id,
+        model,
+        model_provider_id,
+    )
+    return _build_model_from_runtime_config(runtime_config, **kwargs)
+
+
+async def get_structured_llm_for_workspace(
+    schema: type[BaseModel],
+    workspace_id: str | None = None,
+    model: str | None = None,
+    model_provider_id: str | None = None,
+    **kwargs,
+) -> BaseChatModel:
+    """按工作空间动态配置获取结构化输出 LLM。"""
+    runtime_config = await get_workspace_runtime_model_config(
+        workspace_id,
+        model,
+        model_provider_id,
+    )
+    llm = _build_model_from_runtime_config(runtime_config, **kwargs)
+    return llm.with_structured_output(schema)
+
+
+async def get_current_model_info_for_workspace(
+    workspace_id: str | None = None,
+    model_provider_id: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """获取当前工作空间实际运行模型读模型，供 trace 和设置页展示。"""
+    try:
+        return _runtime_config_to_info(
+            await get_workspace_runtime_model_config(
+                workspace_id,
+                model,
+                model_provider_id,
+            )
+        )
+    except Exception:
+        return {
+            **get_current_model_info(),
+            "source": "environment",
+            "provider_id": None,
+            "provider_name": None,
+        }
 
 
 # 便捷函数

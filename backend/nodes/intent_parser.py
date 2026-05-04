@@ -26,8 +26,8 @@ from models import (
 )
 from services import (
     get_artifact_store,
-    get_current_model_info,
-    get_structured_llm,
+    get_current_model_info_for_workspace,
+    get_structured_llm_for_workspace,
     invoke_with_llm_retry,
 )
 
@@ -209,6 +209,9 @@ async def parse_intent(state: dict) -> dict:
     """
     user_input = state["user_input"]
     workflow_run_id = state["workflow_run_id"]
+    workspace_id = state.get("workspace_id")
+    model_provider_id = state.get("model_provider_id")
+    model_name = state.get("model_name")
     store = get_artifact_store()
 
     # 创建节点运行记录
@@ -223,7 +226,12 @@ async def parse_intent(state: dict) -> dict:
 
     try:
         # 使用结构化输出的 LLM
-        llm = get_structured_llm(IntentCard)
+        llm = await get_structured_llm_for_workspace(
+            IntentCard,
+            workspace_id,
+            model=model_name,
+            model_provider_id=model_provider_id,
+        )
         prompt = ChatPromptTemplate.from_template(INTENT_EXTRACTION_PROMPT)
         chain = prompt | llm
 
@@ -235,7 +243,11 @@ async def parse_intent(state: dict) -> dict:
         end_time = datetime.utcnow()
 
         # 记录 LLM 调用（动态获取模型配置）
-        model_info = get_current_model_info()
+        model_info = await get_current_model_info_for_workspace(
+            workspace_id,
+            model_provider_id=model_provider_id,
+            model=model_name,
+        )
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],

@@ -36,6 +36,8 @@ class StartWorkflowRequest(BaseModel):
     user_input: str
     workflow_definition_id: str | None = None
     workflow_version_id: str | None = None
+    model_provider_id: str | None = None
+    model_name: str | None = None
 
 
 class ApproveOutlineRequest(BaseModel):

@@ -113,6 +113,10 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
             body.user_input,
             workflow_definition_id=body.workflow_definition_id,
             workflow_version_id=body.workflow_version_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            model_provider_id=body.model_provider_id,
+            model_name=body.model_name,
         )
         workflow_run = await _get_workflow_run_if_exists(result["workflow_run_id"])
         workflow_run = (

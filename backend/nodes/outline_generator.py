@@ -23,8 +23,8 @@ from models import (
 )
 from services import (
     get_artifact_store,
-    get_current_model_info,
-    get_structured_llm,
+    get_current_model_info_for_workspace,
+    get_structured_llm_for_workspace,
     invoke_with_llm_retry,
 )
 
@@ -101,6 +101,9 @@ async def generate_outline(state: dict) -> dict:
     """
     intent_card: IntentCard = state["intent_card"]
     workflow_run_id = state["workflow_run_id"]
+    workspace_id = state.get("workspace_id")
+    model_provider_id = state.get("model_provider_id")
+    model_name = state.get("model_name")
     outline_feedback = state.get("outline_feedback", "")
     store = get_artifact_store()
 
@@ -123,7 +126,12 @@ async def generate_outline(state: dict) -> dict:
         if outline_feedback:
             prompt_template += f"\n\n## 用户反馈（请根据此反馈调整提纲）\n{outline_feedback}"
 
-        llm = get_structured_llm(Outline)
+        llm = await get_structured_llm_for_workspace(
+            Outline,
+            workspace_id,
+            model=model_name,
+            model_provider_id=model_provider_id,
+        )
         prompt = ChatPromptTemplate.from_template(prompt_template)
         chain = prompt | llm
 
@@ -145,7 +153,11 @@ async def generate_outline(state: dict) -> dict:
         end_time = datetime.utcnow()
 
         # 记录 LLM 调用（动态获取模型配置）
-        model_info = get_current_model_info()
+        model_info = await get_current_model_info_for_workspace(
+            workspace_id,
+            model_provider_id=model_provider_id,
+            model=model_name,
+        )
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],
