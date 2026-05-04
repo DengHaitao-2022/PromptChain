@@ -68,10 +68,10 @@ export function ThemeSwitcher({
       <button
         type="button"
         className={`${styles.iconOnlyBtn} ${className || ''}`}
-        onClick={cycleTheme}
         aria-label="切换主题"
         title="切换主题"
-        {...props}
+        {...(props as any)}
+        onClick={cycleTheme}
       >
         <ActiveIcon size={18} strokeWidth={1.9} />
       </button>

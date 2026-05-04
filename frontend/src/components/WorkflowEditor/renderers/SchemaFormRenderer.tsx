@@ -6,7 +6,7 @@
 
 'use client';
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z, ZodEnum, ZodNumber, ZodString, ZodDefault, ZodOptional } from 'zod';
@@ -36,11 +36,16 @@ export default function SchemaFormRenderer({ schema, defaultValues, onChange }: 
 
     // 监控表单所有值变化并触发外部 onChange
     const formValues = watch();
+    const prevValuesRef = useRef<string | undefined>(undefined);
 
     useEffect(() => {
         // 如果当前有错误，可以选择不向上传递，或者由上层决定如何处理
         // 为了方便自动保存，还是把最新值传上去
-        onChange(formValues);
+        const currentStr = JSON.stringify(formValues);
+        if (currentStr !== prevValuesRef.current) {
+            prevValuesRef.current = currentStr;
+            onChange(formValues);
+        }
     }, [formValues, onChange]);
 
     // 从 Zod Object schema 中解析字段进行渲染

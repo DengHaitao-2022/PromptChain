@@ -1,5 +1,16 @@
 /* 节点通用样式 */
 
+:global(.react-flow__node-input),
+:global(.react-flow__node-output),
+:global(.react-flow__node-default) {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  width: auto !important;
+}
+
 :global(.react-flow) {
   --node-surface: rgba(10, 20, 32, 0.9);
   --node-surface-alt: rgba(7, 15, 26, 0.86);
@@ -168,7 +179,8 @@
 
 .handle {
   width: 24px;
-  height: 20px;
+  height: 24px;
+  border-radius: 50%;
   background: transparent;
   border: 0;
   box-shadow: none;
