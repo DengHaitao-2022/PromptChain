@@ -168,7 +168,10 @@
 
 .backgroundCanvas {
   position: absolute;
-  inset: -6%;
+  top: -6%;
+  right: -6%;
+  bottom: 0;
+  left: -6%;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
@@ -487,7 +490,7 @@
 .main {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 56px 24px 96px;
+  padding: 56px 24px clamp(40px, 5vw, 64px);
 }
 
 .hero {
@@ -1412,7 +1415,7 @@
   }
 
   .main {
-    padding: 32px 16px 72px;
+    padding: 32px 16px 48px;
   }
 
   .selectGroup {
