@@ -21,6 +21,7 @@ import {
 import styles from './page.module.css';
 import { HomeWorkflowPreview } from '@/components/HomeWorkflowPreview/HomeWorkflowPreview';
 import { ThemeSwitcher } from '@/components/ThemeSwitcher/ThemeSwitcher';
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import {
   modelProviderApi,
   workflowDefinitionApi,
@@ -161,7 +162,40 @@ const sleep = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
-export default function Home() {
+function getUserInitial(user: { display_name?: string | null; email?: string | null }) {
+  return (user.display_name?.trim()?.[0] || user.email?.trim()?.[0] || '?').toUpperCase();
+}
+
+function HomeAccountAction() {
+  const { user, isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return <span className={styles.userButtonSkeleton} role="status" aria-label="正在检查登录状态" />;
+  }
+
+  if (isAuthenticated && user) {
+    const label = `${user.display_name || user.email}，进入控制台`;
+
+    return (
+      <Link href="/console" className={styles.userProfileButton} aria-label={label} title={label}>
+        {user.avatar_url ? (
+          <img src={user.avatar_url} alt="" className={styles.userAvatarImage} />
+        ) : (
+          <span className={styles.userAvatarInitial}>{getUserInitial(user)}</span>
+        )}
+      </Link>
+    );
+  }
+
+  return (
+    <Link href="/register" className={styles.registerButton}>
+      <UserPlus size={15} aria-hidden="true" />
+      注册
+    </Link>
+  );
+}
+
+function HomeContent() {
   const router = useRouter();
   const pageRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);
@@ -599,10 +633,7 @@ export default function Home() {
 
           <div className={styles.headerActions}>
             <ThemeSwitcher className={styles.headerTheme} showStatus={false} iconOnly />
-            <Link href="/register" className={styles.registerButton}>
-              <UserPlus size={15} aria-hidden="true" />
-              注册
-            </Link>
+            <HomeAccountAction />
           </div>
         </div>
       </header>
@@ -889,5 +920,13 @@ export default function Home() {
         </section>
       </main>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <AuthProvider>
+      <HomeContent />
+    </AuthProvider>
   );
 }
