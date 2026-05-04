@@ -371,12 +371,12 @@
   -webkit-text-fill-color: transparent;
 }
 
-.headerStatus {
+.headerCenter {
   display: flex;
   align-items: center;
   gap: 24px;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .headerBadge {
@@ -1371,19 +1371,17 @@
 @media (max-width: 768px) {
   .headerContent {
     padding: 16px;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    flex-wrap: wrap;
     gap: 16px;
   }
 
   .logo {
-    justify-content: center;
-    width: 100%;
+    justify-content: flex-start;
   }
 
-  .headerStatus {
+  .headerCenter {
     width: 100%;
+    order: 3;
     gap: 16px;
     flex-direction: column;
     align-items: center;
@@ -1402,16 +1400,15 @@
   }
 
   .headerActions {
-    width: 100%;
-    margin-left: 0;
-    flex-direction: column;
+    margin-left: auto;
+    flex-direction: row;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
     gap: 12px;
   }
 
   .registerButton {
-    width: 100%;
+    width: auto;
   }
 
   .main {

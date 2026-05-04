@@ -530,7 +530,7 @@ export default function Home() {
             <span className={styles.logoText}>PromptChain</span>
           </Link>
 
-          <div className={styles.headerStatus}>
+          <div className={styles.headerCenter}>
             <span className={styles.headerBadge}>可追溯 AI 工作流</span>
             <nav className={styles.nav} aria-label="主导航">
               <Link href="/console" className={styles.navLink}>
@@ -543,13 +543,14 @@ export default function Home() {
                 运行历史
               </Link>
             </nav>
-            <div className={styles.headerActions}>
-              <ThemeSwitcher className={styles.headerTheme} showStatus={false} compact />
-              <Link href="/register" className={styles.registerButton}>
-                <UserPlus size={15} aria-hidden="true" />
-                注册
-              </Link>
-            </div>
+          </div>
+
+          <div className={styles.headerActions}>
+            <ThemeSwitcher className={styles.headerTheme} showStatus={false} iconOnly />
+            <Link href="/register" className={styles.registerButton}>
+              <UserPlus size={15} aria-hidden="true" />
+              注册
+            </Link>
           </div>
         </div>
       </header>

@@ -41,16 +41,42 @@ function getResolvedThemeLabel(resolvedTheme: 'light' | 'dark') {
 interface ThemeSwitcherProps extends HTMLAttributes<HTMLDivElement> {
   showStatus?: boolean;
   compact?: boolean;
+  iconOnly?: boolean;
 }
 
 export function ThemeSwitcher({
   className,
   showStatus = true,
   compact = false,
+  iconOnly = false,
   ...props
 }: ThemeSwitcherProps) {
   const { themePreference, resolvedTheme, setThemePreference } = useTheme();
   const rootClassName = className ? `${styles.root} ${className}` : styles.root;
+
+  if (iconOnly) {
+    const activeOption = THEME_OPTIONS.find(o => o.value === themePreference) || THEME_OPTIONS[0];
+    const ActiveIcon = activeOption.icon;
+
+    const cycleTheme = () => {
+      const currentIndex = THEME_OPTIONS.findIndex(o => o.value === themePreference);
+      const nextIndex = (currentIndex + 1) % THEME_OPTIONS.length;
+      setThemePreference(THEME_OPTIONS[nextIndex].value);
+    };
+
+    return (
+      <button
+        type="button"
+        className={`${styles.iconOnlyBtn} ${className || ''}`}
+        onClick={cycleTheme}
+        aria-label="切换主题"
+        title="切换主题"
+        {...props}
+      >
+        <ActiveIcon size={18} strokeWidth={1.9} />
+      </button>
+    );
+  }
 
   return (
     <div className={rootClassName} data-compact={compact} {...props}>
