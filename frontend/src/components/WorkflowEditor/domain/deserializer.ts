@@ -5,12 +5,15 @@
 
 import type { Node, Edge } from '@xyflow/react';
 import type { WorkflowNode, WorkflowEdge } from './types';
+import { WORKFLOW_NODE_CARD_HEIGHT, WORKFLOW_NODE_CARD_WIDTH } from './nodePresentation';
 
 export function deserializeNodes(nodes: WorkflowNode[]): Node[] {
     return nodes.map((node) => ({
         id: node.id,
         type: node.type,
         position: { x: node.position.x, y: node.position.y },
+        initialWidth: WORKFLOW_NODE_CARD_WIDTH,
+        initialHeight: WORKFLOW_NODE_CARD_HEIGHT,
         data: { ...node.data },
     }));
 }

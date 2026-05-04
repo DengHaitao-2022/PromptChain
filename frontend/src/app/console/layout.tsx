@@ -235,7 +235,7 @@ function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) 
         </nav>
 
         <div className={styles.sidebarFooter}>
-          <ThemeSwitcher />
+          <ThemeSwitcher iconOnly className={styles.sidebarThemeToggle} />
         </div>
       </aside>
     </>
