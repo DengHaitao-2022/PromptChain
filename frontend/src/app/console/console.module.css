@@ -538,11 +538,7 @@
   .sectionLabel,
   .navLabel,
   .arrow {
-    width: 0;
-    min-width: 0;
-    opacity: 0;
-    overflow: hidden;
-    pointer-events: none;
+    display: none;
   }
 
   .nav {
@@ -614,11 +610,7 @@
   }
 
   .subNav .navLabel {
-    width: auto;
-    min-width: 0;
-    opacity: 1;
-    overflow: visible;
-    pointer-events: auto;
+    display: block;
   }
 }
 
@@ -667,15 +659,14 @@
     margin-right: 0;
   }
 
-  .logoCopy,
+  .logoCopy {
+    display: flex;
+  }
+
   .sectionLabel,
   .navLabel,
   .arrow {
-    width: auto;
-    min-width: auto;
-    opacity: 1;
-    overflow: visible;
-    pointer-events: auto;
+    display: block;
   }
 
   .nav {

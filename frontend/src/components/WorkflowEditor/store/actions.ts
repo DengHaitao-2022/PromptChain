@@ -83,7 +83,13 @@ onConnect: ((connection) => {
     store.setState({ isDirty: true });
 }) as OnConnect,
 setSelectedNode(node: Node | null) {
-    store.setState({ selectedNode: node });
+    store.setState((state) => {
+        const nextNodes = state.nodes.map(n => ({
+            ...n,
+            selected: node ? n.id === node.id : false
+        }));
+        return { nodes: nextNodes, selectedNode: node };
+    });
     updateSelection(node ? [node.id] : []);
 },
 updateNodeData(nodeId: string, newData: Record<string, unknown>) {
