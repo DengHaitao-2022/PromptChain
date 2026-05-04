@@ -15,6 +15,20 @@
   --editor-accent-soft: var(--console-accent-soft);
   --editor-focus-ring: var(--console-focus-ring);
   --editor-shadow: var(--console-shadow-lg, var(--shadow-lg));
+  --editor-canvas-dot: rgba(148, 163, 184, 0.34);
+  --editor-minimap-mask: rgba(14, 24, 38, 0.1);
+  --editor-minimap-bg:
+    radial-gradient(circle at 20% 18%, rgba(125, 211, 252, 0.1), transparent 34%),
+    rgba(8, 18, 30, 0.86);
+  --editor-canvas-height: clamp(560px, 68vh, 720px);
+}
+
+:global(html[data-theme='light']) .editorShell {
+  --editor-canvas-dot: rgba(51, 65, 85, 0.32);
+  --editor-minimap-mask: rgba(15, 23, 42, 0.08);
+  --editor-minimap-bg:
+    radial-gradient(circle at 20% 18%, rgba(14, 165, 233, 0.12), transparent 34%),
+    rgba(248, 251, 254, 0.9);
 }
 
 .header {
@@ -237,7 +251,8 @@
 .editorContainer {
   display: flex;
   flex: 1;
-  min-height: 0;
+  height: var(--editor-canvas-height);
+  min-height: var(--editor-canvas-height);
   border-radius: 28px;
   overflow: hidden;
   background: var(--editor-surface);
@@ -247,10 +262,23 @@
 .canvas {
   position: relative;
   flex: 1;
-  min-height: 0;
+  height: var(--editor-canvas-height);
+  min-height: var(--editor-canvas-height);
   background:
     radial-gradient(circle at top left, rgba(125, 211, 252, 0.06), transparent 24%),
     linear-gradient(180deg, var(--console-bg), var(--pc-primitive-slate-950));
+}
+
+:global(html[data-theme='light']) .canvas {
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.08), transparent 26%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 245, 249, 0.96));
+}
+
+.flow {
+  width: 100%;
+  height: var(--editor-canvas-height);
+  min-height: var(--editor-canvas-height);
 }
 
 .canvasHint {
@@ -280,9 +308,38 @@
 }
 
 :global(.react-flow__minimap) {
-  background: var(--console-surface);
+  width: 220px;
+  height: 156px;
+  background: var(--editor-minimap-bg);
   border: 1px solid var(--editor-border);
-  border-radius: 16px;
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow: 0 18px 42px rgba(2, 8, 23, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+:global(.react-flow__minimap-svg) {
+  background-image: radial-gradient(circle, var(--editor-canvas-dot) 1px, transparent 1.5px);
+  background-size: 18px 18px;
+}
+
+:global(.react-flow__minimap-mask) {
+  fill: var(--editor-minimap-mask);
+  stroke: var(--editor-border-strong);
+  stroke-width: 10px;
+}
+
+:global(.react-flow__minimap-node) {
+  stroke-width: 7px;
+  filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.18));
+}
+
+.miniMapNodeThumb {
+  pointer-events: auto;
+}
+
+.miniMapNodeCard {
+  filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.16));
 }
 
 @media (max-width: 1080px) {
@@ -307,6 +364,7 @@
 @media (max-width: 720px) {
   .editorShell {
     min-height: auto;
+    --editor-canvas-height: 560px;
   }
 
   .validationGrid {
@@ -315,6 +373,19 @@
 
   .editorContainer {
     flex-direction: column;
+    height: auto;
+    min-height: 0;
+  }
+
+  .canvas,
+  .flow {
+    height: var(--editor-canvas-height);
+    min-height: var(--editor-canvas-height);
+  }
+
+  :global(.react-flow__minimap) {
+    width: 168px;
+    height: 116px;
   }
 }
 

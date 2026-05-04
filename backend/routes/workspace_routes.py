@@ -15,6 +15,7 @@ from sqlalchemy import and_
 from sqlalchemy.future import select
 
 from db.postgres_store import get_postgres_store
+from models.admin_models import AuditAction
 from models.auth_models import MemberRole
 from models.auth_orm import MembershipORM, UserORM, WorkspaceInviteORM, WorkspaceORM
 from routes.auth_routes import (
@@ -24,6 +25,7 @@ from routes.auth_routes import (
     COOKIE_SECURE,
     get_current_user,
 )
+from services.audit_log_service import AuditLogService
 from services.auth_service import create_access_token
 from services.email_service import EmailService
 from services.permission_service import (
@@ -182,6 +184,21 @@ async def create_workspace(request: Request, body: CreateWorkspaceRequest):
             role=MemberRole.OWNER.value,
         )
         session.add(membership)
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.WORKSPACE_CREATE,
+            request=request,
+            target_type="workspace",
+            target_id=workspace_id,
+            detail={"name": body.name},
+            target_snapshot={
+                "id": workspace_id,
+                "name": body.name,
+                "description": body.description,
+                "owner_id": user_id,
+            },
+        )
         await session.commit()
 
         return {
@@ -258,6 +275,31 @@ async def update_workspace(request: Request, workspace_id: str, body: UpdateWork
         if body.logo_url is not None:
             workspace.logo_url = body.logo_url
 
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.WORKSPACE_UPDATE,
+            request=request,
+            target_type="workspace",
+            target_id=workspace_id,
+            detail={
+                "updated_fields": [
+                    key
+                    for key, value in {
+                        "name": body.name,
+                        "description": body.description,
+                        "logo_url": body.logo_url,
+                    }.items()
+                    if value is not None
+                ]
+            },
+            target_snapshot={
+                "id": workspace.id,
+                "name": workspace.name,
+                "description": workspace.description,
+                "logo_url": workspace.logo_url,
+            },
+        )
         await session.commit()
 
         return {"message": "工作空间已更新"}
@@ -362,6 +404,21 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
             expires_at=expires_at,
         )
         session.add(invite)
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.MEMBER_INVITE,
+            request=request,
+            target_type="workspace_invite",
+            target_id=invite.id,
+            detail={"email": body.email, "role": body.role.value},
+            target_snapshot={
+                "id": invite.id,
+                "email": invite.email,
+                "role": invite.role,
+                "expires_at": invite.expires_at,
+            },
+        )
         await session.commit()
 
         # 发送邀请邮件
@@ -435,6 +492,21 @@ async def accept_invite(request: Request, token: str):
 
         # 标记邀请为已接受
         invite.accepted_at = datetime.utcnow()
+        await AuditLogService(session).record(
+            workspace_id=invite.workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.MEMBER_ACCEPT,
+            request=request,
+            target_type="membership",
+            target_id=membership.id,
+            detail={"invite_id": invite.id, "accepted": True, "role": invite.role},
+            target_snapshot={
+                "id": membership.id,
+                "user_id": user_id,
+                "role": invite.role,
+                "workspace_id": invite.workspace_id,
+            },
+        )
         await session.commit()
 
         return {"message": "您已成功加入工作空间"}
@@ -484,6 +556,24 @@ async def update_member_role(request: Request, membership_id: str, body: UpdateM
 
         # 更新角色
         membership.role = serialize_membership_role(body.role, suspended=is_suspended)
+        await AuditLogService(session).record(
+            workspace_id=membership.workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.MEMBER_ROLE_CHANGE,
+            request=request,
+            target_type="membership",
+            target_id=membership.id,
+            detail={
+                "previous_role": current_role.value,
+                "new_role": body.role.value,
+                "workspace_access": "suspended" if is_suspended else "active",
+            },
+            target_snapshot={
+                "id": membership.id,
+                "user_id": membership.user_id,
+                "role": body.role.value,
+            },
+        )
         await session.commit()
 
         return {
@@ -515,6 +605,8 @@ async def remove_member(request: Request, membership_id: str):
             raise HTTPException(status_code=404, detail="成员关系不存在")
 
         membership_role, _ = resolve_membership_role(membership.role)
+        if not membership_role:
+            raise HTTPException(status_code=400, detail="成员角色状态无效")
 
         # 不能移除 Owner
         if membership_role == MemberRole.OWNER:
@@ -528,6 +620,20 @@ async def remove_member(request: Request, membership_id: str):
             )
 
         # 删除成员关系
+        await AuditLogService(session).record(
+            workspace_id=membership.workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.MEMBER_REMOVE,
+            request=request,
+            target_type="membership",
+            target_id=membership.id,
+            detail={"removed_user_id": membership.user_id, "role": membership_role.value},
+            target_snapshot={
+                "id": membership.id,
+                "user_id": membership.user_id,
+                "role": membership_role.value,
+            },
+        )
         await session.delete(membership)
         await session.commit()
 
@@ -549,6 +655,17 @@ async def switch_workspace(request: Request, response: Response, body: SwitchWor
 
         if not role:
             raise HTTPException(status_code=403, detail="您不是该工作空间的成员")
+
+        await AuditLogService(session).record(
+            workspace_id=body.workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.WORKSPACE_SWITCH,
+            request=request,
+            target_type="workspace",
+            target_id=body.workspace_id,
+            detail={"role": role.value},
+        )
+        await session.commit()
 
         access_token = create_access_token(user_id=user_id, workspace_id=body.workspace_id)
         response.set_cookie(
