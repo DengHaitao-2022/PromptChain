@@ -41,14 +41,10 @@ export function applyNodeChangesToYjs(changes: NodeChange[]) {
                     dragging: change.dragging,
                 });
             }
-        } else if (change.type === 'dimensions' && change.dimensions) {
-            const node = yNodes.get(change.id);
-            if (node) {
-                yNodes.set(change.id, {
-                    ...node,
-                    measured: { ...node.measured, ...change.dimensions },
-                });
-            }
+        } else if (change.type === 'dimensions') {
+            // 尺寸测量是 React Flow 的本地渲染缓存，写入 Yjs 会触发远端回灌再测量，
+            // 在节点样式变化时容易形成 StoreUpdater -> setNodes 的递归更新。
+            return;
         }
     });
 }

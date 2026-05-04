@@ -25,11 +25,15 @@ function InputNode({ data, selected }: NodeProps) {
     return (
         <div className={`${styles.node} ${styles.inputNode} ${selected ? styles.selected : ''}`}>
             <div className={styles.nodeHeader}>
-                <FileInput size={16} />
-                <span>{nodeData.label || '输入节点'}</span>
+                <span className={styles.nodeIcon} aria-hidden="true">
+                    <FileInput size={18} />
+                </span>
+                <span className={styles.nodeTitle}>{nodeData.label || '输入节点'}</span>
+                <span className={styles.nodeType}>输入</span>
             </div>
 
             <div className={styles.nodeContent}>
+                <p className={styles.nodeDescription}>工作流起点，解析用户意图</p>
                 {nodeData.config?.promptTemplate && (
                     <div className={styles.preview}>
                         {nodeData.config.promptTemplate.substring(0, 50)}...

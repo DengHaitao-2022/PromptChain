@@ -556,6 +556,7 @@
 
 @media (max-width: 1080px) {
   .heroInner,
+  .heroSignalGrid,
   .summaryGrid {
     grid-template-columns: 1fr;
   }

@@ -101,7 +101,7 @@ function isVisible(
   return hasPermission(item.resource, item.action);
 }
 
-function Sidebar() {
+function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const pathname = usePathname();
   const { hasPermission } = useAuth();
   const visibleNavItems = NAV_ITEMS.filter((item) => isVisible(item, hasPermission));
@@ -126,6 +126,12 @@ function Sidebar() {
     }
   }, [pathname]);
 
+  // Automatically close sidebar when navigation occurs on mobile
+  useEffect(() => {
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
   function isActive(href: string, exact?: boolean) {
     if (exact) {
       return pathname === href;
@@ -137,91 +143,106 @@ function Sidebar() {
   const settingsActive = pathname.startsWith('/console/settings');
 
   return (
-    <aside className={styles.sidebar}>
-      <div className={styles.sidebarHeader}>
-        <Link href="/console" className={styles.logoLink}>
-          <span className={styles.logoBadge} aria-hidden="true">
-            <Waypoints size={18} strokeWidth={2} />
-          </span>
-          <span className={styles.logoCopy}>
-            <span className={styles.logoText}>PromptChain</span>
-            <span className={styles.logoSubtext}>Control Surface</span>
-          </span>
-        </Link>
-      </div>
-
-      <nav className={styles.nav}>
-        <div className={styles.navSection}>
-          <span className={styles.sectionLabel}>工作台</span>
-          {visibleNavItems.map((item) => {
-            const Icon = item.icon;
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`${styles.navItem} ${isActive(item.href, item.exact) ? styles.active : ''}`}
-              >
-                <span className={styles.navIcon} aria-hidden="true">
-                  <Icon size={18} strokeWidth={1.9} />
-                </span>
-                <span className={styles.navLabel}>{item.label}</span>
-              </Link>
-            );
-          })}
+    <>
+      <div
+        className={`${styles.backdrop} ${isOpen ? styles.backdropOpen : ''}`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside className={`${styles.sidebar} ${isOpen ? styles.sidebarOpen : ''}`}>
+        <div className={styles.sidebarHeader}>
+          <Link href="/console" className={styles.logoLink} onClick={onClose}>
+            <span className={styles.logoBadge} aria-hidden="true">
+              <Waypoints size={18} strokeWidth={2} />
+            </span>
+            <span className={styles.logoCopy}>
+              <span className={styles.logoText}>PromptChain</span>
+              <span className={styles.logoSubtext}>Control Surface</span>
+            </span>
+          </Link>
         </div>
 
-        {visibleSettingsItems.length > 0 && (
+        <nav className={styles.nav}>
           <div className={styles.navSection}>
-            <span className={styles.sectionLabel}>系统设置</span>
+            <span className={styles.sectionLabel}>工作台</span>
+            {visibleNavItems.map((item) => {
+              const Icon = item.icon;
 
-            <button
-              className={`${styles.navItem} ${styles.navGroup} ${settingsActive ? styles.active : ''}`}
-              onClick={() => setSettingsOpen((open) => !open)}
-              type="button"
-            >
-              <span className={styles.navIcon} aria-hidden="true">
-                <Settings2 size={18} strokeWidth={1.9} />
-              </span>
-              <span className={styles.navLabel}>设置</span>
-              <ChevronRight
-                size={16}
-                strokeWidth={2}
-                className={`${styles.arrow} ${settingsOpen ? styles.arrowOpen : ''}`}
-                aria-hidden="true"
-              />
-            </button>
-
-            {settingsOpen && (
-              <div className={styles.subNav}>
-                {visibleSettingsItems.map((item) => {
-                  const Icon = item.icon;
-
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={`${styles.navItem} ${styles.subNavItem} ${
-                        isActive(item.href, item.exact) ? styles.active : ''
-                      }`}
-                    >
-                      <span className={styles.navIcon} aria-hidden="true">
-                        <Icon size={16} strokeWidth={1.9} />
-                      </span>
-                      <span className={styles.navLabel}>{item.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`${styles.navItem} ${isActive(item.href, item.exact) ? styles.active : ''}`}
+                  title={item.label}
+                >
+                  <span className={styles.navIcon} aria-hidden="true">
+                    <Icon size={18} strokeWidth={1.9} />
+                  </span>
+                  <span className={styles.navLabel}>{item.label}</span>
+                </Link>
+              );
+            })}
           </div>
-        )}
-      </nav>
-    </aside>
+
+          {visibleSettingsItems.length > 0 && (
+            <div className={styles.navSection}>
+              <span className={styles.sectionLabel}>系统设置</span>
+
+              <button
+                className={`${styles.navItem} ${styles.navGroup} ${settingsActive ? styles.active : ''}`}
+                onClick={() => setSettingsOpen((open) => !open)}
+                type="button"
+                aria-expanded={settingsOpen}
+                title="设置"
+              >
+                <span className={styles.navIcon} aria-hidden="true">
+                  <Settings2 size={18} strokeWidth={1.9} />
+                </span>
+                <span className={styles.navLabel}>设置</span>
+                <ChevronRight
+                  size={16}
+                  strokeWidth={2}
+                  className={`${styles.arrow} ${settingsOpen ? styles.arrowOpen : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
+
+              {settingsOpen && (
+                <div className={styles.subNav}>
+                  {visibleSettingsItems.map((item) => {
+                    const Icon = item.icon;
+
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={`${styles.navItem} ${styles.subNavItem} ${
+                          isActive(item.href, item.exact) ? styles.active : ''
+                        }`}
+                        title={item.label}
+                      >
+                        <span className={styles.navIcon} aria-hidden="true">
+                          <Icon size={16} strokeWidth={1.9} />
+                        </span>
+                        <span className={styles.navLabel}>{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </nav>
+
+        <div className={styles.sidebarFooter}>
+          <ThemeSwitcher />
+        </div>
+      </aside>
+    </>
   );
 }
 
-function TopBar() {
+function TopBar({ onMenuClick }: { onMenuClick: () => void }) {
   const router = useRouter();
   const { user, workspace, workspaces, role, logout, switchWorkspace } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -256,8 +277,6 @@ function TopBar() {
       </div>
 
       <div className={styles.topbarActions}>
-        <ThemeSwitcher />
-
         <div className={styles.workspaceSelector}>
           <select
             value={workspace?.id || ''}
@@ -296,6 +315,10 @@ function TopBar() {
             </div>
           )}
         </div>
+
+        <button className={styles.menuButton} onClick={onMenuClick} aria-label="Toggle menu" type="button">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }}><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+        </button>
       </div>
     </header>
   );
@@ -306,6 +329,7 @@ function ConsoleContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { isLoading, isAuthenticated, role, workspace, hasWorkspaceAccess, canAccessConsolePath } = useAuth();
   const hasPageAccess = canAccessConsolePath(pathname);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     if (isLoading) {
@@ -349,9 +373,9 @@ function ConsoleContent({ children }: { children: ReactNode }) {
 
   return (
     <div className={styles.layout}>
-      <Sidebar />
+      <Sidebar isOpen={isMobileMenuOpen} onClose={() => setIsMobileMenuOpen(false)} />
       <div className={styles.main}>
-        <TopBar />
+        <TopBar onMenuClick={() => setIsMobileMenuOpen(true)} />
         <main className={styles.content}>
           {!hasWorkspaceAccess && pathname === '/console' ? (
             <div className={styles.loading}>

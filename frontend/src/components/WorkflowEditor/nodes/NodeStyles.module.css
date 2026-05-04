@@ -1,51 +1,143 @@
 /* 节点通用样式 */
 
 :global(.react-flow) {
-  --node-surface: var(--console-surface);
-  --node-surface-alt: var(--console-surface-alt);
-  --node-surface-muted: var(--console-surface-muted);
+  --node-surface: rgba(10, 20, 32, 0.9);
+  --node-surface-alt: rgba(7, 15, 26, 0.86);
+  --node-surface-muted: rgba(255, 255, 255, 0.06);
   --node-border: var(--console-border);
   --node-border-strong: var(--console-border-strong);
   --node-text-primary: var(--console-text-primary);
   --node-text-secondary: var(--console-text-secondary);
   --node-text-tertiary: var(--console-text-tertiary);
   --node-focus-ring: var(--console-focus-ring);
-  --node-accent: var(--console-accent);
+  --node-accent: #38bdf8;
+  --node-accent-soft: rgba(56, 189, 248, 0.13);
+  --node-type-text: #bae6fd;
+}
+
+:global(html[data-theme='light']) :global(.react-flow) {
+  --node-surface: rgba(255, 255, 255, 0.94);
+  --node-surface-alt: rgba(248, 251, 254, 0.96);
+  --node-surface-muted: rgba(241, 245, 249, 0.88);
+  --node-border: rgba(15, 23, 42, 0.12);
+  --node-border-strong: rgba(2, 132, 199, 0.28);
+  --node-text-primary: #0f172a;
+  --node-text-secondary: #334155;
+  --node-text-tertiary: #64748b;
+  --node-focus-ring: rgba(2, 132, 199, 0.14);
+  --node-type-text: #075985;
 }
 
 .node {
-  min-width: 180px;
-  border-radius: 14px;
-  padding: 12px;
-  box-shadow: var(--shadow-md);
-  background: linear-gradient(180deg, var(--node-surface), var(--node-surface-alt));
+  position: relative;
+  width: 260px;
+  min-height: 108px;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: 16px;
+  box-shadow: 0 18px 42px rgba(2, 8, 23, 0.2);
+  background:
+    linear-gradient(135deg, var(--node-accent-soft), transparent 32%),
+    linear-gradient(180deg, var(--node-surface), var(--node-surface-alt));
   border: 1px solid var(--node-border);
-  transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  color: var(--node-text-primary);
+  backdrop-filter: blur(18px);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.node::before {
+  position: absolute;
+  inset: 14px auto 14px 0;
+  width: 4px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--node-accent), color-mix(in srgb, var(--node-accent) 42%, transparent));
+  content: "";
+}
+
+.node::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--node-accent) 18%, transparent), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 42%);
+  opacity: 0.58;
+  content: "";
 }
 
 .node:hover {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
+  border-color: var(--node-border-strong);
+  box-shadow: 0 22px 54px rgba(2, 8, 23, 0.24);
 }
 
 .node.selected {
   border-color: var(--node-border-strong);
-  box-shadow: 0 0 0 3px var(--node-focus-ring);
+  box-shadow:
+    0 0 0 4px var(--node-focus-ring),
+    0 22px 58px rgba(2, 8, 23, 0.26);
 }
 
 .nodeHeader {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-weight: 700;
-  font-size: 0.88rem;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.nodeIcon {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--node-accent) 36%, transparent);
+  background: color-mix(in srgb, var(--node-accent) 12%, var(--node-surface-alt));
+  color: var(--node-accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.nodeTitle {
+  min-width: 0;
+  flex: 1;
+  color: var(--node-text-primary);
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeType {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--node-accent) 28%, transparent);
+  background: color-mix(in srgb, var(--node-accent) 10%, transparent);
+  color: var(--node-type-text);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
 }
 
 .nodeContent {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
+}
+
+.nodeDescription {
+  margin: 0;
+  color: var(--node-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
 .preview {
@@ -88,41 +180,59 @@
 }
 
 .inputNode {
-  border-left: 4px solid #38bdf8;
+  --node-accent: #38bdf8;
+  --node-accent-soft: rgba(56, 189, 248, 0.14);
+  --node-type-text: #bae6fd;
 }
 
-.inputNode .nodeHeader {
-  color: #7dd3fc;
+:global(html[data-theme='light']) .inputNode {
+  --node-type-text: #0369a1;
 }
 
 .processNode {
-  border-left: 4px solid #22c55e;
+  --node-accent: #22c55e;
+  --node-accent-soft: rgba(34, 197, 94, 0.14);
+  --node-type-text: #bbf7d0;
 }
 
-.processNode .nodeHeader {
-  color: #8ef0b0;
+:global(html[data-theme='light']) .processNode {
+  --node-type-text: #15803d;
 }
 
 .gateNode {
-  border-left: 4px solid #f59e0b;
+  --node-accent: #f59e0b;
+  --node-accent-soft: rgba(245, 158, 11, 0.15);
+  --node-type-text: #fde68a;
 }
 
-.gateNode .nodeHeader {
-  color: #ffd598;
+:global(html[data-theme='light']) .gateNode {
+  --node-type-text: #b45309;
 }
 
 .checkerNode {
-  border-left: 4px solid #fb7185;
+  --node-accent: #f97316;
+  --node-accent-soft: rgba(249, 115, 22, 0.14);
+  --node-type-text: #fed7aa;
 }
 
-.checkerNode .nodeHeader {
-  color: #fecdd3;
+:global(html[data-theme='light']) .checkerNode {
+  --node-type-text: #c2410c;
 }
 
 .outputNode {
-  border-left: 4px solid #a855f7;
+  --node-accent: #a855f7;
+  --node-accent-soft: rgba(168, 85, 247, 0.14);
+  --node-type-text: #e9d5ff;
 }
 
-.outputNode .nodeHeader {
-  color: #e5d0ff;
+:global(html[data-theme='light']) .outputNode {
+  --node-type-text: #7e22ce;
+}
+
+:global(html[data-theme='light']) .node {
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.12);
+}
+
+:global(html[data-theme='light']) .node:hover {
+  box-shadow: 0 22px 52px rgba(15, 23, 42, 0.16);
 }

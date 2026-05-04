@@ -243,15 +243,25 @@ const readOnly = useWorkflowContext(selectReadOnly);
                         onDrop={readOnly ? undefined : onDrop}
                         onDragOver={readOnly ? undefined : onDragOver}
                         nodeTypes={nodeTypes}
+                        className={styles.flow}
                         fitView
                         snapToGrid
                         snapGrid={[15, 15]}
                     >
-                        <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+                        <Background
+                            variant={BackgroundVariant.Dots}
+                            gap={28}
+                            size={1.25}
+                            color="var(--editor-canvas-dot)"
+                        />
                         <Controls />
                         <MiniMap
-                            nodeColor={(node) => getNodeColor(node.type)}
-                            maskColor="rgba(14, 24, 38, 0.08)"
+                            nodeColor={(node) => getMiniMapNodeColor(node.type)}
+                            nodeStrokeColor={(node) => getMiniMapNodeStrokeColor(node.type)}
+                            nodeBorderRadius={16}
+                            maskColor="var(--editor-minimap-mask)"
+                            pannable
+                            zoomable
                         />
                         <Panel position="top-right" className={styles.canvasHint}>
                             {readOnly ? '当前为只读模式' : '拖拽节点、配置参数并发布'}
@@ -276,11 +286,22 @@ const readOnly = useWorkflowContext(selectReadOnly);
     );
 }
 
-function getNodeColor(type?: string): string {
+function getMiniMapNodeColor(type?: string): string {
+    const colors: Record<string, string> = {
+        input: '#dbeafe',
+        process: '#dcfce7',
+        gate: '#fef3c7',
+        checker: '#ffedd5',
+        output: '#f3e8ff',
+    };
+    return colors[type || ''] || '#e2e8f0';
+}
+
+function getMiniMapNodeStrokeColor(type?: string): string {
     const colors: Record<string, string> = {
         input: '#2563eb',
-        process: '#059669',
-        gate: '#ca8a04',
+        process: '#16a34a',
+        gate: '#d97706',
         checker: '#ea580c',
         output: '#7c3aed',
     };
