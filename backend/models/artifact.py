@@ -18,6 +18,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from core.time import utc_now_naive
+
 
 class ArtifactType(StrEnum):
     """产物类型枚举"""
@@ -51,7 +53,7 @@ class Artifact(BaseModel):
     content_hash: str = Field(default="", description="内容哈希，用于快速比对")
 
     # 时间戳
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
 
     # 版本链
     parent_version: str | None = Field(None, description="父版本ID（rerun时指向被替换的版本）")
@@ -94,14 +96,14 @@ class LLMCallRecord(BaseModel):
     # 可选：保存完整prompt/response用于调试
     prompt_preview: str | None = Field(None, description="Prompt前200字符")
     response_preview: str | None = Field(None, description="Response前200字符")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
 
 
 class HumanDecision(BaseModel):
     """人工决策记录"""
 
     decision_type: Literal["approve", "reject", "modify", "regenerate"]
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now_naive)
     user_input: str | None = None
     modified_content: Any | None = None
 
@@ -126,7 +128,7 @@ class NodeRun(BaseModel):
     node_type: str = Field(default="llm_call", description="节点类型，如 'llm_call', 'validation'")
 
     # 执行时间
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=utc_now_naive)
     completed_at: datetime | None = None
     duration_ms: int | None = None
 
@@ -151,7 +153,7 @@ class NodeRun(BaseModel):
 
     def complete(self, status: NodeRunStatus = NodeRunStatus.COMPLETED, error: str | None = None):
         """标记节点完成"""
-        self.completed_at = datetime.utcnow()
+        self.completed_at = utc_now_naive()
         self.status = status
         self.error_message = error
         if self.started_at:
@@ -187,7 +189,7 @@ class WorkflowRun(BaseModel):
     )
 
     # 时间
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=utc_now_naive)
     completed_at: datetime | None = None
 
     # 状态
@@ -211,7 +213,7 @@ class WorkflowRun(BaseModel):
 
     def complete(self, status: WorkflowRunStatus = WorkflowRunStatus.COMPLETED):
         """标记工作流完成"""
-        self.completed_at = datetime.utcnow()
+        self.completed_at = utc_now_naive()
         self.status = status
         if self.started_at:
             self.total_duration_ms = int(

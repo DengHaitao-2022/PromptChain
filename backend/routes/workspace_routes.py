@@ -14,6 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import and_
 from sqlalchemy.future import select
 
+from core.time import utc_now_naive
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
 from models.auth_models import MemberRole
@@ -391,7 +392,7 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         # 生成邀请 Token
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        expires_at = datetime.utcnow() + timedelta(days=7)
+        expires_at = utc_now_naive() + timedelta(days=7)
 
         # 保存邀请
         invite = WorkspaceInviteORM(
@@ -459,7 +460,7 @@ async def accept_invite(request: Request, token: str):
                 and_(
                     WorkspaceInviteORM.token_hash == token_hash,
                     WorkspaceInviteORM.accepted_at.is_(None),
-                    WorkspaceInviteORM.expires_at > datetime.utcnow(),
+                    WorkspaceInviteORM.expires_at > utc_now_naive(),
                 )
             )
         )
@@ -491,7 +492,7 @@ async def accept_invite(request: Request, token: str):
         session.add(membership)
 
         # 标记邀请为已接受
-        invite.accepted_at = datetime.utcnow()
+        invite.accepted_at = utc_now_naive()
         await AuditLogService(session).record(
             workspace_id=invite.workspace_id,
             actor_user_id=user_id,

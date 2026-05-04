@@ -19,6 +19,7 @@ import {
   updateWorkspaceMemberAccess,
   updateWorkspaceMemberRole,
 } from '@/lib/auth';
+import { formatAppDate } from '@/lib/date-time';
 import styles from '../settings.module.css';
 
 const MANAGEABLE_ROLES: Exclude<Role, 'owner'>[] = ['viewer', 'editor', 'admin'];
@@ -407,7 +408,7 @@ export default function MembersPage() {
                         ) : null}
                       </div>
                       <div className={styles.itemMetaMuted}>
-                        加入时间：{new Date(member.joined_at).toLocaleDateString('zh-CN')}
+                        加入时间：{formatAppDate(member.joined_at)}
                       </div>
                     </div>
                   </div>

@@ -11,6 +11,7 @@ Trace 回放服务
 import asyncio
 from datetime import UTC, datetime
 
+from core.time import to_utc_iso
 from models.artifact import Artifact, NodeRun, NodeRunStatus
 from services.artifact_store import ArtifactStore, get_artifact_store
 
@@ -76,7 +77,7 @@ class TraceService:
             # 节点开始
             events.append(
                 {
-                    "timestamp": node.started_at.isoformat(),
+                    "timestamp": to_utc_iso(node.started_at),
                     "event": "node_started",
                     "node": node.node_name,
                     "node_run_id": node.id,
@@ -88,7 +89,7 @@ class TraceService:
             for llm_call in node.llm_calls:
                 events.append(
                     {
-                        "timestamp": llm_call.created_at.isoformat(),
+                        "timestamp": to_utc_iso(llm_call.created_at),
                         "event": "llm_call",
                         "model": llm_call.model,
                         "provider": llm_call.provider,
@@ -102,7 +103,7 @@ class TraceService:
             if node.human_decision:
                 events.append(
                     {
-                        "timestamp": node.human_decision.timestamp.isoformat(),
+                        "timestamp": to_utc_iso(node.human_decision.timestamp),
                         "event": "human_decision",
                         "decision_type": node.human_decision.decision_type,
                         "node": node.node_name,
@@ -116,7 +117,7 @@ class TraceService:
                 if artifact:
                     events.append(
                         {
-                            "timestamp": artifact.created_at.isoformat(),
+                            "timestamp": to_utc_iso(artifact.created_at),
                             "event": "artifact_created",
                             "artifact_id": artifact_id,
                             "artifact_type": artifact.type.value,
@@ -129,7 +130,7 @@ class TraceService:
             if node.completed_at:
                 events.append(
                     {
-                        "timestamp": node.completed_at.isoformat(),
+                        "timestamp": to_utc_iso(node.completed_at),
                         "event": "node_completed",
                         "node": node.node_name,
                         "status": node.status.value,
@@ -218,8 +219,8 @@ class TraceService:
             }
 
         return {
-            "version_a": {"id": a.id, "version": a.version, "created_at": a.created_at.isoformat()},
-            "version_b": {"id": b.id, "version": b.version, "created_at": b.created_at.isoformat()},
+            "version_a": {"id": a.id, "version": a.version, "created_at": to_utc_iso(a.created_at)},
+            "version_b": {"id": b.id, "version": b.version, "created_at": to_utc_iso(b.created_at)},
             "differences": differences,
         }
 

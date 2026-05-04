@@ -8,10 +8,10 @@
 """
 
 import json
-from datetime import datetime
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from core.time import utc_now_iso, utc_now_naive
 from models import (
     ArtifactType,
     HumanDecision,
@@ -56,7 +56,7 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 
 
 def _now_iso() -> str:
-    return f"{datetime.utcnow().isoformat()}Z"
+    return utc_now_iso()
 
 
 def _build_outline_gate_questions(outline: Outline) -> list[dict]:
@@ -112,7 +112,7 @@ async def generate_outline(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="generate_outline",
         node_type="process",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id for artifact_id in [state.get("intent_card_artifact_id")] if artifact_id
@@ -136,7 +136,7 @@ async def generate_outline(state: dict) -> dict:
         chain = prompt | llm
 
         # 调用 LLM
-        start_time = datetime.utcnow()
+        start_time = utc_now_naive()
         outline: Outline = await invoke_with_llm_retry(
             lambda: chain.ainvoke(
                 {
@@ -150,7 +150,7 @@ async def generate_outline(state: dict) -> dict:
                 }
             )
         )
-        end_time = datetime.utcnow()
+        end_time = utc_now_naive()
 
         # 记录 LLM 调用（动态获取模型配置）
         model_info = await get_current_model_info_for_workspace(
@@ -242,7 +242,7 @@ async def approve_outline(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="approve_outline",
         node_type="gate",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id for artifact_id in [state.get("outline_artifact_id")] if artifact_id

@@ -8,6 +8,7 @@ import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } f
 import { ChevronLeft, ChevronRight, RefreshCw, RotateCcw, Search, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { auditLogApi, type AuditLogEntry } from '@/lib/api';
+import { appDateTimeInputToUtcIsoString, formatAppDateTime } from '@/lib/date-time';
 import styles from '../settings.module.css';
 
 const PAGE_SIZE = 20;
@@ -93,25 +94,14 @@ function getActionTone(action: string, outcome: string) {
 }
 
 function toIsoDateTime(value: string) {
-  if (!value) {
-    return undefined;
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  return appDateTimeInputToUtcIsoString(value);
 }
 
 function formatDateTime(value: string | null) {
   if (!value) {
     return '-';
   }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat('zh-CN', {
-    dateStyle: 'short',
-    timeStyle: 'medium',
-  }).format(parsed);
+  return formatAppDateTime(value, value);
 }
 
 function snapshotText(snapshot: Record<string, unknown>, fallback: string) {

@@ -11,6 +11,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, EmailStr, Field
 
+from core.time import utc_now_naive
+
 # ==================== 枚举定义 ====================
 
 
@@ -62,8 +64,8 @@ class User(UserBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: UserStatus = UserStatus.INACTIVE
     email_verified: bool = False
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
+    updated_at: datetime = Field(default_factory=utc_now_naive)
     last_login_at: datetime | None = None
 
     class Config:
@@ -89,8 +91,8 @@ class Workspace(WorkspaceBase):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     owner_id: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
+    updated_at: datetime = Field(default_factory=utc_now_naive)
 
     class Config:
         from_attributes = True
@@ -108,7 +110,7 @@ class Membership(MembershipBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
     workspace_id: str
-    joined_at: datetime = Field(default_factory=datetime.utcnow)
+    joined_at: datetime = Field(default_factory=utc_now_naive)
     invited_by: str | None = None
 
     class Config:
@@ -123,7 +125,7 @@ class RefreshToken(BaseModel):
     token_hash: str
     expires_at: datetime
     revoked_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
     user_agent: str | None = None  # 记录登录设备信息
     ip_address: str | None = None  # 记录登录IP
 
@@ -139,7 +141,7 @@ class EmailVerificationToken(BaseModel):
     token_hash: str
     expires_at: datetime
     used_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
 
     class Config:
         from_attributes = True
@@ -153,7 +155,7 @@ class PasswordResetToken(BaseModel):
     token_hash: str
     expires_at: datetime
     used_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
 
     class Config:
         from_attributes = True
@@ -192,7 +194,7 @@ class WorkspaceInvite(BaseModel):
     token_hash: str
     expires_at: datetime
     accepted_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
 
     class Config:
         from_attributes = True

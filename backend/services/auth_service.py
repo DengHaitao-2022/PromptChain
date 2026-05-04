@@ -8,7 +8,7 @@ import hashlib
 import os
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from jose import JWTError, jwt
@@ -17,6 +17,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from core.time import utc_now_naive
 from models.admin_orm import LoginAttemptORM
 from models.auth_models import MemberRole, User, UserStatus, Workspace
 from models.auth_orm import MembershipORM, RefreshTokenORM, UserORM, WorkspaceORM
@@ -47,11 +48,6 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7  # Refresh Token 7天过期
 # 登录限流配置
 MAX_LOGIN_ATTEMPTS = 5  # 最大尝试次数
 LOGIN_LOCKOUT_MINUTES = 15  # 锁定时间（分钟）
-
-
-def utcnow() -> datetime:
-    """返回 UTC 时间，统一用于数据库写入和时间比较。"""
-    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # ==================== 密码处理 ====================
@@ -101,12 +97,12 @@ def create_access_token(
     Returns:
         JWT Access Token
     """
-    expire = utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = utc_now_naive() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": user_id,
         "type": "access",
         "exp": expire,
-        "iat": utcnow(),
+        "iat": utc_now_naive(),
         "jti": str(uuid.uuid4()),  # Token 唯一标识
     }
     if workspace_id:
@@ -297,14 +293,14 @@ class AuthService:
         await self._record_login_attempt(email, ip_address, success=True)
 
         # 更新最后登录时间
-        user.last_login_at = utcnow()
+        user.last_login_at = utc_now_naive()
         await self.session.commit()
 
         return user
 
     async def _check_login_lockout(self, email: str, ip_address: str) -> bool:
         """检查是否被登录锁定"""
-        lockout_time = utcnow() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        lockout_time = utc_now_naive() - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
 
         result = await self.session.execute(
             select(func.count(LoginAttemptORM.id)).where(
@@ -342,7 +338,7 @@ class AuthService:
         ip_address: str | None = None,
     ) -> RefreshTokenORM:
         """创建 Refresh Token 记录"""
-        expires_at = utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        expires_at = utc_now_naive() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
         token_kwargs: dict[str, Any] = {
             "id": str(uuid.uuid4()),
@@ -370,7 +366,7 @@ class AuthService:
                 and_(
                     RefreshTokenORM.token_hash == token_hash,
                     RefreshTokenORM.revoked_at.is_(None),
-                    RefreshTokenORM.expires_at > utcnow(),
+                    RefreshTokenORM.expires_at > utc_now_naive(),
                 )
             )
         )
@@ -393,7 +389,7 @@ class AuthService:
         token_orm = result.scalar_one_or_none()
 
         if token_orm:
-            token_orm.revoked_at = utcnow()
+            token_orm.revoked_at = utc_now_naive()
             await self.session.commit()
             return True
 
@@ -409,7 +405,7 @@ class AuthService:
         tokens = result.scalars().all()
 
         for token in tokens:
-            token.revoked_at = utcnow()
+            token.revoked_at = utc_now_naive()
 
         await self.session.commit()
 

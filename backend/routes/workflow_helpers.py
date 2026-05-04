@@ -10,6 +10,7 @@ from typing import Any, Literal
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
+from core.time import to_utc_iso, utc_now_iso
 from models.auth_models import MemberRole
 
 # ==================== 类型定义 ====================
@@ -459,13 +460,13 @@ def _coerce_iso(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.isoformat().replace("+00:00", "Z")
+        return to_utc_iso(value)
     return str(value)
 
 
 def _now_iso() -> str:
     """获取当前 UTC 时间的 ISO 字符串"""
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 # ==================== 澄清问题规范化 ====================

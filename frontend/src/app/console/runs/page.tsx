@@ -22,6 +22,7 @@ import {
 import styles from './runs.module.css';
 import { workflowApi } from '@/lib/api';
 import type { WorkflowRunSummary } from '@/lib/api';
+import { formatAppDateTime } from '@/lib/date-time';
 
 interface InsightItem {
   icon: LucideIcon;
@@ -90,7 +91,7 @@ function formatDuration(durationMs: number | null) {
 }
 
 function formatStartedAt(dateString: string) {
-  return new Date(dateString).toLocaleString();
+  return formatAppDateTime(dateString);
 }
 
 function summarizeInput(text: string) {

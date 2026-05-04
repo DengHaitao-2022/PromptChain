@@ -4,6 +4,7 @@ import React from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import styles from './VersionHistoryModal.module.css';
 import { artifactApi } from '@/lib/api';
+import { formatCompactAppDateTime } from '@/lib/date-time';
 
 interface VersionInfo {
     id: string;
@@ -51,13 +52,7 @@ export function VersionHistoryModal({
 
     // 格式化时间
     const formatTime = (timestamp: string) => {
-        const date = new Date(timestamp);
-        return date.toLocaleString('zh-CN', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
+        return formatCompactAppDateTime(timestamp);
     };
 
     // 切换版本选择

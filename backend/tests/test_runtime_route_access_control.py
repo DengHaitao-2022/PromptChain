@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import routes.workflow_helpers as workflow_helpers
+from core.time import to_utc_iso
 from main import app
 from routes.auth_routes import ACCESS_TOKEN_COOKIE
 from services.auth_service import create_access_token
@@ -45,8 +46,8 @@ class _FakeWorkflowRun:
             "workflow_name": self.workflow_name,
             "workflow_version": self.workflow_version,
             "user_input": self.user_input,
-            "started_at": self.started_at.isoformat(),
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "started_at": to_utc_iso(self.started_at),
+            "completed_at": to_utc_iso(self.completed_at) if self.completed_at else None,
             "total_duration_ms": self.total_duration_ms,
         }
 

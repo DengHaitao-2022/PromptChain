@@ -4,12 +4,11 @@
 包含模型供应商配置、密钥管理、API Key、审计日志等 ORM 定义
 """
 
-from datetime import datetime
-
 from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 
 # 使用现有的 Base
+from core.time import utc_now_naive
 from db.postgres_store import Base
 
 # ==================== ORM 模型定义 ====================
@@ -27,8 +26,8 @@ class ModelProviderORM(Base):
     description = Column(Text, nullable=True)
     enabled = Column(Boolean, default=True)
     config = Column(JSON, default=dict)  # 加密存储敏感配置
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
 
     # 关系
@@ -46,8 +45,8 @@ class SecretORM(Base):
     description = Column(Text, nullable=True)
     ciphertext = Column(Text, nullable=False)  # 加密后的密钥
     last4 = Column(String(10), nullable=False)  # 最后4位
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
 
     # 关系
@@ -69,7 +68,7 @@ class ApiKeyORM(Base):
     expires_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
     last_used_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
 
     # 关系
@@ -101,7 +100,7 @@ class AuditLogORM(Base):
     ip_address = Column(String(50), nullable=True)
     user_agent = Column(String(500), nullable=True)
     schema_version = Column(String(20), default="2026-05-02")
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now_naive, index=True)
 
     # 关系
     workspace = relationship("WorkspaceORM", back_populates="audit_logs")
@@ -119,4 +118,4 @@ class LoginAttemptORM(Base):
     email = Column(String(255), nullable=False, index=True)
     ip_address = Column(String(50), nullable=False, index=True)
     success = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now_naive, index=True)

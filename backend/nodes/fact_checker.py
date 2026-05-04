@@ -11,11 +11,11 @@ Source: Chain of Verification (CoVe) - Meta AI Research
 """
 
 import json
-from datetime import datetime
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from core.time import utc_now_iso, utc_now_naive
 from models import (
     ArtifactType,
     FactCheckReport,
@@ -127,7 +127,7 @@ class VerificationEvaluation(BaseModel):
 
 
 def _now_iso() -> str:
-    return f"{datetime.utcnow().isoformat()}Z"
+    return utc_now_iso()
 
 
 def _build_gate_questions(report: FactCheckReport) -> list[dict]:
@@ -401,7 +401,7 @@ async def check_facts(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="check_facts",
         node_type="checker",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id
@@ -421,7 +421,7 @@ async def check_facts(state: dict) -> dict:
         # 遍历每个章节提取并验证事实声明
         for section_id, content in content_dict.items():
             # 步骤1：提取事实声明
-            start_time = datetime.utcnow()
+            start_time = utc_now_naive()
             claims = await extract_fact_claims(
                 content,
                 section_id,
@@ -429,7 +429,7 @@ async def check_facts(state: dict) -> dict:
                 model_provider_id,
                 model_name,
             )
-            end_time = datetime.utcnow()
+            end_time = utc_now_naive()
 
             all_claims.extend(claims)
 
@@ -451,7 +451,7 @@ async def check_facts(state: dict) -> dict:
             # 对每个声明执行 CoVe 验证
             for claim in claims:
                 # 步骤2：生成验证问题
-                start_time = datetime.utcnow()
+                start_time = utc_now_naive()
                 question = await generate_verification_question(
                     claim,
                     workspace_id,
@@ -476,7 +476,7 @@ async def check_facts(state: dict) -> dict:
                     model_provider_id,
                     model_name,
                 )
-                end_time = datetime.utcnow()
+                end_time = utc_now_naive()
 
                 all_results.append(result)
 
@@ -582,7 +582,7 @@ async def approve_fact_check(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="approve_fact_check",
         node_type="gate",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id

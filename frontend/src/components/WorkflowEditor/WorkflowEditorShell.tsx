@@ -26,6 +26,7 @@ import { ConflictHintToast } from './collaboration/components/ConflictHintToast'
 import { getDefaultLabel } from './domain/schema';
 import { WORKFLOW_NODE_CARD_HEIGHT, WORKFLOW_NODE_CARD_WIDTH } from './domain/nodePresentation';
 import { registry } from './registry';
+import { formatAppDateTime } from '@/lib/date-time';
 import styles from './WorkflowEditor.module.css';
 import type { WorkflowEditorProps } from './index';
 
@@ -408,16 +409,5 @@ function getMiniMapNodeStrokeColor(type?: string): string {
 }
 
 function formatDateTime(value: string): string {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-        return value;
-    }
-
-    return new Intl.DateTimeFormat('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-    }).format(date);
+    return formatAppDateTime(value, value);
 }
