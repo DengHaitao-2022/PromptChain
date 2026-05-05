@@ -41,25 +41,12 @@ function asNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-    // 格式化时间
-    const formatTime = (timestamp: string) => {
-        return formatAppTime(timestamp);
-    };
 function formatTime(timestamp: unknown): string {
     if (typeof timestamp !== 'string' || !timestamp) {
         return '-';
     }
 
-    const date = new Date(timestamp);
-    if (Number.isNaN(date.getTime())) {
-        return timestamp;
-    }
-
-    return date.toLocaleTimeString('zh-CN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-    });
+    return formatAppTime(timestamp, '-');
 }
 
 function formatDuration(value: unknown): string {
