@@ -1,9 +1,9 @@
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.time import utc_now_iso
 from tests._runtime_auth import authenticated_client, ownership_metadata
 
 
@@ -50,7 +50,7 @@ class _FakeWorkflow:
 
     @staticmethod
     def _utc_now_z() -> str:
-        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        return utc_now_iso()
 
     async def pause(self, workflow_run_id: str, reason: str = ""):
         self.store.workflow_run.status = "paused"

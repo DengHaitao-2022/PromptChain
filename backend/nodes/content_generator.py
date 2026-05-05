@@ -7,10 +7,9 @@
 3. 创建 Artifact 版本
 """
 
-from datetime import datetime
-
 from langchain_core.prompts import ChatPromptTemplate
 
+from core.time import utc_now_naive
 from models import (
     ArtifactType,
     IntentCard,
@@ -20,7 +19,12 @@ from models import (
     Outline,
     OutlineSection,
 )
-from services import get_artifact_store, get_current_model_info, get_llm, invoke_with_llm_retry
+from services import (
+    get_artifact_store,
+    get_current_model_info_for_workspace,
+    get_llm_for_workspace,
+    invoke_with_llm_retry,
+)
 
 SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据以下信息撰写文章的一个章节。
 
@@ -84,7 +88,12 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
     intent_card: IntentCard = state["intent_card"]
     outline: Outline = state["outline"]
 
-    llm = get_llm(temperature=0.7)
+    llm = await get_llm_for_workspace(
+        state.get("workspace_id"),
+        model=state.get("model_name"),
+        model_provider_id=state.get("model_provider_id"),
+        temperature=0.7,
+    )
     prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
     chain = prompt | llm
 
@@ -127,7 +136,7 @@ async def generate_all_sections(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="generate_content",
         node_type="process",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id
@@ -150,14 +159,18 @@ async def generate_all_sections(state: dict) -> dict:
 
         for index, section in enumerate(flat_sections):
             # 生成章节内容
-            start_time = datetime.utcnow()
+            start_time = utc_now_naive()
             content = await generate_section(state, section, previous_content)
-            end_time = datetime.utcnow()
+            end_time = utc_now_naive()
 
             generated_sections[section.id] = content
 
             # 记录 LLM 调用（动态获取模型配置）
-            model_info = get_current_model_info()
+            model_info = await get_current_model_info_for_workspace(
+                state.get("workspace_id"),
+                model_provider_id=state.get("model_provider_id"),
+                model=state.get("model_name"),
+            )
             llm_call = LLMCallRecord(
                 model=model_info["model"],
                 provider=model_info["provider"],
@@ -244,7 +257,7 @@ async def regenerate_section(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="regenerate_section",
         node_type="process",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id
@@ -268,9 +281,9 @@ async def regenerate_section(state: dict) -> dict:
                 previous_content += f"\n\n## {section.title}\n{draft_sections[section.id]}"
 
         # 重新生成
-        start_time = datetime.utcnow()
+        start_time = utc_now_naive()
         new_content = await generate_section(state, target_section, previous_content)
-        end_time = datetime.utcnow()
+        end_time = utc_now_naive()
 
         # 更新
         draft_sections[section_id] = new_content
@@ -292,7 +305,11 @@ async def regenerate_section(state: dict) -> dict:
         section_artifact_ids[section_id] = artifact.id
 
         # 完成节点
-        model_info = get_current_model_info()
+        model_info = await get_current_model_info_for_workspace(
+            state.get("workspace_id"),
+            model_provider_id=state.get("model_provider_id"),
+            model=state.get("model_name"),
+        )
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],

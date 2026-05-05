@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiUrl } from '@/lib/api-config';
+import { formatAppDateTime } from '@/lib/date-time';
 import styles from './dashboard.module.css';
 
 interface DashboardData {
@@ -71,25 +72,6 @@ function getStatusToneClass(status: string) {
     default:
       return styles.statusWaiting;
   }
-}
-
-function formatDateTime(value?: string): string {
-  if (!value) {
-    return '暂无记录';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
 }
 
 export default function DashboardPage() {
@@ -302,7 +284,7 @@ export default function DashboardPage() {
                     <div className={styles.runCardHeader}>
                       <div>
                         <h3 className={styles.runName}>{run.workflow_name}</h3>
-                        <p className={styles.runMeta}>开始于 {formatDateTime(run.started_at)}</p>
+                        <p className={styles.runMeta}>开始于 {formatAppDateTime(run.started_at)}</p>
                       </div>
                       <span className={`${styles.statusBadge} ${getStatusToneClass(run.status)}`}>
                         {formatStatusLabel(run.status)}

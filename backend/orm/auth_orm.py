@@ -4,12 +4,11 @@
 从 Pydantic 模型独立出来，便于数据库迁移管理
 """
 
-from datetime import datetime
-
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 
 # 使用现有的 Base
+from core.time import utc_now_naive
 from db.postgres_store import Base
 from models.auth_models import MemberRole, UserStatus
 
@@ -29,8 +28,8 @@ class UserORM(Base):
     password_hash = Column(String(255), nullable=False)
     status = Column(String(20), default=UserStatus.INACTIVE.value)
     email_verified = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
     last_login_at = Column(DateTime, nullable=True)
 
     # 关系
@@ -49,8 +48,8 @@ class WorkspaceORM(Base):
     description = Column(Text, nullable=True)
     logo_url = Column(String(500), nullable=True)
     owner_id = Column(String(36), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     # 关系
     owner = relationship("UserORM", back_populates="owned_workspaces")
@@ -70,7 +69,7 @@ class MembershipORM(Base):
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     workspace_id = Column(String(36), ForeignKey("workspaces.id"), nullable=False, index=True)
     role = Column(String(20), default=MemberRole.VIEWER.value)
-    joined_at = Column(DateTime, default=datetime.utcnow)
+    joined_at = Column(DateTime, default=utc_now_naive)
     invited_by = Column(String(36), nullable=True)
 
     # 关系
@@ -88,7 +87,7 @@ class RefreshTokenORM(Base):
     token_hash = Column(String(255), nullable=False, unique=True)
     expires_at = Column(DateTime, nullable=False)
     revoked_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
     user_agent = Column(String(500), nullable=True)
     ip_address = Column(String(50), nullable=True)
 
@@ -106,7 +105,7 @@ class EmailVerificationTokenORM(Base):
     token_hash = Column(String(255), nullable=False, unique=True)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
 
 
 class PasswordResetTokenORM(Base):
@@ -119,7 +118,7 @@ class PasswordResetTokenORM(Base):
     token_hash = Column(String(255), nullable=False, unique=True)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
 
 
 class WorkspaceInviteORM(Base):
@@ -135,4 +134,4 @@ class WorkspaceInviteORM(Base):
     token_hash = Column(String(255), nullable=False, unique=True)
     expires_at = Column(DateTime, nullable=False)
     accepted_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)

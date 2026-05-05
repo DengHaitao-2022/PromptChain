@@ -16,6 +16,7 @@ from sqlalchemy import and_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from core.time import to_utc_iso
 from models.admin_models import AuditAction
 from models.admin_orm import AuditLogORM
 from models.auth_orm import MembershipORM, UserORM
@@ -49,7 +50,7 @@ def _is_sensitive_key(key: str) -> bool:
 
 def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
-        return value.isoformat()
+        return to_utc_iso(value)
     if isinstance(value, dict):
         return {
             str(key): REDACTED if _is_sensitive_key(str(key)) else _json_safe(item)
@@ -321,5 +322,5 @@ class AuditLogService:
             "ip_address": log.ip_address,
             "user_agent": log.user_agent,
             "schema_version": log.schema_version or "legacy",
-            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "created_at": to_utc_iso(log.created_at) if log.created_at else None,
         }

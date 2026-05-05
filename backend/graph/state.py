@@ -16,6 +16,10 @@ class GraphState(TypedDict, total=False):
     # 基础信息
     user_input: str
     workflow_run_id: str
+    workspace_id: str | None
+    user_id: str | None
+    model_provider_id: str | None
+    model_name: str | None
     workflow_definition_id: str | None
     workflow_version_id: str | None
     workflow_context: dict[str, Any] | None

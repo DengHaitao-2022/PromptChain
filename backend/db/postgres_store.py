@@ -11,7 +11,6 @@ import base64
 import importlib
 import os
 from collections.abc import AsyncIterator, Sequence
-from datetime import datetime
 from typing import Any
 
 from langgraph.checkpoint.base import (
@@ -40,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.future import select
 from sqlalchemy.orm import DeclarativeBase, relationship
 
+from core.time import utc_now_naive
 from models.artifact import (
     Artifact,
     ArtifactType,
@@ -96,7 +96,7 @@ class ArtifactORM(Base):
     version = Column(Integer, nullable=False)
     content = Column(JSON, nullable=False)
     content_hash = Column(String(16), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
     parent_version = Column(String(36), nullable=True)
     workflow_run_id = Column(String(36), ForeignKey("workflow_runs.id"), nullable=False)
     node_run_id = Column(String(36), ForeignKey("node_runs.id"), nullable=False)
@@ -143,7 +143,7 @@ class NodeRunORM(Base):
     workflow_run_id = Column(String(36), ForeignKey("workflow_runs.id"), nullable=False)
     node_name = Column(String(100), nullable=False)
     node_type = Column(String(50), default="llm_call")
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=utc_now_naive)
     completed_at = Column(DateTime, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     status = Column(String(20), default="pending")
@@ -216,7 +216,7 @@ class WorkflowRunORM(Base):
     workflow_version = Column(String(20), default="1.0.0")
     workflow_definition_id = Column(String(36), nullable=True)
     workflow_version_id = Column(String(36), nullable=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=utc_now_naive)
     completed_at = Column(DateTime, nullable=True)
     status = Column(String(20), default="running")
     current_node = Column(String(100), nullable=True)
@@ -289,7 +289,7 @@ class GraphCheckpointORM(Base):
     checkpoint_payload = Column(Text, nullable=False)
     metadata_type = Column(String(255), nullable=False)
     metadata_payload = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
 
 
 class GraphCheckpointWriteORM(Base):
@@ -306,7 +306,7 @@ class GraphCheckpointWriteORM(Base):
     task_path = Column(Text, default="")
     value_type = Column(String(255), nullable=False)
     value_payload = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
 
 
 # ==================== PostgreSQL 存储服务 ====================

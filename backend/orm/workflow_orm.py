@@ -5,10 +5,10 @@
 """
 
 import uuid
-from datetime import datetime
 
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 
+from core.time import to_utc_iso, utc_now_naive
 from db.postgres_store import Base
 
 
@@ -31,8 +31,8 @@ class WorkflowDefinitionORM(Base):
     created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
 
     # 时间戳
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     # 状态
     is_published = Column(Integer, default=0)  # 0=草稿, 1=已发布
@@ -52,11 +52,11 @@ class WorkflowDefinitionORM(Base):
             "edges": self.edges,
             "workspace_id": self.workspace_id,
             "created_by": self.created_by,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": to_utc_iso(self.created_at) if self.created_at else None,
+            "updated_at": to_utc_iso(self.updated_at) if self.updated_at else None,
             "is_published": self.is_published,
             "published_version_id": self.published_version_id,
-            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "published_at": to_utc_iso(self.published_at) if self.published_at else None,
             "published_by": self.published_by,
         }
 
@@ -82,4 +82,4 @@ class WorkflowVersionORM(Base):
     source_version_id = Column(String(36), nullable=True)
     metadata_json = Column(JSON, default=dict)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)

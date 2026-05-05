@@ -11,6 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.time import utc_now_naive
+
 # ==================== 枚举定义 ====================
 
 
@@ -20,6 +22,8 @@ class ModelProviderType(StrEnum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
+    GITHUB = "github"
+    OLLAMA = "ollama"
     AZURE = "azure"
     LOCAL = "local"
     CUSTOM = "custom"
@@ -86,6 +90,7 @@ class ModelProviderCreate(ModelProviderBase):
     config: dict[str, Any] = Field(
         default_factory=dict, description="配置信息，如 api_key, base_url 等"
     )
+    set_as_default: bool = Field(default=False, description="是否设为当前工作空间运行默认模型")
 
 
 class ModelProviderUpdate(BaseModel):
@@ -95,6 +100,9 @@ class ModelProviderUpdate(BaseModel):
     description: str | None = None
     enabled: bool | None = None
     config: dict[str, Any] | None = None
+    set_as_default: bool | None = Field(
+        default=None, description="是否设为当前工作空间运行默认模型"
+    )
 
 
 class ModelProvider(ModelProviderBase):
@@ -103,8 +111,8 @@ class ModelProvider(ModelProviderBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     workspace_id: str
     config: dict[str, Any] = Field(default_factory=dict)  # 注意：返回时需脱敏
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
+    updated_at: datetime = Field(default_factory=utc_now_naive)
     created_by: str
 
     class Config:
@@ -134,8 +142,8 @@ class Secret(SecretBase):
     workspace_id: str
     ciphertext: str  # 加密后的密钥
     last4: str  # 最后4位，用于显示
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
+    updated_at: datetime = Field(default_factory=utc_now_naive)
     created_by: str
 
     class Config:
@@ -188,7 +196,7 @@ class ApiKey(ApiKeyBase):
     expires_at: datetime | None = None
     revoked_at: datetime | None = None
     last_used_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
     created_by: str
 
     class Config:
@@ -236,7 +244,7 @@ class AuditLog(BaseModel):
     detail: dict[str, Any] = Field(default_factory=dict)  # 详细信息
     ip_address: str | None = None
     user_agent: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
 
     class Config:
         from_attributes = True

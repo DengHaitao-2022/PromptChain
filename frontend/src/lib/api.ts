@@ -176,6 +176,30 @@ export interface WorkflowVersion {
   change_log?: string | null;
 }
 
+export interface ModelProviderSummary {
+  id: string;
+  provider: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  is_default: boolean;
+  runtime_supported: boolean;
+  config: {
+    model?: string;
+    model_name?: string;
+    base_url?: string;
+    api_key?: string;
+    [key: string]: string | number | boolean | null | undefined;
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StartWorkflowOptions {
+  modelProviderId?: string;
+  modelName?: string;
+}
+
 export interface WorkflowRunSummary {
   id: string;
   workflow_name: string;
@@ -311,16 +335,32 @@ export const workflowDefinitionApi = {
     ),
 };
 
+// 模型配置 API
+export const modelProviderApi = {
+  list: () =>
+    request<{
+      providers: ModelProviderSummary[];
+      supported_providers: string[];
+    }>('/admin/model-providers'),
+};
+
 // 工作流 API
 export const workflowApi = {
   // 启动新工作流
-  start: (userInput: string, workflowDefinitionId?: string, workflowVersionId?: string) =>
+  start: (
+    userInput: string,
+    workflowDefinitionId?: string,
+    workflowVersionId?: string,
+    options: StartWorkflowOptions = {}
+  ) =>
     request<WorkflowResponse>('/workflow/start', {
       method: 'POST',
       body: JSON.stringify({
         user_input: userInput,
         workflow_definition_id: workflowDefinitionId,
         workflow_version_id: workflowVersionId,
+        model_provider_id: options.modelProviderId,
+        model_name: options.modelName,
       }),
     }),
 

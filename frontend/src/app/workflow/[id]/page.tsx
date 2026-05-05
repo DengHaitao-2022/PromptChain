@@ -30,6 +30,7 @@ import {
     type WorkflowTrace,
     type WorkflowStatus,
 } from '@/lib/api';
+import { formatAppDateTime } from '@/lib/date-time';
 import {
     OutlineEditor,
     FactCheckViewer,
@@ -636,7 +637,7 @@ export default function WorkflowDetailPage() {
     const renderPausedStage = () => {
         const pauseInfo = workflow?.state?.pause;
         const pauseReason = pauseInfo?.reason || '手动暂停';
-        const pauseTime = pauseInfo?.paused_at ? new Date(pauseInfo.paused_at).toLocaleString() : '未知时间';
+        const pauseTime = pauseInfo?.paused_at ? formatAppDateTime(pauseInfo.paused_at, '未知时间') : '未知时间';
 
         return (
             <div className={styles.failedStage}>
@@ -898,12 +899,12 @@ export default function WorkflowDetailPage() {
                                 已暂停{' '}
                                 {workflow.state.pause.reason && `(${workflow.state.pause.reason})`}
                                 {workflow.state.pause.paused_at &&
-                                    ` 于 ${new Date(workflow.state.pause.paused_at).toLocaleString()}`}
+                                    ` 于 ${formatAppDateTime(workflow.state.pause.paused_at, '未知时间')}`}
                             </span>
                             {workflow.state.pause.resumed_at && (
                                 <span>
                                     ，恢复于{' '}
-                                    {new Date(workflow.state.pause.resumed_at).toLocaleString()}
+                                    {formatAppDateTime(workflow.state.pause.resumed_at, '未知时间')}
                                 </span>
                             )}
                         </div>
@@ -1026,10 +1027,10 @@ export default function WorkflowDetailPage() {
                                 </div>
                             </div>
                             <div className={styles.stageBody}>
-                                {workflow?.state.intent_card && (
+                                {Boolean(workflow?.state.intent_card) && (
                                     <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>意图分析</h3>
-                                        <IntentCardViewer intentCard={workflow.state.intent_card} />
+                                        <IntentCardViewer intentCard={workflow!.state.intent_card as any} />
                                     </div>
                                 )}
                                 {workflow?.state.outline && workflow.status !== 'awaiting_outline_approval' && (

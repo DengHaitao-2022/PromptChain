@@ -7,18 +7,17 @@ Self-Refine 自检修订节点
 3. 创建 Artifact 版本
 """
 
-from datetime import datetime
-
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from core.time import utc_now_naive
 from models import ArtifactType, IntentCard, LLMCallRecord, NodeRun, NodeRunStatus, OutlineSection
 from services import (
     format_workflow_error,
     get_artifact_store,
-    get_current_model_info,
-    get_llm,
-    get_structured_llm,
+    get_current_model_info_for_workspace,
+    get_llm_for_workspace,
+    get_structured_llm_for_workspace,
     invoke_with_llm_retry,
     is_llm_rate_limit_error,
 )
@@ -159,7 +158,12 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
             target_words = section.target_words
             break
 
-    llm = get_structured_llm(RefinementFeedback)
+    llm = await get_structured_llm_for_workspace(
+        RefinementFeedback,
+        state.get("workspace_id"),
+        model=state.get("model_name"),
+        model_provider_id=state.get("model_provider_id"),
+    )
     prompt = ChatPromptTemplate.from_template(FEEDBACK_PROMPT)
     chain = prompt | llm
 
@@ -184,7 +188,12 @@ async def refine_section(
     state: dict, section_id: str, original_content: str, feedback: RefinementFeedback
 ) -> str:
     """根据反馈修订章节"""
-    llm = get_llm(temperature=0.5)  # 降低温度以保持一致性
+    llm = await get_llm_for_workspace(
+        state.get("workspace_id"),
+        model=state.get("model_name"),
+        model_provider_id=state.get("model_provider_id"),
+        temperature=0.5,
+    )  # 降低温度以保持一致性
     prompt = ChatPromptTemplate.from_template(REFINE_PROMPT)
     chain = prompt | llm
 
@@ -228,7 +237,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="self_refine",
         node_type="process",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=list(state.get("section_artifact_ids", {}).values()),
     )
@@ -251,9 +260,9 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
             # Step 1: 生成反馈
             feedback_list: list[RefinementFeedback] = []
             for section_id, content in current_content.items():
-                start_time = datetime.utcnow()
+                start_time = utc_now_naive()
                 feedback = await generate_feedback(state, section_id, content)
-                end_time = datetime.utcnow()
+                end_time = utc_now_naive()
 
                 feedback_list.append(feedback)
                 feedback_artifact = await store.create_artifact(
@@ -281,7 +290,11 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 )
 
                 # 记录 LLM 调用（动态获取模型配置）
-                model_info = get_current_model_info()
+                model_info = await get_current_model_info_for_workspace(
+                    state.get("workspace_id"),
+                    model_provider_id=state.get("model_provider_id"),
+                    model=state.get("model_name"),
+                )
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],
@@ -302,11 +315,11 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
             # Step 3: 执行修订
             for feedback in sections_needing_revision:
                 section = section_lookup[feedback.section_id]
-                start_time = datetime.utcnow()
+                start_time = utc_now_naive()
                 refined_content = await refine_section(
                     state, feedback.section_id, current_content[feedback.section_id], feedback
                 )
-                end_time = datetime.utcnow()
+                end_time = utc_now_naive()
 
                 current_content[feedback.section_id] = refined_content
                 refined_section_artifact = await store.create_artifact(
@@ -331,7 +344,11 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 )
 
                 # 记录 LLM 调用（动态获取模型配置）
-                model_info = get_current_model_info()
+                model_info = await get_current_model_info_for_workspace(
+                    state.get("workspace_id"),
+                    model_provider_id=state.get("model_provider_id"),
+                    model=state.get("model_name"),
+                )
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],

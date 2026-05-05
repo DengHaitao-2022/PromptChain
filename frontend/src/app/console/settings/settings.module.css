@@ -120,6 +120,7 @@
   font-size: clamp(1.4rem, 1.15rem + 0.6vw, 2rem);
   font-weight: 700;
   line-height: 1;
+  overflow-wrap: anywhere;
 }
 
 .summaryMeta {
@@ -201,6 +202,96 @@
   color: var(--settings-text-muted);
   font-size: 12px;
   line-height: 1.6;
+}
+
+.runtimePanel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.runtimeItem {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--settings-border);
+  border-radius: 16px;
+  background: var(--settings-surface-muted);
+}
+
+.runtimeValue {
+  color: var(--settings-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  color: var(--settings-text-tertiary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--settings-border);
+  border-radius: 14px;
+  background: var(--settings-input);
+  color: var(--settings-text-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.textarea::placeholder {
+  color: var(--settings-text-muted);
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--color-brand-primary);
+  box-shadow: 0 0 0 4px var(--settings-focus-ring);
+}
+
+.checkboxGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.checkboxRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--settings-border);
+  border-radius: 12px;
+  background: var(--settings-surface-muted);
+  color: var(--settings-text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .inviteForm {
@@ -754,6 +845,10 @@
     grid-template-columns: 1fr;
   }
 
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
   .tableWrap {
     overflow-x: auto;
   }
@@ -790,6 +885,13 @@
   .heroActions,
   .actionsRow,
   .filterActions {
+    width: 100%;
+  }
+  .checkboxGrid {
+    width: 100%;
+  }
+
+  .checkboxRow {
     width: 100%;
   }
 }

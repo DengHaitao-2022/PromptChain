@@ -6,12 +6,12 @@
 
 import uuid
 from collections import defaultdict, deque
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time import to_utc_iso, utc_now_iso, utc_now_naive
 from models.workflow_definition import (
     WorkflowCompileResult,
     WorkflowDefinition,
@@ -341,7 +341,7 @@ class WorkflowDefinitionService:
             workflow.edges = [edge.model_dump() for edge in data.edges]
 
         workflow.version += 1
-        workflow.updated_at = datetime.utcnow()
+        workflow.updated_at = utc_now_naive()
 
         if restore_provenance:
             # 恢复来源需要沿当前草稿版本继续传递，避免后续发布丢失 lineage。
@@ -404,10 +404,10 @@ class WorkflowDefinitionService:
         restore_provenance = self._extract_restore_provenance(
             current_snapshot.metadata_json if current_snapshot else None
         )
-        published_at = datetime.utcnow()
+        published_at = utc_now_naive()
         publish_metadata: dict[str, Any] = {
             "event_type": "publish",
-            "published_at": published_at.isoformat(),
+            "published_at": to_utc_iso(published_at),
             "published_by": user_id,
             "published_version": workflow.version,
         }
@@ -576,17 +576,17 @@ class WorkflowDefinitionService:
         workflow.description = version.description or ""
         workflow.nodes = version.nodes or []
         workflow.edges = version.edges or []
-        restored_at = datetime.utcnow()
+        restored_at = utc_now_naive()
         restore_provenance = {
             "restored_from_version_id": version.id,
             "restored_from_version": version.version,
             "restore_source_snapshot_type": version.snapshot_type,
             "restored_by": user_id,
-            "restored_at": restored_at.isoformat(),
+            "restored_at": to_utc_iso(restored_at),
             "draft_version": workflow.version + 1,
         }
         workflow.version += 1
-        workflow.updated_at = datetime.utcnow()
+        workflow.updated_at = utc_now_naive()
         await self._ensure_snapshot(
             workflow,
             user_id=user_id,
@@ -599,7 +599,7 @@ class WorkflowDefinitionService:
                 "restored_from_version": version.version,
                 "restore_source_snapshot_type": version.snapshot_type,
                 "restored_by": user_id,
-                "restored_at": restored_at.isoformat(),
+                "restored_at": to_utc_iso(restored_at),
             },
             source_version_id=version.id,
         )
@@ -620,7 +620,7 @@ class WorkflowDefinitionService:
                 WorkflowDefinitionORM.id == workflow_id,
                 WorkflowDefinitionORM.workspace_id == workspace_id,
             )
-            .values(is_deleted=1, updated_at=datetime.utcnow())
+            .values(is_deleted=1, updated_at=utc_now_naive())
         )
         await self.session.commit()
         return result.rowcount > 0
@@ -861,7 +861,7 @@ class WorkflowDefinitionService:
             "snapshot_type": version.snapshot_type,
             "source_version_id": version.source_version_id,
             "created_by": version.created_by,
-            "created_at": version.created_at.isoformat() if version.created_at else None,
+            "created_at": to_utc_iso(version.created_at) if version.created_at else None,
             "is_current_published": version.id == published_version_id,
             "metadata": metadata,
         }
@@ -963,7 +963,7 @@ class WorkflowDefinitionService:
             )
             candidate = result.scalars().first()
 
-        backfilled_at = datetime.utcnow().isoformat()
+        backfilled_at = utc_now_iso()
         if candidate:
             metadata_payload = dict(candidate.metadata_json or {})
             events = list(metadata_payload.get("events", []))
@@ -996,7 +996,7 @@ class WorkflowDefinitionService:
                 source_version_id=candidate.id,
                 metadata_json=metadata_payload,
                 created_by=workflow.published_by or candidate.created_by or workflow.created_by,
-                created_at=workflow.published_at or datetime.utcnow(),
+                created_at=workflow.published_at or utc_now_naive(),
             )
             self.session.add(snapshot)
             workflow.published_version_id = snapshot.id
@@ -1033,7 +1033,7 @@ class WorkflowDefinitionService:
                 ],
             },
             created_by=workflow.published_by or workflow.created_by,
-            created_at=workflow.published_at or datetime.utcnow(),
+            created_at=workflow.published_at or utc_now_naive(),
         )
         self.session.add(snapshot)
         workflow.published_version_id = snapshot.id
@@ -1105,7 +1105,7 @@ class WorkflowDefinitionService:
             events.append(
                 {
                     "type": event_type,
-                    "at": datetime.utcnow().isoformat(),
+                    "at": utc_now_iso(),
                     **event,
                 }
             )

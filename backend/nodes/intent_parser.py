@@ -9,10 +9,10 @@
 
 import json
 import re
-from datetime import datetime
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from core.time import utc_now_iso, utc_now_naive
 from models import (
     ArtifactType,
     Audience,
@@ -26,8 +26,8 @@ from models import (
 )
 from services import (
     get_artifact_store,
-    get_current_model_info,
-    get_structured_llm,
+    get_current_model_info_for_workspace,
+    get_structured_llm_for_workspace,
     invoke_with_llm_retry,
 )
 
@@ -56,7 +56,7 @@ INTENT_EXTRACTION_PROMPT = """你是一个专业的内容规划助手。请根�
 
 
 def _now_iso() -> str:
-    return f"{datetime.utcnow().isoformat()}Z"
+    return utc_now_iso()
 
 
 def _serialize_questions(questions: list[Uncertainty]) -> list[dict]:
@@ -209,6 +209,9 @@ async def parse_intent(state: dict) -> dict:
     """
     user_input = state["user_input"]
     workflow_run_id = state["workflow_run_id"]
+    workspace_id = state.get("workspace_id")
+    model_provider_id = state.get("model_provider_id")
+    model_name = state.get("model_name")
     store = get_artifact_store()
 
     # 创建节点运行记录
@@ -216,26 +219,35 @@ async def parse_intent(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="parse_intent",
         node_type="process",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
     )
     await store.create_node_run(node_run)
 
     try:
         # 使用结构化输出的 LLM
-        llm = get_structured_llm(IntentCard)
+        llm = await get_structured_llm_for_workspace(
+            IntentCard,
+            workspace_id,
+            model=model_name,
+            model_provider_id=model_provider_id,
+        )
         prompt = ChatPromptTemplate.from_template(INTENT_EXTRACTION_PROMPT)
         chain = prompt | llm
 
         # 调用 LLM
-        start_time = datetime.utcnow()
+        start_time = utc_now_naive()
         intent_card: IntentCard = await invoke_with_llm_retry(
             lambda: chain.ainvoke({"user_input": user_input})
         )
-        end_time = datetime.utcnow()
+        end_time = utc_now_naive()
 
         # 记录 LLM 调用（动态获取模型配置）
-        model_info = get_current_model_info()
+        model_info = await get_current_model_info_for_workspace(
+            workspace_id,
+            model_provider_id=model_provider_id,
+            model=model_name,
+        )
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],
@@ -321,7 +333,7 @@ async def clarify_intent(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="clarify_intent",
         node_type="gate",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id for artifact_id in [state.get("intent_card_artifact_id")] if artifact_id

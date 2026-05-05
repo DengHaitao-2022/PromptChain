@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import styles from './TraceViewer.module.css';
 import type { WorkflowTrace, TimelineEvent } from '@/lib/api';
+import { formatAppTime } from '@/lib/date-time';
 
 interface TraceViewerProps {
     trace: WorkflowTrace;
@@ -25,12 +26,7 @@ export function TraceViewer({ trace, onNodeClick }: TraceViewerProps) {
 
     // 格式化时间
     const formatTime = (timestamp: string) => {
-        const date = new Date(timestamp);
-        return date.toLocaleTimeString('zh-CN', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-        });
+        return formatAppTime(timestamp);
     };
 
     // 格式化持续时间

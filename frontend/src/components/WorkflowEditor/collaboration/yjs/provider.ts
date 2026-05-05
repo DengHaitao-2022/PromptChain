@@ -6,7 +6,7 @@
 import { WebsocketProvider } from 'y-websocket';
 import { ydoc } from './ydoc';
 
-const WS_URL = process.env.NEXT_PUBLIC_YJS_WS_URL || 'ws://localhost:1234';
+const WS_URL = process.env.NEXT_PUBLIC_YJS_WS_URL || 'ws://localhost:8080';
 
 export let provider: WebsocketProvider | null = null;
 
