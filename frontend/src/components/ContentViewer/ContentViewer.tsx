@@ -18,6 +18,7 @@ interface ContentViewerProps {
     onSectionEdit?: (sectionId: string, newContent: string) => void;
     onExport?: (format: 'markdown' | 'html' | 'json') => void;
     isEditable?: boolean;
+    isStreaming?: boolean;
 }
 
 export function ContentViewer({
@@ -27,6 +28,7 @@ export function ContentViewer({
     onSectionEdit,
     onExport,
     isEditable = false,
+    isStreaming = false,
 }: ContentViewerProps) {
     const [editingSection, setEditingSection] = React.useState<string | null>(null);
     const [editContent, setEditContent] = React.useState('');
@@ -151,10 +153,19 @@ export function ContentViewer({
                                 </div>
                             </div>
                         ) : (
-                            <div className={styles.sectionContent}>
-                                {section.content.split('\n\n').map((paragraph, pIndex) => (
-                                    <p key={pIndex}>{paragraph}</p>
-                                ))}
+                            <div
+                                className={`${styles.sectionContent} ${
+                                    isStreaming && index === sections.length - 1
+                                        ? styles.streaming
+                                        : ''
+                                }`}
+                            >
+                                {section.content
+                                    .split(/\n{2,}/)
+                                    .filter((paragraph) => paragraph.trim())
+                                    .map((paragraph, pIndex) => (
+                                        <p key={pIndex}>{paragraph}</p>
+                                    ))}
                             </div>
                         )}
                     </div>

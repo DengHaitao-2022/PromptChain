@@ -125,6 +125,18 @@ export interface WorkflowTrace {
   timeline: TimelineEvent[];
 }
 
+export interface WorkflowEventSnapshot {
+  workflow: WorkflowResponse;
+  trace: WorkflowTrace;
+}
+
+export interface WorkflowEventHandlers {
+  onSnapshot?: (snapshot: WorkflowEventSnapshot) => void;
+  onDone?: (payload: { workflow_run_id?: string; status?: WorkflowStatus | string }) => void;
+  onError?: (error: Error) => void;
+  onHeartbeat?: () => void;
+}
+
 export interface TimelineEvent {
   timestamp: string;
   event: string;
@@ -370,6 +382,54 @@ export const workflowApi = {
   // 获取工作流状态
   getStatus: (workflowRunId: string) =>
     request<WorkflowResponse>(`/workflow/${workflowRunId}`),
+
+  // 打开工作流详情页 SSE 快照流
+  openEventStream: (workflowRunId: string, handlers: WorkflowEventHandlers = {}) => {
+    const source = new EventSource(apiUrl(`/workflow/${workflowRunId}/events`), {
+      withCredentials: true,
+    });
+
+    const parsePayload = <T>(event: MessageEvent<string>): T | null => {
+      try {
+        return JSON.parse(event.data) as T;
+      } catch (error) {
+        handlers.onError?.(
+          error instanceof Error ? error : new Error('SSE 数据解析失败')
+        );
+        return null;
+      }
+    };
+
+    source.addEventListener('snapshot', (event) => {
+      const snapshot = parsePayload<WorkflowEventSnapshot>(
+        event as MessageEvent<string>
+      );
+      if (snapshot) {
+        handlers.onSnapshot?.(snapshot);
+      }
+    });
+
+    source.addEventListener('done', (event) => {
+      const payload = parsePayload<{ workflow_run_id?: string; status?: WorkflowStatus | string }>(
+        event as MessageEvent<string>
+      );
+      if (payload) {
+        handlers.onDone?.(payload);
+      }
+      source.close();
+    });
+
+    source.addEventListener('heartbeat', () => {
+      handlers.onHeartbeat?.();
+    });
+
+    source.addEventListener('error', () => {
+      handlers.onError?.(new Error('工作流实时连接已断开'));
+      source.close();
+    });
+
+    return source;
+  },
 
   // 审批提纲
   approveOutline: (

@@ -29,6 +29,7 @@ import {
     type FactCheckReport,
     type WorkflowTrace,
     type WorkflowStatus,
+    type WorkflowEventSnapshot,
 } from '@/lib/api';
 import {
     OutlineEditor,
@@ -63,6 +64,13 @@ interface FinalContentEntry {
     preview: string;
     wordCount?: number;
     raw: unknown;
+}
+
+interface ContentSection {
+    id: string;
+    title: string;
+    content: string;
+    wordCount: number;
 }
 
 function getStatusMeta(status?: WorkflowStatus): StatusMeta {
@@ -179,7 +187,22 @@ function normalizeFinalContentEntries(
     });
 }
 
-function parseGeneratedContent(content: unknown): Array<{ id: string; title: string; content: string; wordCount: number }> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function asStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === 'string')
+        : [];
+}
+
+function countWords(content: string): number {
+    const compact = content.replace(/\s+/g, '');
+    return compact.length || content.length;
+}
+
+function parseGeneratedContent(content: unknown): ContentSection[] {
     if (typeof content !== 'string') return [];
 
     // 优先按 markdown 标题 ## 切分
@@ -191,7 +214,7 @@ function parseGeneratedContent(content: unknown): Array<{ id: string; title: str
             id: 'generated_body',
             title: '正文草稿',
             content: content.trim(),
-            wordCount: content.length,
+            wordCount: countWords(content),
         }];
     }
 
@@ -205,9 +228,235 @@ function parseGeneratedContent(content: unknown): Array<{ id: string; title: str
                 id: `gen_sec_${index}`,
                 title,
                 content: body,
-                wordCount: body.length,
+                wordCount: countWords(body),
             };
         });
+}
+
+function getOutlineTitleMap(outline: unknown): Record<string, string> {
+    if (!isRecord(outline) || !Array.isArray(outline.sections)) {
+        return {};
+    }
+
+    const titleMap: Record<string, string> = {};
+    const visit = (sections: unknown[]) => {
+        sections.forEach((section) => {
+            if (!isRecord(section)) {
+                return;
+            }
+            const id = typeof section.id === 'string' ? section.id : undefined;
+            const title = typeof section.title === 'string' ? section.title : undefined;
+            if (id && title) {
+                titleMap[id] = title;
+            }
+            if (Array.isArray(section.subsections)) {
+                visit(section.subsections);
+            }
+        });
+    };
+
+    visit(outline.sections);
+    return titleMap;
+}
+
+function getContentText(value: unknown): string {
+    if (typeof value === 'string') {
+        return value;
+    }
+
+    if (!isRecord(value)) {
+        return '';
+    }
+
+    for (const key of ['compiled_content', 'content', 'text', 'markdown']) {
+        if (typeof value[key] === 'string') {
+            return value[key] as string;
+        }
+    }
+
+    if (isRecord(value.sections)) {
+        return Object.entries(value.sections)
+            .map(([sectionId, sectionContent]) => {
+                const text = typeof sectionContent === 'string'
+                    ? sectionContent
+                    : JSON.stringify(sectionContent, null, 2);
+                return `## ${formatEntryLabel(sectionId)}\n${text}`;
+            })
+            .join('\n\n');
+    }
+
+    return '';
+}
+
+function getArtifactTimestamp(artifact: Record<string, unknown>): number {
+    const createdAt = typeof artifact.created_at === 'string' ? Date.parse(artifact.created_at) : NaN;
+    const version = typeof artifact.version === 'number' ? artifact.version : 0;
+    return Number.isFinite(createdAt) ? createdAt : version;
+}
+
+function getLatestArtifactByType(
+    trace: WorkflowTrace | null,
+    type: string,
+    preferredId?: unknown
+): Record<string, unknown> | null {
+    if (!trace) {
+        return null;
+    }
+
+    const artifacts = Object.values(trace.artifacts);
+    if (typeof preferredId === 'string' && trace.artifacts[preferredId]) {
+        return trace.artifacts[preferredId];
+    }
+
+    return artifacts
+        .filter((artifact) => artifact.type === type)
+        .sort((a, b) => getArtifactTimestamp(b) - getArtifactTimestamp(a))[0] ?? null;
+}
+
+function buildSectionsFromFinalArtifact(
+    artifact: Record<string, unknown> | null,
+    outline: unknown
+): ContentSection[] {
+    if (!artifact) {
+        return [];
+    }
+
+    const content = artifact.content;
+    const titleMap = getOutlineTitleMap(outline);
+    if (isRecord(content) && isRecord(content.sections)) {
+        const orderedIds = asStringArray(content.section_order);
+        const sectionIds = orderedIds.length > 0
+            ? orderedIds
+            : Object.keys(content.sections);
+
+        return sectionIds
+            .map((sectionId) => {
+                const sectionContent = content.sections[sectionId];
+                const text = typeof sectionContent === 'string'
+                    ? sectionContent
+                    : JSON.stringify(sectionContent, null, 2);
+                return {
+                    id: sectionId,
+                    title: titleMap[sectionId] ?? formatEntryLabel(sectionId),
+                    content: text,
+                    wordCount: countWords(text),
+                };
+            })
+            .filter((section) => section.content.trim());
+    }
+
+    const text = getContentText(content);
+    return parseGeneratedContent(text);
+}
+
+function buildSectionsFromSectionArtifacts(
+    trace: WorkflowTrace | null,
+    outline: unknown
+): ContentSection[] {
+    if (!trace) {
+        return [];
+    }
+
+    const titleMap = getOutlineTitleMap(outline);
+    const latestBySection = new Map<string, { section: ContentSection; timestamp: number }>();
+
+    Object.values(trace.artifacts)
+        .filter((artifact) => artifact.type === 'section_content')
+        .forEach((artifact) => {
+            const content = artifact.content;
+            if (!isRecord(content)) {
+                return;
+            }
+
+            const sectionId = typeof content.section_id === 'string'
+                ? content.section_id
+                : typeof artifact.id === 'string'
+                    ? artifact.id
+                    : '';
+            const text = typeof content.content === 'string' ? content.content : '';
+            if (!sectionId || !text.trim()) {
+                return;
+            }
+
+            const timestamp = getArtifactTimestamp(artifact);
+            const current = latestBySection.get(sectionId);
+            if (current && current.timestamp >= timestamp) {
+                return;
+            }
+
+            latestBySection.set(sectionId, {
+                timestamp,
+                section: {
+                    id: sectionId,
+                    title:
+                        typeof content.section_title === 'string'
+                            ? content.section_title
+                            : titleMap[sectionId] ?? formatEntryLabel(sectionId),
+                    content: text,
+                    wordCount: countWords(text),
+                },
+            });
+        });
+
+    const orderedIds = Object.keys(titleMap);
+    const sections = Array.from(latestBySection.values()).map((entry) => entry.section);
+
+    return sections.sort((a, b) => {
+        const aIndex = orderedIds.indexOf(a.id);
+        const bIndex = orderedIds.indexOf(b.id);
+        if (aIndex === -1 && bIndex === -1) {
+            return 0;
+        }
+        if (aIndex === -1) {
+            return 1;
+        }
+        if (bIndex === -1) {
+            return -1;
+        }
+        return aIndex - bIndex;
+    });
+}
+
+function buildContentSections(
+    workflow: WorkflowResponse | null,
+    trace: WorkflowTrace | null
+): ContentSection[] {
+    const outline = workflow?.state.outline;
+    const finalArtifactId =
+        workflow?.state.final_content_artifact_id ??
+        trace?.workflow.final_artifact_id;
+    const finalArtifact = getLatestArtifactByType(trace, 'final_content', finalArtifactId);
+    const finalSections = buildSectionsFromFinalArtifact(finalArtifact, outline);
+    if (finalSections.length > 0) {
+        return finalSections;
+    }
+
+    const sectionArtifacts = buildSectionsFromSectionArtifacts(trace, outline);
+    if (sectionArtifacts.length > 0) {
+        return sectionArtifacts;
+    }
+
+    if (workflow?.state.generated_content) {
+        return parseGeneratedContent(workflow.state.generated_content);
+    }
+
+    const finalEntries = normalizeFinalContentEntries(
+        workflow?.state.final_content as Record<string, unknown> | undefined
+    );
+    return finalEntries.map((entry) => ({
+        id: entry.key,
+        title: formatEntryLabel(entry.key),
+        content: entry.preview,
+        wordCount: entry.wordCount ?? countWords(entry.preview),
+    }));
+}
+
+function shouldUseLiveUpdates(workflow: WorkflowResponse): boolean {
+    return (
+        workflow.status === 'running' ||
+        workflow.status === 'paused' ||
+        Boolean(workflow.state.gate)
+    );
 }
 
 function formatEntryLabel(key: string): string {
@@ -246,12 +495,29 @@ export default function WorkflowDetailPage() {
     const [completedView, setCompletedView] = React.useState<'preview' | 'raw'>('preview');
 
     const pollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+    const eventSourceRef = React.useRef<EventSource | null>(null);
+    const traceSectionRef = React.useRef<HTMLDivElement | null>(null);
+    const [focusedTraceNodeId, setFocusedTraceNodeId] = React.useState<string | null>(null);
 
     const stopPolling = React.useCallback(() => {
         if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
         }
+    }, []);
+
+    const stopEventStream = React.useCallback(() => {
+        if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+        }
+    }, []);
+
+    const applyEventSnapshot = React.useCallback((snapshot: WorkflowEventSnapshot) => {
+        setWorkflow(snapshot.workflow);
+        setTrace(snapshot.trace);
+        setError(null);
+        setLoading(false);
     }, []);
 
     const startPolling = React.useCallback(() => {
@@ -279,6 +545,38 @@ export default function WorkflowDetailPage() {
         }
     }, [workflowId, stopPolling]);
 
+    const startEventStream = React.useCallback(() => {
+        if (eventSourceRef.current) {
+            return;
+        }
+
+        stopPolling();
+        const source = workflowApi.openEventStream(workflowId, {
+            onSnapshot: (snapshot) => {
+                applyEventSnapshot(snapshot);
+                if (!shouldUseLiveUpdates(snapshot.workflow)) {
+                    source.close();
+                    if (eventSourceRef.current === source) {
+                        eventSourceRef.current = null;
+                    }
+                }
+            },
+            onDone: () => {
+                if (eventSourceRef.current === source) {
+                    eventSourceRef.current = null;
+                }
+            },
+            onError: () => {
+                if (eventSourceRef.current === source) {
+                    eventSourceRef.current = null;
+                    startPolling();
+                }
+            },
+        });
+
+        eventSourceRef.current = source;
+    }, [applyEventSnapshot, startPolling, stopPolling, workflowId]);
+
     const loadWorkflow = React.useCallback(async () => {
         try {
             const [workflowResponse, traceResponse] = await Promise.all([
@@ -290,29 +588,28 @@ export default function WorkflowDetailPage() {
             setTrace(traceResponse);
             setError(null);
 
-            const isGateWaiting = Boolean(workflowResponse.state.gate);
-            const shouldPoll =
-                workflowResponse.status === 'running' ||
-                (workflowResponse.status === 'paused' && !isGateWaiting) ||
-                isGateWaiting;
-
-            if (shouldPoll) {
-                startPolling();
+            if (shouldUseLiveUpdates(workflowResponse)) {
+                startEventStream();
             } else {
+                stopEventStream();
                 stopPolling();
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : '加载失败');
+            stopEventStream();
             stopPolling();
         } finally {
             setLoading(false);
         }
-    }, [workflowId, startPolling, stopPolling]);
+    }, [workflowId, startEventStream, stopEventStream, stopPolling]);
 
     React.useEffect(() => {
         loadWorkflow();
-        return () => stopPolling();
-    }, [loadWorkflow, stopPolling]);
+        return () => {
+            stopEventStream();
+            stopPolling();
+        };
+    }, [loadWorkflow, stopEventStream, stopPolling]);
 
     React.useEffect(() => {
         if (workflow?.status !== 'completed') {
@@ -327,7 +624,9 @@ export default function WorkflowDetailPage() {
             setWorkflow(response);
             const traceResponse = await traceApi.getWorkflowTrace(workflowId);
             setTrace(traceResponse);
-            startPolling();
+            if (shouldUseLiveUpdates(response)) {
+                startEventStream();
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : '提交失败');
         } finally {
@@ -342,7 +641,9 @@ export default function WorkflowDetailPage() {
             setWorkflow(response);
             const traceResponse = await traceApi.getWorkflowTrace(workflowId);
             setTrace(traceResponse);
-            startPolling();
+            if (shouldUseLiveUpdates(response)) {
+                startEventStream();
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : '审批失败');
         } finally {
@@ -362,7 +663,9 @@ export default function WorkflowDetailPage() {
             setWorkflow(response);
             const traceResponse = await traceApi.getWorkflowTrace(workflowId);
             setTrace(traceResponse);
-            startPolling();
+            if (shouldUseLiveUpdates(response)) {
+                startEventStream();
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : '保存失败');
         } finally {
@@ -381,7 +684,9 @@ export default function WorkflowDetailPage() {
             setWorkflow(response);
             const traceResponse = await traceApi.getWorkflowTrace(workflowId);
             setTrace(traceResponse);
-            startPolling();
+            if (shouldUseLiveUpdates(response)) {
+                startEventStream();
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : '重新生成失败');
         } finally {
@@ -403,7 +708,9 @@ export default function WorkflowDetailPage() {
             setWorkflow(response);
             const traceResponse = await traceApi.getWorkflowTrace(workflowId);
             setTrace(traceResponse);
-            startPolling();
+            if (shouldUseLiveUpdates(response)) {
+                startEventStream();
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : '事实核查审批失败');
         } finally {
@@ -541,6 +848,29 @@ export default function WorkflowDetailPage() {
     )?.id;
     const currentStepLabel = steps.find((step) => step.id === currentStep)?.label;
     const statusMeta = getStatusMeta(workflow?.status);
+    const contentSections = React.useMemo(
+        () => buildContentSections(workflow, trace),
+        [workflow, trace]
+    );
+    const isContentStreaming =
+        Boolean(contentSections.length) &&
+        workflow?.status === 'running' &&
+        currentStep !== undefined &&
+        ['generate_content', 'self_refine', 'check_facts', 'finalize'].includes(currentStep);
+
+    const handleStepClick = React.useCallback((stepId: string) => {
+        const node = trace?.nodes.find((item) => (
+            item.node_name === stepId ||
+            item.name === stepId ||
+            item.node === stepId ||
+            item.id === stepId
+        ));
+        const nodeId = typeof node?.id === 'string' ? node.id : null;
+        if (nodeId) {
+            setFocusedTraceNodeId(nodeId);
+        }
+        traceSectionRef.current?.scrollIntoView({ block: 'start' });
+    }, [trace]);
 
     const buildStageMetrics = (): StageMetric[] => {
         if (!workflow) {
@@ -576,16 +906,13 @@ export default function WorkflowDetailPage() {
         }
 
         if (status === 'completed') {
-            const finalEntries = normalizeFinalContentEntries(
-                state.final_content as Record<string, unknown> | undefined
-            );
-            const totalWords = finalEntries.reduce(
+            const totalWords = contentSections.reduce(
                 (sum, entry) => sum + (entry.wordCount ?? 0),
                 0
             );
 
             return [
-                { label: '交付块数', value: formatCount(finalEntries.length), tone: 'success' },
+                { label: '交付块数', value: formatCount(contentSections.length), tone: 'success' },
                 { label: '累计字数', value: formatCount(totalWords || undefined), tone: 'brand' },
             ];
         }
@@ -667,6 +994,9 @@ export default function WorkflowDetailPage() {
                                 ]);
                                 setWorkflow(workflowResponse);
                                 setTrace(traceResponse);
+                                if (shouldUseLiveUpdates(workflowResponse)) {
+                                    startEventStream();
+                                }
                             } catch (err) {
                                 setError(err instanceof Error ? err.message : '恢复失败');
                             } finally {
@@ -706,8 +1036,13 @@ export default function WorkflowDetailPage() {
     );
 
     const renderCompletedStage = () => {
-            const rawFinalContent = workflow?.state.final_content as Record<string, unknown> | undefined;
-        const finalEntries = normalizeFinalContentEntries(rawFinalContent);
+        const finalArtifact = getLatestArtifactByType(
+            trace,
+            'final_content',
+            workflow?.state.final_content_artifact_id ?? trace?.workflow.final_artifact_id
+        );
+        const rawFinalContent = finalArtifact?.content ?? workflow?.state.final_content ?? {};
+        const finalEntries = contentSections;
 
         return (
             <div className={styles.completedStage}>
@@ -757,13 +1092,13 @@ export default function WorkflowDetailPage() {
                     <div className={styles.previewGrid}>
                         {finalEntries.length > 0 ? (
                             finalEntries.map((entry) => (
-                                <article key={entry.key} className={styles.previewCard}>
+                                <article key={entry.id} className={styles.previewCard}>
                                     <div className={styles.previewCardHeader}>
                                         <div>
                                             <p className={styles.previewLabel}>
-                                                {formatEntryLabel(entry.key)}
+                                                {entry.title}
                                             </p>
-                                            {typeof entry.wordCount === 'number' && (
+                                            {entry.wordCount > 0 && (
                                                 <span className={styles.previewMeta}>
                                                     {entry.wordCount} 字
                                                 </span>
@@ -774,7 +1109,7 @@ export default function WorkflowDetailPage() {
                                             aria-hidden="true"
                                         />
                                     </div>
-                                    <p className={styles.previewText}>{entry.preview}</p>
+                                    <p className={styles.previewText}>{entry.content}</p>
                                 </article>
                             ))
                         ) : (
@@ -929,6 +1264,9 @@ export default function WorkflowDetailPage() {
                                         ]);
                                         setWorkflow(workflowResponse);
                                         setTrace(traceResponse);
+                                        if (shouldUseLiveUpdates(workflowResponse)) {
+                                            startEventStream();
+                                        }
                                     } catch (err) {
                                         setError(
                                             err instanceof Error ? err.message : '操作失败'
@@ -960,7 +1298,11 @@ export default function WorkflowDetailPage() {
 
             <div className={styles.mainContent}>
                 <aside className={styles.sidebar}>
-                    <WorkflowProgress steps={steps} currentStep={currentStep} />
+                    <WorkflowProgress
+                        steps={steps}
+                        currentStep={currentStep}
+                        onStepClick={handleStepClick}
+                    />
                 </aside>
 
                 <main className={styles.stageColumn}>
@@ -1017,7 +1359,7 @@ export default function WorkflowDetailPage() {
                         <div className={styles.stageBody}>{renderCurrentStage()}</div>
                     </section>
 
-                    {(workflow?.state.intent_card || workflow?.state.outline || workflow?.state.generated_content || workflow?.state.final_content || trace) && (
+                    {(workflow?.state.intent_card || workflow?.state.outline || contentSections.length > 0 || trace) && (
                         <section className={styles.stageShell} style={{ marginTop: '2rem' }}>
                             <div className={styles.stageHeader}>
                                 <div className={styles.stageHeaderMain}>
@@ -1045,29 +1387,25 @@ export default function WorkflowDetailPage() {
                                         />
                                     </div>
                                 )}
-                                {(workflow?.state.generated_content || workflow?.state.final_content) && (
+                                {contentSections.length > 0 && (
                                     <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成内容</h3>
                                         <ContentViewer
                                             title={workflow.state.outline?.title || '生成内容'}
                                             abstract={workflow.state.outline?.abstract || ''}
-                                            sections={
-                                                workflow.state.final_content
-                                                    ? normalizeFinalContentEntries(workflow.state.final_content as Record<string, unknown>).map(entry => ({
-                                                        id: entry.key,
-                                                        title: formatEntryLabel(entry.key),
-                                                        content: entry.preview,
-                                                        wordCount: entry.wordCount || 0,
-                                                    }))
-                                                    : parseGeneratedContent(workflow.state.generated_content)
-                                            }
+                                            sections={contentSections}
+                                            isStreaming={isContentStreaming}
                                         />
                                     </div>
                                 )}
                                 {trace && (
-                                    <div className={styles.contentBlock}>
+                                    <div ref={traceSectionRef} className={styles.contentBlock}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>执行追踪</h3>
-                                        <TraceViewer trace={trace} />
+                                        <TraceViewer
+                                            trace={trace}
+                                            focusedNodeId={focusedTraceNodeId}
+                                            onNodeClick={setFocusedTraceNodeId}
+                                        />
                                     </div>
                                 )}
                             </div>
