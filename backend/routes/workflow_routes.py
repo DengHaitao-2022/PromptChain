@@ -4,9 +4,12 @@
 提供工作流的启动、暂停、恢复、审批、重跑等接口
 """
 
+import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 import routes.workflow_helpers as workflow_helpers
 from db.postgres_store import get_postgres_store
@@ -30,6 +33,7 @@ from routes.workflow_helpers import (
     _is_admin_role,
     _load_runtime_context,
     _normalize_status,
+    _normalize_trace_payload,
     _now_iso,
     _simplify_state,
 )
@@ -39,6 +43,41 @@ from services.audit_log_service import AuditLogService
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 logger = logging.getLogger(__name__)
 INTERNAL_SERVER_ERROR = "Internal server error"
+
+
+def _format_sse_event(event: str, data: dict, event_id: str | None = None) -> str:
+    """把 Python 字典编码为标准 SSE 事件，保留中文内容不转义。"""
+    lines = [f"event: {event}"]
+    if event_id:
+        lines.append(f"id: {event_id}")
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    for line in payload.splitlines() or [""]:
+        lines.append(f"data: {line}")
+    return "\n".join(lines) + "\n\n"
+
+
+async def _build_workflow_event_snapshot(workflow_run_id: str) -> dict:
+    """构建详情页 SSE 快照，包含运行状态和完整 trace/artifacts。"""
+    from services import get_trace_service
+
+    _, _, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+    workflow_response = _build_workflow_response(
+        workflow_run_id=workflow_run_id,
+        status=status,
+        state=graph_state,
+        workflow_run=workflow_run,
+    )
+    trace = await get_trace_service().get_workflow_trace(workflow_run_id)
+
+    return {
+        "workflow": workflow_response.model_dump(mode="json"),
+        "trace": _normalize_trace_payload(
+            trace,
+            workflow_run=workflow_run,
+            graph_state=graph_state,
+            status=status,
+        ),
+    }
 
 
 def _workflow_run_snapshot(workflow_run) -> dict:
@@ -452,6 +491,74 @@ async def list_workflow_runs(request: Request):
     except Exception as exc:
         logger.exception("获取工作流运行列表失败")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+
+
+@router.get("/{workflow_run_id}/events")
+async def stream_workflow_events(workflow_run_id: str, request: Request):
+    """通过 SSE 向详情页推送运行状态和 trace 快照。"""
+    await workflow_helpers.require_workflow_run_access(request, workflow_run_id)
+
+    async def event_stream():
+        last_payload_signature: str | None = None
+        event_index = 0
+        heartbeat_ticks = 0
+
+        while not await request.is_disconnected():
+            try:
+                snapshot = await _build_workflow_event_snapshot(workflow_run_id)
+            except HTTPException as exc:
+                yield _format_sse_event(
+                    "error",
+                    {"detail": exc.detail, "status_code": exc.status_code},
+                )
+                break
+            except Exception:
+                logger.exception("工作流 SSE 快照生成失败: workflow_run_id=%s", workflow_run_id)
+                yield _format_sse_event(
+                    "error",
+                    {"detail": INTERNAL_SERVER_ERROR},
+                )
+                break
+
+            signature = json.dumps(snapshot, sort_keys=True, default=str)
+            if signature != last_payload_signature:
+                event_index += 1
+                heartbeat_ticks = 0
+                last_payload_signature = signature
+                yield _format_sse_event("snapshot", snapshot, event_id=str(event_index))
+            else:
+                heartbeat_ticks += 1
+                if heartbeat_ticks >= 10:
+                    heartbeat_ticks = 0
+                    yield _format_sse_event(
+                        "heartbeat",
+                        {"workflow_run_id": workflow_run_id},
+                        event_id=f"{event_index}:heartbeat",
+                    )
+
+            workflow_payload = snapshot.get("workflow", {})
+            if workflow_payload.get("status") in {"completed", "failed"}:
+                yield _format_sse_event(
+                    "done",
+                    {
+                        "workflow_run_id": workflow_run_id,
+                        "status": workflow_payload.get("status"),
+                    },
+                    event_id=f"{event_index}:done",
+                )
+                break
+
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{workflow_run_id}", response_model=WorkflowResponse)
