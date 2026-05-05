@@ -26,6 +26,7 @@ import { ConflictHintToast } from './collaboration/components/ConflictHintToast'
 import { getDefaultLabel } from './domain/schema';
 import { WORKFLOW_NODE_CARD_HEIGHT, WORKFLOW_NODE_CARD_WIDTH } from './domain/nodePresentation';
 import { registry } from './registry';
+import { formatAppDateTime } from '@/lib/date-time';
 import styles from './WorkflowEditor.module.css';
 import type { WorkflowEditorProps } from './index';
 
@@ -57,13 +58,16 @@ const readOnly = useWorkflowContext(selectReadOnly);
         actionState?.isSaving || actionState?.isValidating || actionState?.isPublishing,
     );
 
-    const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-        actions.setSelectedNode(node);
-    }, [actions]);
-
-    const onPaneClick = useCallback(() => {
-        actions.setSelectedNode(null);
-    }, [actions]);
+    const onSelectionChange = useCallback(
+        ({ nodes: selectedNodes }: { nodes: Node[]; edges: Edge[] }) => {
+            if (selectedNodes.length === 1) {
+                actions.setSelectedNode(selectedNodes[0]);
+            } else {
+                actions.setSelectedNode(null);
+            }
+        },
+        [actions]
+    );
 
     const onNodeConfigChange = useCallback(
         (nodeId: string, newData: Record<string, unknown>) => {
@@ -241,8 +245,7 @@ const readOnly = useWorkflowContext(selectReadOnly);
                         onNodesChange={readOnly ? undefined : actions.onNodesChange}
                         onEdgesChange={readOnly ? undefined : actions.onEdgesChange}
                         onConnect={readOnly ? undefined : actions.onConnect}
-                        onNodeClick={onNodeClick}
-                        onPaneClick={onPaneClick}
+                        onSelectionChange={onSelectionChange}
                         onDrop={readOnly ? undefined : onDrop}
                         onDragOver={readOnly ? undefined : onDragOver}
                         nodeTypes={nodeTypes}
@@ -274,18 +277,18 @@ const readOnly = useWorkflowContext(selectReadOnly);
                         <RemoteSelectionHighlight provider={yjsProvider} />
                         <CanvasToolbar />
                     </ReactFlow>
-                </div>
 
-                {selectedNode ? (
-                    <div style={{ position: 'absolute', right: 24, top: 24, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
-                        <ConflictHintToast provider={yjsProvider} />
-                        <PropertiesPanel
-                            node={selectedNode}
-                            onClose={() => actions.setSelectedNode(null)}
-                            onChange={onNodeConfigChange}
-                        />
-                    </div>
-                ) : null}
+                    {selectedNode ? (
+                        <div style={{ position: 'absolute', right: 24, top: 24, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+                            <ConflictHintToast provider={yjsProvider} />
+                            <PropertiesPanel
+                                node={selectedNode}
+                                onClose={() => actions.setSelectedNode(null)}
+                                onChange={onNodeConfigChange}
+                            />
+                        </div>
+                    ) : null}
+                </div>
             </div>
         </div>
     );
@@ -406,16 +409,5 @@ function getMiniMapNodeStrokeColor(type?: string): string {
 }
 
 function formatDateTime(value: string): string {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-        return value;
-    }
-
-    return new Intl.DateTimeFormat('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-    }).format(date);
+    return formatAppDateTime(value, value);
 }

@@ -7,9 +7,9 @@
 3. 下游节点自动继承新版本输入
 """
 
-from datetime import UTC, datetime
 from typing import Any
 
+from core.time import utc_now_iso
 from models import ArtifactType, WorkflowRun, WorkflowRunStatus
 from services.artifact_store import ArtifactStore, get_artifact_store
 from services.trace_service import TraceService, get_trace_service
@@ -132,7 +132,7 @@ class RerunService:
                 "original_workflow_run_id": original_workflow_run_id,
                 "rerun_from_node": from_node,
                 "rerun_reason": reason,
-                "rerun_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "rerun_at": utc_now_iso(),
             },
         )
 

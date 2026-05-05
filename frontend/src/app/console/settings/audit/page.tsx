@@ -8,6 +8,7 @@ import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } f
 import { ChevronLeft, ChevronRight, RefreshCw, RotateCcw, Search, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { auditLogApi, type AuditLogEntry } from '@/lib/api';
+import { appDateTimeInputToUtcIsoString, formatAppDateTime } from '@/lib/date-time';
 import styles from '../settings.module.css';
 
 const PAGE_SIZE = 20;

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import styles from './TraceViewer.module.css';
 import type { WorkflowTrace, TimelineEvent } from '@/lib/api';
+import { formatAppTime } from '@/lib/date-time';
 
 interface TraceViewerProps {
     trace: WorkflowTrace;
@@ -40,6 +41,10 @@ function asNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+    // 格式化时间
+    const formatTime = (timestamp: string) => {
+        return formatAppTime(timestamp);
+    };
 function formatTime(timestamp: unknown): string {
     if (typeof timestamp !== 'string' || !timestamp) {
         return '-';

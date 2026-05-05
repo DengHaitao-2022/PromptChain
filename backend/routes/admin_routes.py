@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, desc, func
 from sqlalchemy.future import select
 
+from core.time import app_day_start_as_utc_naive, utc_now_naive
 from db.postgres_store import get_postgres_store
 from models.admin_models import (
     ApiKeyCreate,
@@ -212,7 +213,7 @@ async def get_dashboard(request: Request):
         from db.postgres_store import WorkflowRunORM
         from models.artifact import WorkflowRunStatus
 
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = app_day_start_as_utc_naive()
         workspace_filter = WorkflowRunORM.metadata_json["workspace_id"].as_string() == workspace_id
 
         # 今日运行次数
@@ -849,7 +850,7 @@ async def create_api_key(request: Request, body: ApiKeyCreate):
 
         expires_at = None
         if body.expires_in_days:
-            expires_at = datetime.utcnow() + timedelta(days=body.expires_in_days)
+            expires_at = utc_now_naive() + timedelta(days=body.expires_in_days)
 
         api_key = ApiKeyORM(
             id=str(uuid.uuid4()),
@@ -919,7 +920,7 @@ async def revoke_api_key(request: Request, key_id: str):
         if not api_key:
             raise HTTPException(status_code=404, detail="API Key 不存在")
 
-        api_key.revoked_at = datetime.utcnow()
+        api_key.revoked_at = utc_now_naive()
 
         await log_audit(
             session,

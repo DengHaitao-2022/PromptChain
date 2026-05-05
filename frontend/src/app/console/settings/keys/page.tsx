@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { KeyRound, LockKeyhole, Plus, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiUrl } from '@/lib/api-config';
+import { formatAppDate } from '@/lib/date-time';
 import styles from '../settings.module.css';
 
 interface Secret {
@@ -194,7 +195,7 @@ export default function KeysPage() {
                   <div className={styles.moduleMetaRow}>
                     <span className={`${styles.pill} ${styles.neutral}`}>***{secret.last4}</span>
                     <span className={`${styles.pill} ${styles.info}`}>
-                      创建于 {new Date(secret.created_at).toLocaleDateString('zh-CN')}
+                      创建于 {formatAppDate(secret.created_at)}
                     </span>
                   </div>
                 </div>
@@ -247,14 +248,14 @@ export default function KeysPage() {
                   </div>
                   <div className={styles.moduleDescription}>
                     前缀：{key.key_prefix}
-                    {key.expires_at ? `，到期时间 ${new Date(key.expires_at).toLocaleDateString('zh-CN')}` : '，未设置自动过期'}
+                    {key.expires_at ? `，到期时间 ${formatAppDate(key.expires_at)}` : '，未设置自动过期'}
                   </div>
                   <div className={styles.moduleMetaRow}>
                     <span className={`${styles.pill} ${styles.info}`}>
                       权限：{key.scopes.length > 0 ? key.scopes.join(' / ') : '未标注'}
                     </span>
                     <span className={`${styles.pill} ${styles.neutral}`}>
-                      创建于 {new Date(key.created_at).toLocaleDateString('zh-CN')}
+                      创建于 {formatAppDate(key.created_at)}
                     </span>
                   </div>
                 </div>

@@ -9,10 +9,10 @@
 
 import json
 import re
-from datetime import datetime
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from core.time import utc_now_iso, utc_now_naive
 from models import (
     ArtifactType,
     Audience,
@@ -56,7 +56,7 @@ INTENT_EXTRACTION_PROMPT = """你是一个专业的内容规划助手。请根�
 
 
 def _now_iso() -> str:
-    return f"{datetime.utcnow().isoformat()}Z"
+    return utc_now_iso()
 
 
 def _serialize_questions(questions: list[Uncertainty]) -> list[dict]:
@@ -219,7 +219,7 @@ async def parse_intent(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="parse_intent",
         node_type="process",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
     )
     await store.create_node_run(node_run)
@@ -236,11 +236,11 @@ async def parse_intent(state: dict) -> dict:
         chain = prompt | llm
 
         # 调用 LLM
-        start_time = datetime.utcnow()
+        start_time = utc_now_naive()
         intent_card: IntentCard = await invoke_with_llm_retry(
             lambda: chain.ainvoke({"user_input": user_input})
         )
-        end_time = datetime.utcnow()
+        end_time = utc_now_naive()
 
         # 记录 LLM 调用（动态获取模型配置）
         model_info = await get_current_model_info_for_workspace(
@@ -333,7 +333,7 @@ async def clarify_intent(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="clarify_intent",
         node_type="gate",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id for artifact_id in [state.get("intent_card_artifact_id")] if artifact_id

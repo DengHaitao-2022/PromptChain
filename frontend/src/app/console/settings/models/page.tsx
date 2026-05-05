@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bot, CheckCircle2, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiUrl } from '@/lib/api-config';
+import { formatAppDate } from '@/lib/date-time';
 import styles from '../settings.module.css';
 
 type ProviderType = 'openai' | 'anthropic' | 'google' | 'github' | 'ollama';

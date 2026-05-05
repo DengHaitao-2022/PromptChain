@@ -10,7 +10,7 @@ import os
 import re
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -19,6 +19,7 @@ from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from core.time import utc_now_naive
 from models.auth_orm import EmailVerificationTokenORM, PasswordResetTokenORM
 
 # ==================== 配置 ====================
@@ -135,7 +136,7 @@ class EmailService:
         """
         # 生成验证 Token
         token, token_hash = generate_email_token()
-        expires_at = datetime.now(UTC) + timedelta(hours=EMAIL_VERIFICATION_EXPIRE_HOURS)
+        expires_at = utc_now_naive() + timedelta(hours=EMAIL_VERIFICATION_EXPIRE_HOURS)
 
         # 保存到数据库
         token_orm = EmailVerificationTokenORM(
@@ -192,7 +193,7 @@ class EmailService:
         """
         # 生成重置 Token
         token, token_hash = generate_email_token()
-        expires_at = datetime.now(UTC) + timedelta(hours=PASSWORD_RESET_EXPIRE_HOURS)
+        expires_at = utc_now_naive() + timedelta(hours=PASSWORD_RESET_EXPIRE_HOURS)
 
         # 保存到数据库
         token_orm = PasswordResetTokenORM(
@@ -253,7 +254,7 @@ class EmailService:
                 and_(
                     EmailVerificationTokenORM.token_hash == token_hash,
                     EmailVerificationTokenORM.used_at.is_(None),
-                    EmailVerificationTokenORM.expires_at > datetime.now(UTC),
+                    EmailVerificationTokenORM.expires_at > utc_now_naive(),
                 )
             )
         )
@@ -263,7 +264,7 @@ class EmailService:
             return None
 
         # 标记为已使用
-        token_orm.used_at = datetime.now(UTC)
+        token_orm.used_at = utc_now_naive()
         await self.session.commit()
 
         return token_orm.user_id
@@ -285,7 +286,7 @@ class EmailService:
                 and_(
                     PasswordResetTokenORM.token_hash == token_hash,
                     PasswordResetTokenORM.used_at.is_(None),
-                    PasswordResetTokenORM.expires_at > datetime.now(UTC),
+                    PasswordResetTokenORM.expires_at > utc_now_naive(),
                 )
             )
         )
@@ -295,7 +296,7 @@ class EmailService:
             return None
 
         # 标记为已使用
-        token_orm.used_at = datetime.now(UTC)
+        token_orm.used_at = utc_now_naive()
         await self.session.commit()
 
         return token_orm.user_id

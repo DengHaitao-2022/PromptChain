@@ -7,10 +7,9 @@
 3. 创建 Artifact 版本
 """
 
-from datetime import datetime
-
 from langchain_core.prompts import ChatPromptTemplate
 
+from core.time import utc_now_naive
 from models import (
     ArtifactType,
     IntentCard,
@@ -137,7 +136,7 @@ async def generate_all_sections(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="generate_content",
         node_type="process",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id
@@ -160,9 +159,9 @@ async def generate_all_sections(state: dict) -> dict:
 
         for index, section in enumerate(flat_sections):
             # 生成章节内容
-            start_time = datetime.utcnow()
+            start_time = utc_now_naive()
             content = await generate_section(state, section, previous_content)
-            end_time = datetime.utcnow()
+            end_time = utc_now_naive()
 
             generated_sections[section.id] = content
 
@@ -258,7 +257,7 @@ async def regenerate_section(state: dict) -> dict:
         workflow_run_id=workflow_run_id,
         node_name="regenerate_section",
         node_type="process",
-        started_at=datetime.utcnow(),
+        started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
             artifact_id
@@ -282,9 +281,9 @@ async def regenerate_section(state: dict) -> dict:
                 previous_content += f"\n\n## {section.title}\n{draft_sections[section.id]}"
 
         # 重新生成
-        start_time = datetime.utcnow()
+        start_time = utc_now_naive()
         new_content = await generate_section(state, target_section, previous_content)
-        end_time = datetime.utcnow()
+        end_time = utc_now_naive()
 
         # 更新
         draft_sections[section_id] = new_content

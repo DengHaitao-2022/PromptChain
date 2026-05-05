@@ -18,6 +18,7 @@ import {
   useWorkflowApi,
   type WorkflowDefinition,
 } from '@/components/WorkflowEditor/hooks/useWorkflowApi';
+import { formatAppDateTime } from '@/lib/date-time';
 import styles from './workflows.module.css';
 
 interface SummaryItem {
@@ -25,25 +26,6 @@ interface SummaryItem {
   label: string;
   value: string;
   tone: 'neutral' | 'success' | 'warning';
-}
-
-function formatDateTime(value?: string): string {
-  if (!value) {
-    return '暂无记录';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
 }
 
 function capitalize(value: string) {
@@ -253,11 +235,11 @@ export default function WorkflowsPage() {
               <dl className={styles.metaList}>
                 <div className={styles.metaItem}>
                   <dt>最近更新时间</dt>
-                  <dd>{formatDateTime(workflow.updated_at)}</dd>
+                  <dd>{formatAppDateTime(workflow.updated_at)}</dd>
                 </div>
                 <div className={styles.metaItem}>
                   <dt>最近发布时间</dt>
-                  <dd>{workflow.published_at ? formatDateTime(workflow.published_at) : '尚未发布'}</dd>
+                  <dd>{workflow.published_at ? formatAppDateTime(workflow.published_at) : '尚未发布'}</dd>
                 </div>
               </dl>
 

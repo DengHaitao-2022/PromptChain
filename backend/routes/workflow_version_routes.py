@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from core.time import to_utc_iso
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
 from models.auth_models import MemberRole
@@ -110,7 +111,7 @@ async def list_versions(
                 "current_version": current_version,
                 "is_published": bool(workflow.is_published),
                 "published_version_id": workflow.published_version_id,
-                "published_at": workflow.published_at.isoformat()
+                "published_at": to_utc_iso(workflow.published_at)
                 if workflow.published_at
                 else None,
                 "versions": [
@@ -142,7 +143,7 @@ async def list_public_versions(
                 "current_version": published_snapshot.version,
                 "is_published": True,
                 "published_version_id": workflow.published_version_id,
-                "published_at": workflow.published_at.isoformat()
+                "published_at": to_utc_iso(workflow.published_at)
                 if workflow.published_at
                 else None,
                 "versions": [
