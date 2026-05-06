@@ -99,7 +99,11 @@
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
   width: 280px;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   padding: 24px 18px;
@@ -107,6 +111,8 @@
   background: var(--console-sidebar-bg);
   box-shadow: inset -1px 0 0 var(--console-inset-line);
   backdrop-filter: blur(24px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebarHeader {
