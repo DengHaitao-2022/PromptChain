@@ -558,6 +558,65 @@
   gap: 8px;
 }
 
+.testPanel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--settings-border);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.testHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.testTitle {
+  color: var(--settings-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.testSteps {
+  display: grid;
+  gap: 10px;
+}
+
+.testStep {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.testStepBody {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.testStepTitle {
+  color: var(--settings-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.testStepMessage,
+.testStepMeta {
+  color: var(--settings-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.testStepMeta {
+  color: var(--settings-text-muted);
+}
+
 .actionPanel {
   display: grid;
   gap: 10px;
@@ -894,4 +953,74 @@
   .checkboxRow {
     width: 100%;
   }
+}
+
+/* Dialog / Sidebar Drawer styles */
+.dialogOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  animation: fadeIn 150ms ease;
+  z-index: 100;
+}
+
+.dialogContent {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 90%;
+  max-width: 480px;
+  background: var(--pc-semantic-bg-elevated, var(--color-bg-elevated, #0b1624));
+  border-left: 1px solid var(--settings-border);
+  animation: slideLeft 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--pc-semantic-shadow-lg, -10px 0 40px rgba(0, 0, 0, 0.8));
+}
+
+.dialogHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px 24px 20px;
+  border-bottom: 1px solid var(--settings-border);
+  flex-shrink: 0;
+}
+
+.dialogBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.dialogTitle {
+  margin: 0;
+  color: var(--settings-text-primary);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.dialogDescription {
+  margin: 0;
+  color: var(--settings-text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.dialogFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--settings-border);
+  flex-shrink: 0;
+  background: var(--pc-semantic-bg-elevated, var(--color-bg-elevated, #0b1624));
+}
+
+@keyframes slideLeft {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }

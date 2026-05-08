@@ -16,6 +16,7 @@ from .admin_models import (
     DashboardStats,
     ModelProvider,
     ModelProviderCreate,
+    ModelProviderTestRequest,
     ModelProviderType,
     ModelProviderUpdate,
     Secret,
@@ -104,6 +105,7 @@ __all__ = [
     # admin_models
     "ModelProvider",
     "ModelProviderCreate",
+    "ModelProviderTestRequest",
     "ModelProviderUpdate",
     "ModelProviderType",
     "Secret",
