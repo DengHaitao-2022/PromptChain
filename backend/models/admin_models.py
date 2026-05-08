@@ -105,6 +105,13 @@ class ModelProviderUpdate(BaseModel):
     )
 
 
+class ModelProviderTestRequest(BaseModel):
+    """模型供应商连通性测试请求"""
+
+    model: str | None = Field(default=None, max_length=256, description="可选的短 Prompt 测试模型")
+    prompt: str | None = Field(default=None, max_length=500, description="可选的短 Prompt 内容")
+
+
 class ModelProvider(ModelProviderBase):
     """模型供应商完整模型"""
 

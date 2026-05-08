@@ -21,6 +21,7 @@ from models.admin_models import (
     ApiKeyCreate,
     AuditAction,
     ModelProviderCreate,
+    ModelProviderTestRequest,
     ModelProviderUpdate,
     SecretCreate,
 )
@@ -33,6 +34,7 @@ from services.llm_provider import (
     LLMProviderFactory,
     get_current_model_info_for_workspace,
 )
+from services.model_provider_tester import test_model_provider
 from services.permission_service import (
     PermissionService,
     resolve_membership_role,
@@ -609,6 +611,48 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
             "message": "模型供应商配置已更新",
             "provider": _model_provider_to_response(provider),
         }
+
+
+@router.post("/admin/model-providers/{provider_id}/test")
+async def test_model_provider_config(
+    request: Request,
+    provider_id: str,
+    body: ModelProviderTestRequest,
+):
+    """测试模型供应商配置，按静态校验、连通性、凭证、模型列表和短 Prompt 分步返回。"""
+    payload = await get_current_user(request)
+    user_id = payload["sub"]
+    workspace_id = await get_workspace_id_from_request(request)
+
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        permission_service = PermissionService(session)
+        # 测试会使用已保存密钥并可能产生模型调用费用，因此要求具备更新权限。
+        await permission_service.require_permission(
+            user_id,
+            workspace_id,
+            "model_provider",
+            "update",
+        )
+
+        result = await session.execute(
+            select(ModelProviderORM).where(
+                and_(
+                    ModelProviderORM.id == provider_id,
+                    ModelProviderORM.workspace_id == workspace_id,
+                )
+            )
+        )
+        provider = result.scalar_one_or_none()
+
+        if not provider:
+            raise HTTPException(status_code=404, detail="模型供应商配置不存在")
+
+        return await test_model_provider(
+            provider,
+            selected_model=body.model,
+            prompt=body.prompt,
+        )
 
 
 @router.delete("/admin/model-providers/{provider_id}")
