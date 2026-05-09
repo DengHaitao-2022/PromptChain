@@ -1,0 +1,1757 @@
+openapi: 3.1.0
+info:
+  title: PromptChain API Contract
+  version: 1.0.0
+  description: |
+    PromptChain 统一接口规范（v1）。
+
+    本规范作为前后端联调与后续开发的唯一事实源（SSOT）。
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+tags:
+  - name: Health
+  - name: Workflow
+  - name: Trace
+  - name: Artifact
+  - name: WorkflowDefinition
+  - name: WorkflowVersion
+  - name: Auth
+  - name: Workspace
+
+x-websocket-endpoints:
+  - path: /ws/workflow/{workflow_run_id}
+    description: 推送工作流节点状态和运行状态事件
+  - path: /ws/user/{user_id}
+    description: 推送用户审批通知事件
+
+paths:
+  /:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/workflow/start:
+    post:
+      tags: [Workflow]
+      summary: 启动工作流
+      operationId: startWorkflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartWorkflowRequest'
+      responses:
+        '200':
+          description: Workflow started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResponse'
+              examples:
+                started:
+                  value:
+                    workflow_run_id: wf_123
+                    status: running
+                    state:
+                      user_input: 写一篇关于 AI Agent 架构的文章
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workflow/{workflow_run_id}:
+    get:
+      tags: [Workflow]
+      summary: 获取工作流状态（统一契约）
+      operationId: getWorkflowStatus
+      parameters:
+        - $ref: '#/components/parameters/WorkflowRunId'
+      responses:
+        '200':
+          description: Workflow status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResponse'
+              examples:
+                needs_clarification:
+                  value:
+                    workflow_run_id: wf_123
+                    status: needs_clarification
+                    state:
+                      clarification_questions:
+                        - field: audience
+                          question: 目标读者是谁？
+                          priority: high
+                          default_assumption: 通用读者
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workflow/{workflow_run_id}/clarify:
+    post:
+      tags: [Workflow]
+      summary: 提交澄清回答
+      operationId: clarifyWorkflow
+      parameters:
+        - $ref: '#/components/parameters/WorkflowRunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClarifyRequest'
+      responses:
+        '200':
+          description: Workflow resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workflow/{workflow_run_id}/approve-outline:
+    post:
+      tags: [Workflow]
+      summary: 审批提纲
+      operationId: approveOutline
+      parameters:
+        - $ref: '#/components/parameters/WorkflowRunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveOutlineRequest'
+      responses:
+        '200':
+          description: Workflow resumed after outline approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workflow/{workflow_run_id}/approve-fact-check:
+    post:
+      tags: [Workflow]
+      summary: 审批事实核查高风险项
+      description: |
+        用于处理 `awaiting_fact_check_approval` 阶段的人工确认。
+      operationId: approveFactCheck
+      parameters:
+        - $ref: '#/components/parameters/WorkflowRunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveFactCheckRequest'
+      responses:
+        '200':
+          description: Workflow resumed after fact-check approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResponse'
+              examples:
+                continued:
+                  value:
+                    workflow_run_id: wf_123
+                    status: running
+                    state:
+                      awaiting_fact_check_approval: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workflow/{workflow_run_id}/rerun-options:
+    get:
+      tags: [Workflow]
+      summary: 获取重跑选项
+      operationId: getRerunOptions
+      parameters:
+        - $ref: '#/components/parameters/WorkflowRunId'
+      responses:
+        '200':
+          description: Node rerun options
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RerunOptionsResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workflow/{workflow_run_id}/rerun:
+    post:
+      tags: [Workflow]
+      summary: 从指定节点重跑
+      operationId: rerunWorkflow
+      parameters:
+        - $ref: '#/components/parameters/WorkflowRunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RerunRequest'
+      responses:
+        '200':
+          description: New rerun workflow created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RerunResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workflow/{workflow_run_id}/rerun-history:
+    get:
+      tags: [Workflow]
+      summary: 获取重跑历史
+      operationId: getRerunHistory
+      parameters:
+        - $ref: '#/components/parameters/WorkflowRunId'
+      responses:
+        '200':
+          description: Rerun history list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RerunHistoryResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/trace/{workflow_run_id}:
+    get:
+      tags: [Trace]
+      summary: 获取工作流完整追踪
+      operationId: getWorkflowTrace
+      parameters:
+        - $ref: '#/components/parameters/WorkflowRunId'
+      responses:
+        '200':
+          description: Workflow trace payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowTraceResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/trace/node/{node_run_id}:
+    get:
+      tags: [Trace]
+      summary: 获取节点执行详情
+      operationId: getNodeDetail
+      parameters:
+        - $ref: '#/components/parameters/NodeRunId'
+      responses:
+        '200':
+          description: Node detail payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeDetailResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/artifact/{artifact_id}:
+    get:
+      tags: [Artifact]
+      summary: 获取单个 Artifact
+      operationId: getArtifact
+      parameters:
+        - $ref: '#/components/parameters/ArtifactId'
+      responses:
+        '200':
+          description: Artifact detail
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/artifact/{artifact_id}/history:
+    get:
+      tags: [Artifact]
+      summary: 获取 Artifact 版本历史
+      operationId: getArtifactHistory
+      parameters:
+        - $ref: '#/components/parameters/ArtifactId'
+      responses:
+        '200':
+          description: Artifact history list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workflows:
+    get:
+      tags: [WorkflowDefinition]
+      summary: 获取当前工作空间工作流定义列表
+      operationId: listWorkflowDefinitions
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Result envelope with workflow list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [WorkflowDefinition]
+      summary: 创建工作流定义
+      operationId: createWorkflowDefinition
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowDefinitionCreate'
+      responses:
+        '200':
+          description: Result envelope with created workflow definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workflows/{workflow_id}:
+    get:
+      tags: [WorkflowDefinition]
+      summary: 获取工作流定义详情
+      operationId: getWorkflowDefinitionById
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Result envelope with workflow definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [WorkflowDefinition]
+      summary: 更新工作流定义
+      operationId: updateWorkflowDefinition
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowDefinitionUpdate'
+      responses:
+        '200':
+          description: Result envelope with updated workflow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [WorkflowDefinition]
+      summary: 删除工作流定义（软删除）
+      operationId: deleteWorkflowDefinition
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Result envelope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workflows/{workflow_id}/definition:
+    get:
+      tags: [WorkflowDefinition]
+      summary: 获取工作流定义（编辑器语义路径）
+      operationId: getWorkflowDefinitionAlias
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Result envelope with workflow definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+    put:
+      tags: [WorkflowDefinition]
+      summary: 更新工作流定义（编辑器语义路径）
+      operationId: updateWorkflowDefinitionAlias
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowDefinitionUpdate'
+      responses:
+        '200':
+          description: Result envelope with workflow definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+
+  /api/workflows/{workflow_id}/validate:
+    post:
+      tags: [WorkflowDefinition]
+      summary: 校验工作流定义是否合法
+      operationId: validateWorkflowDefinition
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Result envelope with validation payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workflows/{workflow_id}/compile:
+    post:
+      tags: [WorkflowDefinition]
+      summary: 编译工作流定义为可执行图
+      operationId: compileWorkflowDefinition
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Result envelope with compile payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workflows/{workflow_id}/versions:
+    get:
+      tags: [WorkflowVersion]
+      summary: 获取工作流版本历史
+      operationId: listWorkflowVersions
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+      responses:
+        '200':
+          description: Result envelope with version list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workflows/{workflow_id}/versions/{version_id}:
+    get:
+      tags: [WorkflowVersion]
+      summary: 获取指定版本定义
+      operationId: getWorkflowVersion
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        '200':
+          description: Result envelope with version payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workflows/{workflow_id}/versions/compare:
+    get:
+      tags: [WorkflowVersion]
+      summary: 对比两个版本差异
+      operationId: compareWorkflowVersions
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+        - name: version_a
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: version_b
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Result envelope with diff payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workflows/{workflow_id}/versions/{version_id}/restore:
+    post:
+      tags: [WorkflowVersion]
+      summary: 回滚到指定版本
+      operationId: restoreWorkflowVersion
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkflowId'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        '200':
+          description: Result envelope with restore payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: 用户注册
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: 登录（设置 HttpOnly Cookie）
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Logged in
+          headers:
+            Set-Cookie:
+              description: access_token 与 refresh_token
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: 刷新 Access Token
+      operationId: refreshToken
+      responses:
+        '200':
+          description: Access token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: 登出（清除 Cookie）
+      operationId: logout
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
+  /api/auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: 验证邮箱
+      operationId: verifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '200':
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: 发送重置密码邮件
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '200':
+          description: Always returns success message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
+  /api/auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: 重置密码
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password reset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/me:
+    get:
+      tags: [Auth]
+      summary: 获取当前用户信息
+      operationId: getMe
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: User profile with workspace context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/workspaces:
+    get:
+      tags: [Workspace]
+      summary: 获取当前用户工作空间列表
+      operationId: listWorkspaces
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Workspace list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkspacesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Workspace]
+      summary: 创建工作空间
+      operationId: createWorkspace
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '200':
+          description: Created workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workspaces/{workspace_id}:
+    get:
+      tags: [Workspace]
+      summary: 获取工作空间详情
+      operationId: getWorkspace
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Workspace detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Workspace]
+      summary: 更新工作空间
+      operationId: updateWorkspace
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/workspaces/{workspace_id}/members:
+    get:
+      tags: [Workspace]
+      summary: 获取工作空间成员
+      operationId: listWorkspaceMembers
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Members list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListMembersResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/workspaces/{workspace_id}/invite:
+    post:
+      tags: [Workspace]
+      summary: 邀请成员
+      operationId: inviteWorkspaceMember
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteMemberRequest'
+      responses:
+        '200':
+          description: Invitation sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteMemberResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/workspaces/accept-invite:
+    post:
+      tags: [Workspace]
+      summary: 接受邀请
+      operationId: acceptWorkspaceInvite
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Invite accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/memberships/{membership_id}:
+    patch:
+      tags: [Workspace]
+      summary: 更新成员角色
+      operationId: updateMembershipRole
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/MembershipId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMemberRoleRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Workspace]
+      summary: 移除成员
+      operationId: removeMembership
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/MembershipId'
+      responses:
+        '200':
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+
+  parameters:
+    WorkflowRunId:
+      name: workflow_run_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 工作流运行 ID
+    WorkflowId:
+      name: workflow_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 工作流定义 ID
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 版本 ID
+    NodeRunId:
+      name: node_run_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 节点运行 ID
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Artifact ID
+    WorkspaceId:
+      name: workspace_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 工作空间 ID
+    MembershipId:
+      name: membership_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 成员关系 ID
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+          nullable: true
+
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: PromptChain API
+        version:
+          type: string
+          example: 1.0.0
+
+    ResultResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          nullable: true
+
+    ContentPreview:
+      type: object
+      required: [preview, word_count]
+      properties:
+        preview:
+          type: string
+          description: 内容预览（最多约100字符）
+        word_count:
+          type: integer
+          description: 预览原文长度（字符计数）
+
+    WorkflowTraceResponse:
+      type: object
+      required: [workflow, nodes, artifacts, timeline]
+      properties:
+        workflow:
+          type: object
+          additionalProperties: true
+        nodes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        artifacts:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
+        timeline:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    NodeDetailResponse:
+      type: object
+      required: [node, input_artifacts, output_artifacts]
+      properties:
+        node:
+          type: object
+          additionalProperties: true
+        input_artifacts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        output_artifacts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    NodePosition:
+      type: object
+      required: [x, y]
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+
+    NodeData:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+
+    WorkflowNode:
+      type: object
+      required: [id, type, position, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        position:
+          $ref: '#/components/schemas/NodePosition'
+        data:
+          $ref: '#/components/schemas/NodeData'
+
+    EdgeData:
+      type: object
+      properties:
+        condition:
+          type: string
+          nullable: true
+        label:
+          type: string
+          nullable: true
+
+    WorkflowEdge:
+      type: object
+      required: [id, source, target]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+        type:
+          type: string
+          default: default
+        data:
+          $ref: '#/components/schemas/EdgeData'
+
+    WorkflowDefinitionCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          default: ""
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowNode'
+          default: []
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowEdge'
+          default: []
+
+    WorkflowDefinitionUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowNode'
+          nullable: true
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowEdge'
+          nullable: true
+
+    WorkflowStatus:
+      type: string
+      enum:
+        - running
+        - needs_clarification
+        - awaiting_outline_approval
+        - awaiting_fact_check_approval
+        - completed
+        - failed
+
+    ClarificationPriority:
+      type: string
+      enum: [high, medium, low]
+
+    ClarificationQuestion:
+      type: object
+      required: [field, question, priority]
+      properties:
+        field:
+          type: string
+        question:
+          type: string
+        priority:
+          $ref: '#/components/schemas/ClarificationPriority'
+        default_assumption:
+          type: string
+          nullable: true
+
+    WorkflowState:
+      type: object
+      properties:
+        clarification_questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClarificationQuestion'
+        outline:
+          type: object
+          additionalProperties: true
+        fact_check_report:
+          $ref: '#/components/schemas/FactCheckReport'
+        final_content:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ContentPreview'
+      additionalProperties: true
+
+    WorkflowResponse:
+      type: object
+      required: [workflow_run_id, status, state]
+      properties:
+        workflow_run_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkflowStatus'
+        state:
+          $ref: '#/components/schemas/WorkflowState'
+
+    StartWorkflowRequest:
+      type: object
+      required: [user_input]
+      properties:
+        user_input:
+          type: string
+
+    ClarifyRequest:
+      type: object
+      required: [clarifications]
+      properties:
+        clarifications:
+          type: object
+          additionalProperties:
+            type: string
+
+    ApproveOutlineAction:
+      type: string
+      enum: [approve, modify, regenerate]
+
+    ApproveOutlineRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          $ref: '#/components/schemas/ApproveOutlineAction'
+        feedback:
+          type: string
+          default: ""
+        modified_outline:
+          type: object
+          additionalProperties: true
+          nullable: true
+
+    FactCheckDecision:
+      type: string
+      enum: [confirm, use_suggestion, manual]
+
+    ApproveFactCheckRequest:
+      type: object
+      required: [decisions]
+      properties:
+        decisions:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/FactCheckDecision'
+        manual_corrections:
+          type: object
+          additionalProperties:
+            type: string
+          default: {}
+
+    RerunRequest:
+      type: object
+      required: [from_node]
+      properties:
+        from_node:
+          type: string
+        updated_input:
+          type: object
+          additionalProperties: true
+          nullable: true
+        reason:
+          type: string
+          default: ""
+
+    RerunResponse:
+      type: object
+      required: [original_workflow_run_id, new_workflow_run_id, rerun_from_node, status, state]
+      properties:
+        original_workflow_run_id:
+          type: string
+        new_workflow_run_id:
+          type: string
+        rerun_from_node:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkflowStatus'
+        state:
+          $ref: '#/components/schemas/WorkflowState'
+
+    RerunOptionsResponse:
+      type: object
+      required: [options]
+      properties:
+        options:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    RerunHistoryResponse:
+      type: object
+      required: [history]
+      properties:
+        history:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    FactClaim:
+      type: object
+      required: [id, text, category, section_id]
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        category:
+          type: string
+        section_id:
+          type: string
+
+    VerificationResult:
+      type: object
+      required:
+        [claim_id, is_verified, confidence, risk_level, verification_question, verification_answer]
+      properties:
+        claim_id:
+          type: string
+        is_verified:
+          type: boolean
+        confidence:
+          type: number
+        risk_level:
+          type: string
+          enum: [low, medium, high]
+        suggested_correction:
+          type: string
+          nullable: true
+        verification_question:
+          type: string
+        verification_answer:
+          type: string
+
+    FactCheckReport:
+      type: object
+      required: [claims, results, total_claims, verified_count, high_risk_count]
+      properties:
+        claims:
+          type: array
+          items:
+            $ref: '#/components/schemas/FactClaim'
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/VerificationResult'
+        total_claims:
+          type: integer
+        verified_count:
+          type: integer
+        high_risk_count:
+          type: integer
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        username:
+          type: string
+          minLength: 2
+          maxLength: 50
+          nullable: true
+        display_name:
+          type: string
+          maxLength: 100
+          nullable: true
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    WorkspaceContext:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          nullable: true
+
+    UserBrief:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        username:
+          type: string
+          nullable: true
+        display_name:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+
+    LoginResponse:
+      type: object
+      required: [message, user]
+      properties:
+        message:
+          type: string
+        user:
+          $ref: '#/components/schemas/UserBrief'
+        workspace:
+          $ref: '#/components/schemas/WorkspaceContext'
+        role:
+          type: string
+          nullable: true
+
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    ResetPasswordRequest:
+      type: object
+      required: [token, password]
+      properties:
+        token:
+          type: string
+        password:
+          type: string
+          minLength: 8
+
+    MeResponse:
+      type: object
+      required: [user, workspaces]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserBrief'
+        workspace:
+          $ref: '#/components/schemas/WorkspaceContext'
+        role:
+          type: string
+          nullable: true
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceContext'
+
+    WorkspaceRole:
+      type: string
+      enum: [viewer, editor, admin, owner]
+
+    WorkspaceListItem:
+      type: object
+      required: [id, name, owner_id, role, joined_at, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        logo_url:
+          type: string
+          nullable: true
+        owner_id:
+          type: string
+        role:
+          type: string
+        joined_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    ListWorkspacesResponse:
+      type: object
+      required: [workspaces]
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceListItem'
+
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          nullable: true
+
+    CreateWorkspaceResponse:
+      type: object
+      required: [id, name, owner_id, role]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        owner_id:
+          type: string
+        role:
+          type: string
+
+    UpdateWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        logo_url:
+          type: string
+          nullable: true
+
+    WorkspaceDetailResponse:
+      type: object
+      required: [id, name, owner_id, created_at, role]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        logo_url:
+          type: string
+          nullable: true
+        owner_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        role:
+          type: string
+
+    MemberItem:
+      type: object
+      required: [id, user_id, email, role, joined_at]
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        role:
+          type: string
+        joined_at:
+          type: string
+          format: date-time
+
+    ListMembersResponse:
+      type: object
+      required: [members]
+      properties:
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemberItem'
+
+    InviteMemberRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/WorkspaceRole'
+
+    InviteMemberResponse:
+      type: object
+      required: [message, invite_id]
+      properties:
+        message:
+          type: string
+        invite_id:
+          type: string
+
+    UpdateMemberRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          $ref: '#/components/schemas/WorkspaceRole'

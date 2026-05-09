@@ -1,0 +1,243 @@
+.container {
+    background:
+        var(--workflow-surface-sheen-soft, linear-gradient(180deg, transparent, transparent)),
+        var(--workflow-surface-bg-soft, var(--color-bg-secondary));
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    border-radius: 18px;
+    padding: var(--spacing-lg);
+}
+
+/* Header */
+.header {
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.titleSection {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+}
+
+.mainTitle {
+    flex: 1;
+    font-size: 1.5rem;
+    font-weight: 600;
+    background: transparent;
+    border: none;
+    color: var(--color-text-primary);
+    padding: var(--spacing-xs) 0;
+    border-bottom: 2px solid transparent;
+    transition: border-color var(--transition-fast);
+}
+
+.mainTitle:focus {
+    outline: none;
+    border-bottom-color: var(--color-brand-primary);
+}
+
+.wordTotal {
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+    margin: 0;
+}
+
+/* Label */
+.label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Abstract */
+.abstractSection {
+    margin-bottom: var(--spacing-lg);
+}
+
+.abstract {
+    width: 100%;
+    min-height: 80px;
+    padding: var(--spacing-md);
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    resize: vertical;
+    transition: border-color var(--transition-fast);
+}
+
+.abstract:focus {
+    outline: none;
+    border-color: var(--color-brand-primary);
+}
+
+/* Sections */
+.sectionsContainer {
+    margin-bottom: var(--spacing-lg);
+}
+
+.section {
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+}
+
+.section:hover {
+    border-color: var(--color-border-hover);
+}
+
+.sectionHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-sm);
+}
+
+.sectionTitle {
+    flex: 1;
+    font-size: 1rem;
+    font-weight: 500;
+    background: transparent;
+    border: none;
+    color: var(--color-text-primary);
+    padding: 0;
+}
+
+.sectionTitle:focus {
+    outline: none;
+}
+
+.wordCount {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-sm);
+}
+
+.sectionSummary {
+    width: 100%;
+    min-height: 40px;
+    padding: var(--spacing-sm);
+    background: transparent;
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    resize: none;
+    transition: border-color var(--transition-fast);
+}
+
+.sectionSummary:focus {
+    outline: none;
+    border-style: solid;
+    border-color: var(--color-brand-primary);
+}
+
+/* Actions */
+.actions {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    padding: 14px 16px;
+    margin-top: var(--spacing-lg);
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    border-radius: 16px;
+    background: var(--workflow-surface-bg-subtle, var(--color-bg-secondary));
+}
+
+/* Dialog */
+.dialogOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    animation: fadeIn 180ms ease;
+}
+
+.dialogContent {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 500px;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    animation: slideUp 220ms ease-out;
+}
+
+.dialogTitle {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: var(--spacing-sm);
+}
+
+.dialogDescription {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-md);
+}
+
+.feedbackInput {
+    width: 100%;
+    min-height: 120px;
+    margin-bottom: var(--spacing-lg);
+}
+
+.dialogActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -47%);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%);
+    }
+}
+
+@media (max-width: 640px) {
+    .actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dialogOverlay,
+    .dialogContent,
+    .actions {
+        animation: none !important;
+        transition-duration: 0.01ms !important;
+    }
+}

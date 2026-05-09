@@ -1,0 +1,117 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+  --edit-surface: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
+  --edit-surface-muted: var(--console-surface-muted);
+  --edit-border: var(--console-border);
+  --edit-text-primary: var(--console-text-primary);
+  --edit-text-secondary: var(--console-text-secondary);
+  --edit-text-tertiary: var(--console-text-tertiary);
+  --edit-accent: var(--console-accent);
+  --edit-shadow: var(--console-shadow-lg, var(--shadow-lg));
+}
+
+.pageHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  padding: 24px;
+  border-radius: 28px;
+  border: 1px solid var(--edit-border);
+  background: var(--edit-surface);
+  box-shadow: var(--edit-shadow);
+}
+
+.backLink {
+  display: inline-flex;
+  margin-bottom: 12px;
+  color: var(--edit-accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.backLink:hover {
+  color: var(--edit-text-secondary);
+}
+
+.title {
+  margin: 0 0 10px;
+  font-size: clamp(2rem, 4vw, 3rem);
+  color: var(--edit-text-primary);
+  letter-spacing: -0.04em;
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 640px;
+  color: var(--edit-text-secondary);
+  line-height: 1.7;
+}
+
+.summaryCard {
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px;
+  border-radius: 22px;
+  border: 1px solid var(--edit-border);
+  background: var(--edit-surface-muted);
+}
+
+.summaryCard strong {
+  color: var(--edit-text-primary);
+  font-size: 1.2rem;
+}
+
+.summaryLabel {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--edit-text-tertiary);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.summaryHint {
+  color: var(--edit-text-tertiary);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.errorBanner,
+.loadingCard {
+  padding: 18px 20px;
+  border-radius: 22px;
+  border: 1px solid var(--edit-border);
+  background: var(--edit-surface);
+  color: var(--edit-text-secondary);
+  font-weight: 700;
+}
+
+.errorBanner {
+  border-color: rgba(248, 113, 113, 0.18);
+  background:
+    linear-gradient(180deg, rgba(50, 14, 14, 0.6), rgba(36, 11, 13, 0.78)),
+    rgba(36, 11, 13, 0.78);
+  color: #fecaca;
+}
+
+@media (max-width: 900px) {
+  .page {
+    padding: 16px;
+  }
+
+  .pageHeader {
+    flex-direction: column;
+  }
+
+  .summaryCard {
+    min-width: 0;
+    width: 100%;
+  }
+}

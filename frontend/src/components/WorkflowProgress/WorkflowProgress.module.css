@@ -1,0 +1,241 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    border-radius: 20px;
+    background:
+        var(--workflow-surface-sheen-soft, linear-gradient(180deg, transparent, transparent)),
+        var(--workflow-surface-bg-soft, var(--color-bg-secondary));
+    box-shadow: var(--workflow-shadow-card, var(--shadow-md));
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    align-items: flex-start;
+}
+
+.title {
+    margin: 0 0 6px;
+    font-size: 0.95rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-primary);
+}
+
+.subtitle {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+}
+
+.summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.timeline {
+    display: flex;
+    flex-direction: column;
+}
+
+.step {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: 14px 12px;
+    border-radius: 16px;
+    transition:
+        background-color var(--transition-fast),
+        border-color var(--transition-fast),
+        transform var(--transition-fast);
+}
+
+.interactive {
+    cursor: pointer;
+}
+
+.interactive:hover,
+.interactive:focus-visible,
+.current {
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+}
+
+.interactive:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--workflow-focus-ring, var(--pc-semantic-focus-ring));
+}
+
+.connector {
+    position: absolute;
+    left: 27px;
+    top: -14px;
+    width: 2px;
+    height: 14px;
+    background: var(--workflow-border-muted, var(--color-border));
+}
+
+.connectorCompleted {
+    background: linear-gradient(180deg, rgba(63, 185, 80, 0.16), rgba(63, 185, 80, 0.9));
+}
+
+.connectorRunning {
+    background: linear-gradient(180deg, rgba(88, 166, 255, 0.18), rgba(88, 166, 255, 0.9));
+}
+
+.connectorInterrupted {
+    background: linear-gradient(180deg, rgba(210, 153, 34, 0.12), rgba(210, 153, 34, 0.9));
+}
+
+.connectorFailed {
+    background: linear-gradient(180deg, rgba(248, 81, 73, 0.14), rgba(248, 81, 73, 0.9));
+}
+
+.indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+    flex-shrink: 0;
+}
+
+.indicatorIcon {
+    width: 16px;
+    height: 16px;
+}
+
+.pending .indicator {
+    color: var(--color-text-muted);
+}
+
+.running .indicator {
+    color: var(--color-brand-primary);
+    border-color: var(--workflow-brand-border, var(--color-border-hover));
+    background: var(--workflow-brand-soft, var(--pc-semantic-brand-soft));
+    box-shadow: 0 0 0 rgba(88, 166, 255, 0.24);
+    animation: pulseRing 1.4s ease-in-out infinite;
+}
+
+.completed .indicator {
+    color: var(--color-success);
+    border-color: var(--workflow-success-border, color-mix(in srgb, var(--color-success) 24%, transparent));
+    background: var(--workflow-success-soft, color-mix(in srgb, var(--color-success) 10%, transparent));
+}
+
+.interrupted .indicator {
+    color: var(--color-warning);
+    border-color: var(--workflow-warning-border, color-mix(in srgb, var(--color-warning) 24%, transparent));
+    background: var(--workflow-warning-soft, color-mix(in srgb, var(--color-warning) 10%, transparent));
+}
+
+.failed .indicator {
+    color: var(--color-danger);
+    border-color: var(--workflow-danger-border, color-mix(in srgb, var(--color-danger) 24%, transparent));
+    background: var(--workflow-danger-soft, color-mix(in srgb, var(--color-danger) 10%, transparent));
+}
+
+.info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.labelRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.stepLabel {
+    color: var(--color-text-primary);
+    font-size: 0.9375rem;
+    font-weight: 600;
+}
+
+.stepState {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+
+.stepMeta {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5;
+}
+
+.artifactBadge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+.spinIcon {
+    animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes pulseRing {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.18);
+    }
+
+    50% {
+        box-shadow: 0 0 0 10px rgba(88, 166, 255, 0);
+    }
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding: var(--spacing-md);
+    }
+
+    .header,
+    .labelRow {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .step,
+    .running .indicator,
+    .spinIcon {
+        animation: none !important;
+        transition-duration: 0.01ms !important;
+        transform: none !important;
+    }
+}

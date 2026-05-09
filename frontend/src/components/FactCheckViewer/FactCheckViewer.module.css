@@ -1,0 +1,496 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+}
+
+.summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--spacing-sm);
+}
+
+.summaryCard {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px;
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    border-radius: 16px;
+    background: var(--workflow-surface-bg-muted, var(--color-bg-secondary));
+}
+
+.summaryCardWarning {
+    border-color: var(--workflow-warning-border, color-mix(in srgb, var(--color-warning) 24%, transparent));
+    background: var(--workflow-warning-soft, color-mix(in srgb, var(--color-warning) 10%, transparent));
+}
+
+.summaryLabel {
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+.summaryValue {
+    font-size: 1.5rem;
+    color: var(--color-text-primary);
+}
+
+.reviewWorkbench {
+    display: grid;
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    gap: var(--spacing-md);
+}
+
+.reviewRail,
+.detailPanel,
+.actions {
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    border-radius: 18px;
+    background: var(--workflow-surface-bg-muted, var(--color-bg-secondary));
+}
+
+.reviewRail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+}
+
+.railHeader {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    align-items: flex-start;
+}
+
+.railEyebrow,
+.detailEyebrow {
+    margin: 0 0 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+.railTitle,
+.detailTitle {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--color-text-primary);
+}
+
+.railMeta {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.claimList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.claimItem {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    padding: 14px;
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    border-radius: 16px;
+    background: var(--workflow-control-bg, var(--color-bg-tertiary));
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    transition:
+        border-color var(--transition-fast),
+        transform var(--transition-fast),
+        background-color var(--transition-fast);
+}
+
+.claimItem:hover,
+.claimItem:focus-visible {
+    border-color: var(--workflow-brand-border, var(--color-border-hover));
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+    transform: translateY(-1px);
+    outline: none;
+}
+
+.claimItemActive {
+    border-color: var(--workflow-brand-border, var(--color-border-hover));
+    background: var(--workflow-brand-soft, var(--pc-semantic-brand-soft));
+}
+
+.claimItemResolved {
+    border-color: var(--workflow-success-border, color-mix(in srgb, var(--color-success) 24%, transparent));
+}
+
+.claimItemTop,
+.claimItemBottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.claimIndex {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+}
+
+.riskBadge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.riskHigh {
+    background: var(--workflow-danger-soft, color-mix(in srgb, var(--color-danger) 10%, transparent));
+    color: var(--color-danger);
+}
+
+.riskMedium {
+    background: var(--workflow-warning-soft, color-mix(in srgb, var(--color-warning) 10%, transparent));
+    color: var(--color-warning);
+}
+
+.riskLow {
+    background: var(--workflow-success-soft, color-mix(in srgb, var(--color-success) 10%, transparent));
+    color: var(--color-success);
+}
+
+.claimSnippet {
+    margin: 0;
+    color: var(--color-text-primary);
+    line-height: 1.65;
+}
+
+.claimCategory,
+.claimState {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+}
+
+.inlineIcon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.autoPassPanel {
+    margin-top: auto;
+    border-top: 1px solid var(--workflow-border-subtle, var(--color-border));
+    padding-top: var(--spacing-md);
+}
+
+.autoPassPanel summary {
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+}
+
+.autoPassList {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: var(--spacing-sm);
+}
+
+.autoPassItem {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+}
+
+.detailPanel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+}
+
+.detailHeader {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    align-items: flex-start;
+}
+
+.detailSection,
+.detailCard,
+.suggestionCard,
+.decisionSection {
+    padding: 16px;
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    border-radius: 16px;
+    background: var(--workflow-control-bg, var(--color-bg-tertiary));
+}
+
+.sectionLabel {
+    display: inline-flex;
+    margin-bottom: 8px;
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+.claimText {
+    margin: 0;
+    color: var(--color-text-primary);
+    line-height: 1.75;
+}
+
+.claimMeta {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    margin-top: var(--spacing-sm);
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+}
+
+.detailGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacing-sm);
+}
+
+.detailCard p,
+.suggestionCard p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+}
+
+.suggestionCard {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--spacing-md);
+    border-color: var(--workflow-brand-border, var(--color-border-hover));
+    background: var(--workflow-brand-soft, var(--pc-semantic-brand-soft));
+}
+
+.suggestionIcon {
+    width: 18px;
+    height: 18px;
+    color: var(--color-brand-primary);
+    margin-top: 2px;
+}
+
+.decisionSection {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.decisionLegend {
+    padding: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+}
+
+.optionGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--spacing-sm);
+}
+
+.optionCard {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 14px;
+    border: 1px solid var(--workflow-border-subtle, var(--color-border));
+    border-radius: 14px;
+    background: var(--workflow-surface-bg-subtle, var(--color-bg-secondary));
+    cursor: pointer;
+    transition:
+        border-color var(--transition-fast),
+        transform var(--transition-fast),
+        background-color var(--transition-fast);
+}
+
+.optionCard input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.optionCard:hover,
+.optionCard:focus-within {
+    border-color: var(--workflow-brand-border, var(--color-border-hover));
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+    transform: translateY(-1px);
+}
+
+.optionCardActive {
+    border-color: var(--workflow-brand-border, var(--color-border-hover));
+    background: var(--workflow-brand-soft, var(--pc-semantic-brand-soft));
+}
+
+.optionIconWrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+    flex-shrink: 0;
+}
+
+.optionIcon {
+    width: 16px;
+    height: 16px;
+}
+
+.optionCopy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.optionCopy strong {
+    color: var(--color-text-primary);
+    font-size: 0.9375rem;
+}
+
+.optionCopy span {
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+    line-height: 1.55;
+}
+
+.manualSection {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.manualInput {
+    width: 100%;
+    min-height: 120px;
+}
+
+.emptyDetail {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--spacing-md);
+    align-items: flex-start;
+    padding: var(--spacing-lg);
+}
+
+.emptyDetail h3 {
+    margin: 0 0 6px;
+    color: var(--color-text-primary);
+}
+
+.emptyDetail p {
+    margin: 0;
+    color: var(--color-text-secondary);
+}
+
+.emptyDetailIcon {
+    width: 20px;
+    height: 20px;
+    color: var(--color-warning);
+}
+
+.actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: 16px 18px;
+    position: sticky;
+    bottom: 0;
+    background:
+        var(--workflow-surface-sheen, linear-gradient(180deg, transparent, transparent)),
+        var(--workflow-surface-bg, var(--color-bg-secondary));
+    backdrop-filter: blur(14px);
+}
+
+.actionSummary {
+    flex: 1;
+    min-width: 0;
+}
+
+.hint {
+    margin: 0 0 8px;
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+}
+
+.progressTrack {
+    width: 100%;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+}
+
+.progressFill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--color-warning), #f2c96f);
+    transition: width 180ms ease-out;
+}
+
+@media (max-width: 1080px) {
+    .reviewWorkbench {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .summary {
+        grid-template-columns: 1fr;
+    }
+
+    .detailGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .actions,
+    .detailHeader,
+    .railHeader {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .claimItem,
+    .optionCard,
+    .progressFill,
+    .actions {
+        transition-duration: 0.01ms !important;
+        transform: none !important;
+    }
+}

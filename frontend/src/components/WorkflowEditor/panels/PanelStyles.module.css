@@ -1,0 +1,170 @@
+/* 面板通用样式 */
+
+.nodeLibrary {
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--console-border);
+  background: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
+}
+
+.libraryHeader {
+  padding: 16px;
+  border-bottom: 1px solid var(--console-border);
+}
+
+.libraryHeader h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--console-text-primary);
+}
+
+.hint {
+  font-size: 0.76rem;
+  color: var(--console-text-tertiary);
+}
+
+.nodeList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nodeTemplate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--console-surface-muted);
+  border: 1px solid var(--console-border);
+  border-left: 4px solid;
+  border-radius: 14px;
+  cursor: grab;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.nodeTemplate:hover {
+  transform: translateY(-1px);
+  background: var(--console-accent-soft);
+  border-color: var(--console-border-strong);
+}
+
+.nodeTemplate:active {
+  cursor: grabbing;
+}
+
+.templateIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--console-surface);
+  border-radius: 10px;
+  border: 1px solid var(--console-border);
+}
+
+.templateInfo {
+  flex: 1;
+}
+
+.templateLabel {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--console-text-primary);
+}
+
+.templateDesc {
+  font-size: 0.76rem;
+  color: var(--console-text-tertiary);
+  margin-top: 2px;
+}
+
+.configPanel {
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--console-border);
+  background: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--console-border);
+}
+
+.panelHeader h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--console-text-primary);
+}
+
+.closeButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: var(--console-text-tertiary);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.closeButton:hover {
+  background: var(--console-accent-soft);
+  color: var(--console-text-primary);
+}
+
+.panelContent {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.configSection {
+  margin-bottom: 16px;
+}
+
+.configLabel {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--console-text-secondary);
+  margin-bottom: 6px;
+}
+
+.configInput,
+.configSelect {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  background: var(--pc-semantic-bg-input);
+  color: var(--console-text-primary);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.configInput:focus,
+.configSelect:focus {
+  outline: none;
+  border-color: var(--console-border-strong);
+  box-shadow: 0 0 0 4px var(--console-focus-ring);
+}
+
+.configSelect {
+  cursor: pointer;
+}

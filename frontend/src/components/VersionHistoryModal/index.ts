@@ -1,0 +1,1 @@
+export { VersionHistoryModal } from './VersionHistoryModal';
