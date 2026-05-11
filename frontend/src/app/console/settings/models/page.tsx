@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiUrl } from '@/lib/api-config';
+import { authenticatedFetch } from '@/lib/auth';
 import { formatAppDate } from '@/lib/date-time';
 import styles from '../settings.module.css';
 
@@ -65,6 +66,8 @@ interface ModelProviderTestStep {
   duration_ms: number | null;
   detail?: {
     count?: number;
+    prompt_text?: string | null;
+    response_text?: string | null;
     response_preview?: string | null;
     sample?: string[];
     status_code?: number;
@@ -219,9 +222,7 @@ export default function ModelsPage() {
     setError('');
 
     try {
-      const response = await fetch(apiUrl('/admin/model-providers'), {
-        credentials: 'include',
-      });
+      const response = await authenticatedFetch(apiUrl('/admin/model-providers'));
       if (!response.ok) {
         throw new Error(await readApiError(response, '加载模型供应商失败'));
       }
@@ -233,9 +234,7 @@ export default function ModelsPage() {
       setProviders(data.providers || []);
       setSupportedProviders(data.supported_providers || providerOptions);
 
-      const runtimeResponse = await fetch(apiUrl('/admin/model-providers/runtime'), {
-        credentials: 'include',
-      });
+      const runtimeResponse = await authenticatedFetch(apiUrl('/admin/model-providers/runtime'));
       if (runtimeResponse.ok) {
         const runtimeData = (await runtimeResponse.json()) as {
           runtime?: RuntimeModelInfo;
@@ -338,7 +337,7 @@ export default function ModelsPage() {
     };
 
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         apiUrl(
           isEditing
             ? `/admin/model-providers/${editingProviderId}`
@@ -346,7 +345,6 @@ export default function ModelsPage() {
         ),
         {
           method: isEditing ? 'PATCH' : 'POST',
-          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         },
@@ -373,9 +371,8 @@ export default function ModelsPage() {
     setError('');
 
     try {
-      const response = await fetch(apiUrl(`/admin/model-providers/${provider.id}`), {
+      const response = await authenticatedFetch(apiUrl(`/admin/model-providers/${provider.id}`), {
         method: 'PATCH',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -402,9 +399,8 @@ export default function ModelsPage() {
     setError('');
 
     try {
-      const response = await fetch(apiUrl(`/admin/model-providers/${provider.id}`), {
+      const response = await authenticatedFetch(apiUrl(`/admin/model-providers/${provider.id}`), {
         method: 'DELETE',
-        credentials: 'include',
       });
       if (!response.ok) {
         throw new Error(await readApiError(response, '删除模型配置失败'));
@@ -426,9 +422,8 @@ export default function ModelsPage() {
     const selectedModel = String(provider.config?.model || provider.config?.model_name || '').trim();
 
     try {
-      const response = await fetch(apiUrl(`/admin/model-providers/${provider.id}/test`), {
+      const response = await authenticatedFetch(apiUrl(`/admin/model-providers/${provider.id}/test`), {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: selectedModel || undefined,
@@ -765,7 +760,23 @@ export default function ModelsPage() {
                                   {typeof step.duration_ms === 'number' ? ` · ${step.duration_ms} ms` : ''}
                                 </span>
                                 <span className={styles.testStepMessage}>{step.message}</span>
-                                {step.detail?.response_preview ? (
+                                {step.name === 'short_prompt' && (step.detail?.prompt_text || step.detail?.response_text) ? (
+                                  <div className={styles.testIoGrid}>
+                                    {step.detail?.prompt_text ? (
+                                      <div className={styles.testIoBlock}>
+                                        <span className={styles.testIoLabel}>输入</span>
+                                        <span className={styles.testIoValue}>{step.detail.prompt_text}</span>
+                                      </div>
+                                    ) : null}
+                                    {step.detail?.response_text ? (
+                                      <div className={styles.testIoBlock}>
+                                        <span className={styles.testIoLabel}>输出</span>
+                                        <span className={styles.testIoValue}>{step.detail.response_text}</span>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                {step.detail?.response_preview && !step.detail?.response_text ? (
                                   <span className={styles.testStepMeta}>
                                     响应片段：{step.detail.response_preview}
                                   </span>

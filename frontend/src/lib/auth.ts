@@ -8,6 +8,7 @@
 import { apiUrl } from './api-config';
 
 const PREFERRED_WORKSPACE_STORAGE_KEY = 'promptchain:workspace_id';
+let refreshTokenRequest: Promise<boolean> | null = null;
 
 export type UserStatus = 'active' | 'inactive' | 'suspended';
 export type WorkspaceAccessStatus = 'active' | 'suspended';
@@ -169,6 +170,10 @@ async function parseErrorMessage(response: Response, fallback: string): Promise<
   }
 }
 
+interface AuthenticatedFetchOptions extends RequestInit {
+  skipAuthRefresh?: boolean;
+}
+
 function getPreferredWorkspace(): string | null {
   if (typeof window === 'undefined') {
     return null;
@@ -241,18 +246,56 @@ export async function logout(): Promise<void> {
  * 刷新 Token
  */
 export async function refreshToken(): Promise<boolean> {
-  try {
-    const workspaceId = getPreferredWorkspace();
-    const response = await fetch(apiUrl('/auth/refresh'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ workspace_id: workspaceId }),
-    });
-    return response.ok;
-  } catch {
-    return false;
+  if (refreshTokenRequest) {
+    return refreshTokenRequest;
   }
+
+  refreshTokenRequest = (async () => {
+    try {
+      const workspaceId = getPreferredWorkspace();
+      const response = await fetch(apiUrl('/auth/refresh'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      refreshTokenRequest = null;
+    }
+  })();
+
+  return refreshTokenRequest;
+}
+
+/**
+ * 统一处理带 Cookie 的认证请求：Access Token 过期时自动刷新一次再重试。
+ */
+export async function authenticatedFetch(
+  input: string,
+  options: AuthenticatedFetchOptions = {},
+): Promise<Response> {
+  const { skipAuthRefresh = false, ...fetchOptions } = options;
+
+  const execute = () =>
+    fetch(input, {
+      credentials: 'include',
+      ...fetchOptions,
+    });
+
+  const response = await execute();
+  if (skipAuthRefresh || response.status !== 401) {
+    return response;
+  }
+
+  const refreshed = await refreshToken();
+  if (!refreshed) {
+    return response;
+  }
+
+  return execute();
 }
 
 /**
@@ -260,24 +303,9 @@ export async function refreshToken(): Promise<boolean> {
  */
 export async function getCurrentUser(): Promise<AuthState | null> {
   try {
-    const response = await fetch(apiUrl('/me'), {
-      credentials: 'include',
-    });
+    const response = await authenticatedFetch(apiUrl('/me'));
 
     if (!response.ok) {
-      if (response.status === 401) {
-        const refreshed = await refreshToken();
-        if (refreshed) {
-          const retryResponse = await fetch(apiUrl('/me'), {
-            credentials: 'include',
-          });
-
-          if (retryResponse.ok) {
-            return normalizeAuthState((await retryResponse.json()) as AuthResponse);
-          }
-        }
-      }
-
       return null;
     }
 
@@ -291,10 +319,9 @@ export async function getCurrentUser(): Promise<AuthState | null> {
  * 切换工作空间
  */
 export async function switchWorkspace(workspaceId: string): Promise<void> {
-  const response = await fetch(apiUrl('/workspace-context/switch'), {
+  const response = await authenticatedFetch(apiUrl('/workspace-context/switch'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ workspace_id: workspaceId }),
   });
 
@@ -360,9 +387,7 @@ export async function resetPassword(token: string, password: string): Promise<{ 
  * 获取工作空间成员
  */
 export async function listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]> {
-  const response = await fetch(apiUrl(`/workspaces/${workspaceId}/members`), {
-    credentials: 'include',
-  });
+  const response = await authenticatedFetch(apiUrl(`/workspaces/${workspaceId}/members`));
 
   if (!response.ok) {
     throw new Error(await parseErrorMessage(response, '加载成员失败'));
@@ -379,10 +404,9 @@ export async function inviteWorkspaceMember(
   workspaceId: string,
   payload: InviteMemberRequest,
 ): Promise<{ message: string }> {
-  const response = await fetch(apiUrl(`/workspaces/${workspaceId}/invite`), {
+  const response = await authenticatedFetch(apiUrl(`/workspaces/${workspaceId}/invite`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(payload),
   });
 
@@ -400,10 +424,9 @@ export async function updateWorkspaceMemberRole(
   membershipId: string,
   role: Exclude<Role, 'owner'>,
 ): Promise<{ message: string }> {
-  const response = await fetch(apiUrl(`/memberships/${membershipId}`), {
+  const response = await authenticatedFetch(apiUrl(`/memberships/${membershipId}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ role }),
   });
 
@@ -418,9 +441,8 @@ export async function updateWorkspaceMemberRole(
  * 移除成员
  */
 export async function removeWorkspaceMember(membershipId: string): Promise<{ message: string }> {
-  const response = await fetch(apiUrl(`/memberships/${membershipId}`), {
+  const response = await authenticatedFetch(apiUrl(`/memberships/${membershipId}`), {
     method: 'DELETE',
-    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -437,10 +459,9 @@ export async function updateWorkspaceMemberAccess(
   userId: string,
   status: WorkspaceAccessStatus,
 ): Promise<{ message: string; workspace_access?: WorkspaceAccessStatus }> {
-  const response = await fetch(apiUrl(`/admin/users/${userId}/status`), {
+  const response = await authenticatedFetch(apiUrl(`/admin/users/${userId}/status`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ status }),
   });
 

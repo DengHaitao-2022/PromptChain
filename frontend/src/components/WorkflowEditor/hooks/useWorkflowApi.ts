@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { apiUrl } from '@/lib/api-config';
+import { authenticatedFetch } from '@/lib/auth';
 
 // ==================== 类型定义 ====================
 
@@ -78,9 +79,8 @@ export function useWorkflowApi() {
     setError(null);
 
     try {
-      const response = await fetch(apiUrl(url), {
+      const response = await authenticatedFetch(apiUrl(url), {
         ...options,
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...options?.headers,
@@ -94,14 +94,14 @@ export function useWorkflowApi() {
 
       const result = await response.json();
       if (result.code !== undefined && result.code !== 200 && result.code !== 0) {
-          interface ApiError extends Error {
-              code?: number;
-              data?: unknown;
-          }
-          const error = new Error(result.message || '请求失败') as ApiError;
-          error.code = result.code;
-          error.data = result.data;
-          throw error;
+        interface ApiError extends Error {
+          code?: number;
+          data?: unknown;
+        }
+        const error = new Error(result.message || '请求失败') as ApiError;
+        error.code = result.code;
+        error.data = result.data;
+        throw error;
       }
       return result.data !== undefined ? result.data : result;
     } catch (err) {

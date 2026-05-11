@@ -5,6 +5,7 @@
  */
 
 import { apiUrl, serviceUrl } from './api-config';
+import { authenticatedFetch } from './auth';
 
 // 类型定义
 export type WorkflowStatus =
@@ -282,12 +283,11 @@ async function request<T>(
 ): Promise<T> {
   const url = apiUrl(endpoint);
 
-  const response = await fetch(url, {
+  const response = await authenticatedFetch(url, {
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
     },
-    credentials: 'include',
     ...options,
   });
 

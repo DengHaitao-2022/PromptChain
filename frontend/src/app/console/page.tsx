@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiUrl } from '@/lib/api-config';
+import { authenticatedFetch } from '@/lib/auth';
 import { formatAppDateTime } from '@/lib/date-time';
 import styles from './dashboard.module.css';
 
@@ -92,9 +93,7 @@ export default function DashboardPage() {
       }
 
       try {
-        const response = await fetch(apiUrl('/admin/dashboard'), {
-          credentials: 'include',
-        });
+        const response = await authenticatedFetch(apiUrl('/admin/dashboard'));
 
         if (!response.ok) {
           throw new Error('加载数据失败');

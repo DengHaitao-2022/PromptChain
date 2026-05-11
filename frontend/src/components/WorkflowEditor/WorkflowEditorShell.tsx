@@ -253,6 +253,7 @@ const readOnly = useWorkflowContext(selectReadOnly);
                         fitView
                         snapToGrid
                         snapGrid={[15, 15]}
+                        connectionRadius={40}
                     >
                         <Background
                             variant={BackgroundVariant.Dots}

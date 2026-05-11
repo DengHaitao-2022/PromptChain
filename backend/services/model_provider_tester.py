@@ -636,6 +636,8 @@ async def test_model_provider(
                             started_at=prompt_started_at,
                             detail={
                                 "status_code": prompt_response.status_code,
+                                "prompt_text": prompt_text,
+                                "response_text": preview[:500] if preview else None,
                                 "response_preview": preview[:120] if preview else None,
                             },
                         )
@@ -649,7 +651,11 @@ async def test_model_provider(
                             "failed",
                             f"短 Prompt 返回 HTTP {prompt_response.status_code}：{message}",
                             started_at=prompt_started_at,
-                            detail={"status_code": prompt_response.status_code},
+                            detail={
+                                "status_code": prompt_response.status_code,
+                                "prompt_text": prompt_text,
+                                "response_text": message,
+                            },
                         )
                     )
 

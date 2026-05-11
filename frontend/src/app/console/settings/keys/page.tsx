@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { KeyRound, LockKeyhole, Plus, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiUrl } from '@/lib/api-config';
+import { authenticatedFetch } from '@/lib/auth';
 import { formatAppDate } from '@/lib/date-time';
 import styles from '../settings.module.css';
 
@@ -47,8 +48,8 @@ export default function KeysPage() {
 
     try {
       const [secretsRes, keysRes] = await Promise.all([
-        fetch(apiUrl('/admin/secrets'), { credentials: 'include' }),
-        fetch(apiUrl('/admin/api-keys'), { credentials: 'include' }),
+        authenticatedFetch(apiUrl('/admin/secrets')),
+        authenticatedFetch(apiUrl('/admin/api-keys')),
       ]);
 
       if (secretsRes.ok) {
