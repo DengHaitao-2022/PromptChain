@@ -118,7 +118,7 @@ export default function RunsPage() {
       try {
         const response = await workflowApi.getRuns();
         if (active) {
-          setRuns(response.data.runs || []);
+                    setRuns(response.runs || []);
         }
       } catch {
         if (active) {
