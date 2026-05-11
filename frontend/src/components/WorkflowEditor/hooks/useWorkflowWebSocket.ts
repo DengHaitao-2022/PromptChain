@@ -38,6 +38,7 @@ export function useWorkflowWebSocket(
   const [connected, setConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<WSEvent | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
 
   // 连接WebSocket
   const connect = useCallback(() => {
@@ -75,7 +76,7 @@ export function useWorkflowWebSocket(
       // 自动重连
       if (workflowRunId) {
         reconnectTimeoutRef.current = setTimeout(() => {
-          connect();
+          setReconnectAttempt((attempt) => attempt + 1);
         }, 3000);
       }
     };
@@ -108,7 +109,7 @@ export function useWorkflowWebSocket(
     return () => {
       disconnect();
     };
-  }, [workflowRunId, connect, disconnect]);
+  }, [workflowRunId, connect, disconnect, reconnectAttempt]);
 
   return {
     connected,

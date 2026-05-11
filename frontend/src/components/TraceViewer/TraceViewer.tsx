@@ -253,12 +253,12 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
 
                                 {expanded && (
                                     <div className={styles.nodeDetails}>
-                                        {node.error_message && (
+                                        {typeof node.error_message === 'string' && node.error_message ? (
                                             <div className={styles.errorPanel}>
                                                 <AlertTriangle size={16} aria-hidden="true" />
                                                 <span>{asString(node.error_message)}</span>
                                             </div>
-                                        )}
+                                        ) : null}
 
                                         <dl className={styles.detailGrid}>
                                             <div>
@@ -283,20 +283,24 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
                                             <div className={styles.detailSection}>
                                                 <h5>LLM 调用</h5>
                                                 <div className={styles.llmList}>
-                                                    {llmCalls.map((call, callIndex) => (
-                                                        <div key={`${nodeId}-llm-${callIndex}`} className={styles.llmCard}>
-                                                            <div className={styles.llmHeader}>
-                                                                <strong>{asString(call.provider)} / {asString(call.model)}</strong>
-                                                                <span>{formatDuration(call.latency_ms)}</span>
+                                                    {llmCalls.map((call, callIndex) => {
+                                                        const promptPreview = asString(call.prompt_preview, '');
+                                                        const responsePreview = asString(call.response_preview, '');
+                                                        return (
+                                                            <div key={`${nodeId}-llm-${callIndex}`} className={styles.llmCard}>
+                                                                <div className={styles.llmHeader}>
+                                                                    <strong>{asString(call.provider)} / {asString(call.model)}</strong>
+                                                                    <span>{formatDuration(call.latency_ms)}</span>
+                                                                </div>
+                                                                {promptPreview ? (
+                                                                    <p><strong>Prompt：</strong>{promptPreview}</p>
+                                                                ) : null}
+                                                                {responsePreview ? (
+                                                                    <p><strong>Response：</strong>{responsePreview}</p>
+                                                                ) : null}
                                                             </div>
-                                                            {call.prompt_preview && (
-                                                                <p><strong>Prompt：</strong>{asString(call.prompt_preview)}</p>
-                                                            )}
-                                                            {call.response_preview && (
-                                                                <p><strong>Response：</strong>{asString(call.response_preview)}</p>
-                                                            )}
-                                                        </div>
-                                                    ))}
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
                                         )}

@@ -226,6 +226,10 @@ class _FakeWorkflow:
         user_input: str,
         workflow_definition_id: str | None = None,
         workflow_version_id: str | None = None,
+        workspace_id: str | None = None,
+        user_id: str | None = None,
+        model_provider_id: str | None = None,
+        model_name: str | None = None,
     ):
         return {
             "workflow_run_id": "wf-new",
@@ -264,10 +268,15 @@ def _make_client(user_id: str | None = None, workspace_id: str | None = None) ->
 
 def _install_runtime_fakes(monkeypatch, store: _FakeStore | None = None) -> _FakeStore:
     fake_store = store or _FakeStore()
+
+    async def _skip_workflow_audit(*args, **kwargs):
+        return None
+
     monkeypatch.setattr("services.get_artifact_store", lambda: fake_store)
     monkeypatch.setattr("services.get_trace_service", lambda: _FakeTraceService())
     monkeypatch.setattr("services.get_rerun_service", lambda: _FakeRerunService(fake_store))
     monkeypatch.setattr("graph.get_workflow", lambda: _FakeWorkflow(fake_store))
+    monkeypatch.setattr("routes.workflow_routes._record_workflow_audit", _skip_workflow_audit)
     return fake_store
 
 

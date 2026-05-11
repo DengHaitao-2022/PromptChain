@@ -94,25 +94,11 @@ function getActionTone(action: string, outcome: string) {
 }
 
 function toIsoDateTime(value: string) {
-  if (!value) {
-    return undefined;
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  return appDateTimeInputToUtcIsoString(value);
 }
 
 function formatDateTime(value: string | null) {
-  if (!value) {
-    return '-';
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat('zh-CN', {
-    dateStyle: 'short',
-    timeStyle: 'medium',
-  }).format(parsed);
+  return formatAppDateTime(value, value || '-');
 }
 
 function snapshotText(snapshot: Record<string, unknown>, fallback: string) {

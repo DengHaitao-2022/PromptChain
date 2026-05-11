@@ -152,6 +152,26 @@
   color: #fecaca;
 }
 
+.secretReveal {
+  border-color: rgba(251, 191, 36, 0.24);
+  background:
+    radial-gradient(circle at top right, rgba(251, 191, 36, 0.12), transparent 34%),
+    var(--settings-surface);
+}
+
+.secretValueBox {
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid rgba(251, 191, 36, 0.18);
+  border-radius: 16px;
+  background: rgba(3, 7, 18, 0.42);
+  color: var(--settings-text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-all;
+}
+
 .section {
   display: grid;
   gap: 18px;

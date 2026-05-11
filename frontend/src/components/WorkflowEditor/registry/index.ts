@@ -22,7 +22,7 @@ class NodeRegistry {
     }
 
     getNodeTypes() {
-        const types: Record<string, React.ComponentType<any>> = {};
+        const types: Record<string, NodeDefinition['component']> = {};
         for (const [type, def] of this.definitions.entries()) {
             types[type] = def.component;
         }

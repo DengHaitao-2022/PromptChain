@@ -725,7 +725,9 @@ async def list_secrets(request: Request):
         await permission_service.require_permission(user_id, workspace_id, "secret", "read")
 
         result = await session.execute(
-            select(SecretORM).where(SecretORM.workspace_id == workspace_id)
+            select(SecretORM)
+            .where(SecretORM.workspace_id == workspace_id)
+            .order_by(desc(SecretORM.created_at))
         )
         secrets_list = result.scalars().all()
 
@@ -849,7 +851,9 @@ async def list_api_keys(request: Request):
         await permission_service.require_permission(user_id, workspace_id, "api_key", "read")
 
         result = await session.execute(
-            select(ApiKeyORM).where(ApiKeyORM.workspace_id == workspace_id)
+            select(ApiKeyORM)
+            .where(ApiKeyORM.workspace_id == workspace_id)
+            .order_by(desc(ApiKeyORM.created_at))
         )
         keys = result.scalars().all()
 

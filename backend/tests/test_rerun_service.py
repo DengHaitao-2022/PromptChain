@@ -107,8 +107,8 @@ async def test_prepare_rerun_state_maps_artifacts_before_from_node():
     assert state["section_artifact_ids"] == {"intro": "section-1"}
     assert state["fact_check_report"] == {"risk_level": "low"}
     assert state["fact_check_artifact_id"] == "fact-artifact"
-    assert state["final_content"] == {"intro": "Final intro"}
-    assert state["final_content_artifact_id"] == "final-artifact"
+    assert "final_content" not in state
+    assert "final_content_artifact_id" not in state
 
 
 @pytest.mark.asyncio

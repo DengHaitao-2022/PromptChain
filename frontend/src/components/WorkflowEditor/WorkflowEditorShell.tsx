@@ -8,7 +8,7 @@
 'use client';
 
 import { useCallback } from 'react';
-import { ReactFlow, Background, Controls, MiniMap, BackgroundVariant, Panel, type Node } from '@xyflow/react';
+import { ReactFlow, Background, Controls, MiniMap, BackgroundVariant, Panel, type Edge, type Node } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import { useWorkflowContext } from './provider/WorkflowProvider';
@@ -93,8 +93,9 @@ const readOnly = useWorkflowContext(selectReadOnly);
                 y: event.clientY - 100,
             };
 
+            const nodeId = globalThis.crypto.randomUUID();
             const newNode: Node = {
-                id: `${type}-${Date.now()}`,
+                id: `${type}-${nodeId}`,
                 type,
                 position,
                 initialWidth: WORKFLOW_NODE_CARD_WIDTH,

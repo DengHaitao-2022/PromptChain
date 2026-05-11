@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 APP_TIMEZONE_NAME = "Asia/Shanghai"
 APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+UTC_MAX_NAIVE = datetime.max.replace(tzinfo=None)
 
 
 def utc_now() -> datetime:
@@ -18,6 +19,11 @@ def utc_now() -> datetime:
 def utc_now_naive() -> datetime:
     """返回 naive UTC 当前时间，用于兼容现有数据库 DateTime 字段。"""
     return utc_now().replace(tzinfo=None)
+
+
+def utc_max_naive() -> datetime:
+    """返回 naive UTC 最大时间，用作排序兜底哨兵值。"""
+    return UTC_MAX_NAIVE
 
 
 def utc_now_iso() -> str:

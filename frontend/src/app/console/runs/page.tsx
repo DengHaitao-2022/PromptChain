@@ -242,7 +242,7 @@ export default function RunsPage() {
           <div className={styles.panelHeader}>
             <div>
               <h2 className={styles.panelTitle}>运行流</h2>
-              <p className={styles.panelDescription}>真实接口接入后，这里将按时间倒序显示每一次工作流运行。</p>
+              <p className={styles.panelDescription}>按时间倒序显示当前工作空间内可见的工作流运行。</p>
             </div>
           </div>
 

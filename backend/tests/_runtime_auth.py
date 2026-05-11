@@ -21,12 +21,25 @@ def authenticated_client(
     async def _allow_workspace_permission(request, resource: str, action: str):
         return user_id, workspace_id, role
 
+    async def _fake_current_user(request):
+        return {
+            "id": user_id,
+            "sub": user_id,
+            "workspace_id": workspace_id,
+            "default_workspace_id": workspace_id,
+        }
+
+    async def _skip_workflow_audit(*args, **kwargs):
+        return None
+
     monkeypatch.setattr(
         workflow_helpers,
         "require_workspace_permission",
         _allow_workspace_permission,
         raising=False,
     )
+    monkeypatch.setattr("routes.auth_routes.get_current_user", _fake_current_user)
+    monkeypatch.setattr("routes.workflow_routes._record_workflow_audit", _skip_workflow_audit)
 
     client = TestClient(app)
     client.cookies.set(

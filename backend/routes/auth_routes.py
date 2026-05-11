@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
+from core.time import utc_max_naive
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
 from models.auth_models import UserStatus
@@ -199,8 +200,9 @@ def serialize_workspace(membership, workspace, role: str) -> dict[str, Any]:
 
 def get_workspace_sort_key(workspace: dict[str, Any]) -> tuple[datetime, datetime, str]:
     """为工作空间上下文提供稳定排序键，避免 fallback 选择漂移。"""
-    joined_at = workspace.get("joined_at") or workspace.get("created_at") or datetime.max
-    created_at = workspace.get("created_at") or joined_at or datetime.max
+    fallback_time = utc_max_naive()
+    joined_at = workspace.get("joined_at") or workspace.get("created_at") or fallback_time
+    created_at = workspace.get("created_at") or joined_at or fallback_time
     return joined_at, created_at, workspace["id"]
 
 

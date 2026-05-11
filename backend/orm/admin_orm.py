@@ -4,10 +4,10 @@
 包含模型供应商配置、密钥管理、API Key、审计日志等 ORM 定义
 """
 
+# 使用现有的 Base
 from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 
-# 使用现有的 Base
 from core.time import utc_now_naive
 from db.postgres_store import Base
 

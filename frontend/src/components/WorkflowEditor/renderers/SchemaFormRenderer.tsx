@@ -9,8 +9,10 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z, ZodEnum, ZodNumber, ZodString, ZodDefault, ZodOptional } from 'zod';
+import { z, ZodEnum, ZodNumber, ZodDefault, ZodOptional } from 'zod';
 import styles from '../panels/PanelStyles.module.css';
+
+type ZodResolverSchema = Parameters<typeof zodResolver>[0];
 
 interface SchemaFormRendererProps {
     schema: z.ZodTypeAny;
@@ -20,16 +22,18 @@ interface SchemaFormRendererProps {
 
 // 解析可选的或带默认值的 Zod 类型，找到真实底层类型
 function getInnerZodType(schema: z.ZodTypeAny): z.ZodTypeAny {
-    let current: any = schema;
+    let current: z.ZodTypeAny = schema;
     while (current instanceof ZodDefault || current instanceof ZodOptional) {
-        current = current._def.innerType;
+        current = (
+            current as z.ZodDefault<z.ZodTypeAny> | z.ZodOptional<z.ZodTypeAny>
+        )._def.innerType;
     }
-    return current as z.ZodTypeAny;
+    return current;
 }
 
 export default function SchemaFormRenderer({ schema, defaultValues, onChange }: SchemaFormRendererProps) {
     const { control, watch, formState: { errors } } = useForm({
-        resolver: zodResolver(schema as any),
+        resolver: zodResolver(schema as ZodResolverSchema),
         defaultValues,
         mode: 'onChange' // 边填边校验，并在 UI 上及时反馈错误
     });
@@ -87,8 +91,8 @@ export default function SchemaFormRenderer({ schema, defaultValues, onChange }: 
                                 render={({ field }) => (
                                     <select {...field} className={styles.configSelect}>
                                         {(type.options as string[]).map(opt => {
-                                            // TODO: 这里如果要在 Zod 中带中文 label 可以借助自定义元数据
-                                            // 目前为了最简使用原英文值，或者外部映射
+                                            // 如需在 Zod 中带中文 label，可后续借助自定义元数据。
+                                            // 当前保持最小映射，未覆盖项直接显示原始枚举值。
                                             let optLabel = opt;
                                             if (opt === 'gpt-4o') optLabel = 'GPT-4o';
                                             if (opt === 'gpt-4o-mini') optLabel = 'GPT-4o Mini';

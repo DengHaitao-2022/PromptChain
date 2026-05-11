@@ -26,12 +26,13 @@ import {
     traceApi,
     type WorkflowResponse,
     type Outline,
+    type IntentCard,
     type FactCheckReport,
     type WorkflowTrace,
     type WorkflowStatus,
     type WorkflowEventSnapshot,
 } from '@/lib/api';
-import { formatAppDateTime } from '@/lib/date-time';
+import { formatAppDateTime, toEpochMilliseconds } from '@/lib/date-time';
 import {
     OutlineEditor,
     FactCheckViewer,
@@ -290,9 +291,9 @@ function getContentText(value: unknown): string {
 }
 
 function getArtifactTimestamp(artifact: Record<string, unknown>): number {
-    const createdAt = typeof artifact.created_at === 'string' ? Date.parse(artifact.created_at) : NaN;
+    const createdAt = typeof artifact.created_at === 'string' ? toEpochMilliseconds(artifact.created_at) : undefined;
     const version = typeof artifact.version === 'number' ? artifact.version : 0;
-    return Number.isFinite(createdAt) ? createdAt : version;
+    return createdAt === undefined ? version : createdAt;
 }
 
 function getLatestArtifactByType(
@@ -325,14 +326,15 @@ function buildSectionsFromFinalArtifact(
     const content = artifact.content;
     const titleMap = getOutlineTitleMap(outline);
     if (isRecord(content) && isRecord(content.sections)) {
+        const sections = content.sections;
         const orderedIds = asStringArray(content.section_order);
         const sectionIds = orderedIds.length > 0
             ? orderedIds
-            : Object.keys(content.sections);
+            : Object.keys(sections);
 
         return sectionIds
             .map((sectionId) => {
-                const sectionContent = content.sections[sectionId];
+                const sectionContent = sections[sectionId];
                 const text = typeof sectionContent === 'string'
                     ? sectionContent
                     : JSON.stringify(sectionContent, null, 2);
@@ -1369,12 +1371,12 @@ export default function WorkflowDetailPage() {
                                 </div>
                             </div>
                             <div className={styles.stageBody}>
-                                {Boolean(workflow?.state.intent_card) && (
+                                {workflow?.state.intent_card ? (
                                     <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>意图分析</h3>
-                                        <IntentCardViewer intentCard={workflow!.state.intent_card as any} />
+                                        <IntentCardViewer intentCard={workflow.state.intent_card as IntentCard} />
                                     </div>
-                                )}
+                                ) : null}
                                 {workflow?.state.outline && workflow.status !== 'awaiting_outline_approval' && (
                                     <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成提纲</h3>
@@ -1392,8 +1394,8 @@ export default function WorkflowDetailPage() {
                                     <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成内容</h3>
                                         <ContentViewer
-                                            title={workflow.state.outline?.title || '生成内容'}
-                                            abstract={workflow.state.outline?.abstract || ''}
+                                            title={workflow?.state.outline?.title || '生成内容'}
+                                            abstract={workflow?.state.outline?.abstract || ''}
                                             sections={contentSections}
                                             isStreaming={isContentStreaming}
                                         />

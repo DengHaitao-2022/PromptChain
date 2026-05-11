@@ -4,10 +4,10 @@
 从 Pydantic 模型独立出来，便于数据库迁移管理
 """
 
+# 使用现有的 Base
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 
-# 使用现有的 Base
 from core.time import utc_now_naive
 from db.postgres_store import Base
 from models.auth_models import MemberRole, UserStatus

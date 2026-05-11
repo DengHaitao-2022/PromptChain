@@ -6,18 +6,26 @@
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import type { Edge, Node } from '@xyflow/react';
 import type { WebsocketProvider } from 'y-websocket';
 import { yNodes, yEdges, ydoc, resetSharedDocument } from './ydoc';
 import { initProvider, destroyProvider } from './provider';
 import { useWorkflowStoreInstance } from '../../provider/WorkflowProvider';
 import { getNodesArray, getEdgesArray } from './sync';
 
-export function useYjsBindings(workflowId?: string, initialNodes?: any[], initialEdges?: any[]) {
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+
+function normalizeConnectionStatus(status: string): ConnectionStatus {
+    return status === 'connecting' || status === 'connected' ? status : 'disconnected';
+}
+
+export function useYjsBindings(workflowId?: string, initialNodes?: Node[], initialEdges?: Edge[]) {
     const store = useWorkflowStoreInstance();
-    const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+    const [status, setStatus] = useState<ConnectionStatus>('disconnected');
     const [providerInstance, setProviderInstance] = useState<WebsocketProvider | null>(null);
-    const draftRoomRef = useRef(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+    const draftRoomId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+    const draftRoomRef = useRef(`draft-${draftRoomId}`);
 
     useEffect(() => {
         const docId = workflowId || draftRoomRef.current;
@@ -31,10 +39,10 @@ export function useYjsBindings(workflowId?: string, initialNodes?: any[], initia
             name: `User ${randomId}`,
             color: colors[Math.floor(Math.random() * colors.length)]
         });
-        setProviderInstance(p);
+        queueMicrotask(() => setProviderInstance(p));
 
         p.on('status', (event: { status: string }) => {
-            setStatus(event.status as any);
+            setStatus(normalizeConnectionStatus(event.status));
         });
 
         // 仅在文档为空且有初始节点时同步到 Yjs
@@ -61,7 +69,7 @@ export function useYjsBindings(workflowId?: string, initialNodes?: any[], initia
         const updateZustand = () => {
             // 本地选中态不存 Yjs，重置时需合并回来
             const localNodes = store.getState().nodes;
-            const selectionMap = new Map(localNodes.map((n: any) => [n.id, n.selected]));
+            const selectionMap = new Map(localNodes.map((n) => [n.id, Boolean(n.selected)]));
 
             const newNodes = getNodesArray().map(n => ({
                 ...n,

@@ -3,7 +3,7 @@ const APP_TIME_ZONE = 'Asia/Shanghai';
 
 type DateInput = string | number | Date | null | undefined;
 
-function parseDate(value: DateInput): Date | null {
+export function parseAppDate(value: DateInput): Date | null {
   if (value === null || value === undefined || value === '') {
     return null;
   }
@@ -13,7 +13,7 @@ function parseDate(value: DateInput): Date | null {
 }
 
 export function formatAppDateTime(value: DateInput, fallback = '暂无记录'): string {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   if (!date) {
     return fallback;
   }
@@ -29,7 +29,7 @@ export function formatAppDateTime(value: DateInput, fallback = '暂无记录'): 
 }
 
 export function formatAppDate(value: DateInput, fallback = '暂无记录'): string {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   if (!date) {
     return fallback;
   }
@@ -43,7 +43,7 @@ export function formatAppDate(value: DateInput, fallback = '暂无记录'): stri
 }
 
 export function formatCompactAppDateTime(value: DateInput, fallback = '暂无记录'): string {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   if (!date) {
     return fallback;
   }
@@ -58,7 +58,7 @@ export function formatCompactAppDateTime(value: DateInput, fallback = '暂无记
 }
 
 export function formatAppTime(value: DateInput, fallback = '暂无记录'): string {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   if (!date) {
     return fallback;
   }
@@ -72,8 +72,13 @@ export function formatAppTime(value: DateInput, fallback = '暂无记录'): stri
 }
 
 export function toUtcIsoString(value: DateInput): string | undefined {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   return date?.toISOString();
+}
+
+export function toEpochMilliseconds(value: DateInput): number | undefined {
+  const date = parseAppDate(value);
+  return date?.getTime();
 }
 
 export function appDateTimeInputToUtcIsoString(value: string): string | undefined {
