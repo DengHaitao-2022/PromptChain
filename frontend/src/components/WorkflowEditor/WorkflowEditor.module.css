@@ -65,9 +65,12 @@
   border-radius: 999px;
   padding: 0 12px;
   font-size: 0.76rem;
+  font-weight: 800;
   font-family: var(--font-mono);
+  line-height: 1;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .draftBadge {
@@ -92,6 +95,30 @@
   background: rgba(148, 163, 184, 0.14);
   border: 1px solid rgba(148, 163, 184, 0.18);
   color: #d3deea;
+}
+
+:global(html[data-theme='light']) .draftBadge {
+  border-color: rgba(146, 64, 14, 0.22);
+  background: rgba(217, 119, 6, 0.12);
+  color: #92400e;
+}
+
+:global(html[data-theme='light']) .publishedBadge {
+  border-color: rgba(22, 101, 52, 0.2);
+  background: rgba(22, 163, 74, 0.12);
+  color: #14532d;
+}
+
+:global(html[data-theme='light']) .versionBadge {
+  border-color: rgba(7, 89, 133, 0.22);
+  background: rgba(2, 132, 199, 0.12);
+  color: #075985;
+}
+
+:global(html[data-theme='light']) .metaBadge {
+  border-color: rgba(51, 65, 85, 0.16);
+  background: rgba(100, 116, 139, 0.1);
+  color: #334155;
 }
 
 .fieldGroup {
@@ -189,9 +216,9 @@
 }
 
 .publishButton {
-  background: linear-gradient(135deg, #22c55e, #16a34a);
-  color: #05110a;
-  box-shadow: 0 14px 32px rgba(34, 197, 94, 0.18);
+  background: linear-gradient(135deg, #2f9e8f, #1d6f68);
+  color: #ffffff;
+  box-shadow: 0 14px 32px rgba(15, 118, 110, 0.16);
 }
 
 .feedbackPanel {

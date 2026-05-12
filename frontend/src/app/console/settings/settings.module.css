@@ -413,7 +413,7 @@
 }
 
 .button:disabled {
-  opacity: 0.56;
+  opacity: 0.74;
   cursor: not-allowed;
   box-shadow: none;
 }
@@ -873,6 +873,80 @@
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+:global(html[data-theme='light']) .button:disabled {
+  opacity: 1;
+  border-color: rgba(15, 23, 42, 0.12);
+  background: rgba(248, 250, 252, 0.88);
+  color: #64748b;
+}
+
+:global(html[data-theme='light']) .buttonSecondary {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.78);
+  color: #0f172a;
+}
+
+:global(html[data-theme='light']) .buttonGhost {
+  border-color: rgba(15, 23, 42, 0.12);
+  background: rgba(248, 250, 252, 0.74);
+  color: #334155;
+}
+
+:global(html[data-theme='light']) .buttonDanger {
+  border-color: rgba(153, 27, 27, 0.2);
+  background: rgba(220, 38, 38, 0.1);
+  color: #991b1b;
+}
+
+:global(html[data-theme='light']) .buttonDanger:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.14);
+}
+
+:global(html[data-theme='light']) .owner {
+  border-color: rgba(146, 64, 14, 0.22);
+  background: rgba(217, 119, 6, 0.12);
+  color: #92400e;
+}
+
+:global(html[data-theme='light']) .admin,
+:global(html[data-theme='light']) .info {
+  border-color: rgba(7, 89, 133, 0.22);
+  background: rgba(2, 132, 199, 0.12);
+  color: #075985;
+}
+
+:global(html[data-theme='light']) .editor,
+:global(html[data-theme='light']) .success {
+  border-color: rgba(22, 101, 52, 0.2);
+  background: rgba(22, 163, 74, 0.12);
+  color: #14532d;
+}
+
+:global(html[data-theme='light']) .viewer,
+:global(html[data-theme='light']) .neutral {
+  border-color: rgba(51, 65, 85, 0.16);
+  background: rgba(100, 116, 139, 0.1);
+  color: #334155;
+}
+
+:global(html[data-theme='light']) .warning {
+  border-color: rgba(146, 64, 14, 0.22);
+  background: rgba(217, 119, 6, 0.12);
+  color: #92400e;
+}
+
+:global(html[data-theme='light']) .error {
+  border-color: rgba(153, 27, 27, 0.2);
+  background: rgba(220, 38, 38, 0.1);
+  color: #991b1b;
+}
+
+:global(html[data-theme='light']) .codeBlock {
+  border-color: rgba(51, 65, 85, 0.16);
+  background: rgba(248, 250, 252, 0.92);
+  color: #334155;
 }
 
 .pagination {
