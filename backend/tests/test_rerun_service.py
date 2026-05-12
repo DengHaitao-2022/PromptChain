@@ -119,7 +119,26 @@ async def test_prepare_rerun_state_maps_artifacts_before_from_node():
                 },
                 "fact-artifact": {
                     "type": ArtifactType.FACT_CHECK_REPORT.value,
-                    "content": {"risk_level": "low"},
+                    "content": {
+                        "claims": [
+                            {
+                                "id": "claim-1",
+                                "text": "事实声明",
+                                "section_id": "intro",
+                            }
+                        ],
+                        "results": [
+                            {
+                                "claim_id": "claim-1",
+                                "is_verified": True,
+                                "confidence": 0.9,
+                                "risk_level": "low",
+                            }
+                        ],
+                        "total_claims": 1,
+                        "verified_count": 1,
+                        "unverified_count": 0,
+                    },
                 },
                 "final-artifact": {
                     "type": ArtifactType.FINAL_CONTENT.value,
@@ -139,7 +158,7 @@ async def test_prepare_rerun_state_maps_artifacts_before_from_node():
     assert state["outline_approved"] is True
     assert state["draft_sections"] == {"intro": "Intro draft"}
     assert state["section_artifact_ids"] == {"intro": "section-1"}
-    assert state["fact_check_report"] == {"risk_level": "low"}
+    assert state["fact_check_report"].results[0].risk_level == "low"
     assert state["fact_check_artifact_id"] == "fact-artifact"
     assert "final_content" not in state
     assert "final_content_artifact_id" not in state

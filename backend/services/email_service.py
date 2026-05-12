@@ -6,7 +6,6 @@
 
 import hashlib
 import logging
-import os
 import re
 import secrets
 import uuid
@@ -19,27 +18,19 @@ from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from core.config import get_settings
 from core.time import utc_now_naive
 from models.auth_orm import EmailVerificationTokenORM, PasswordResetTokenORM
-
-# ==================== 配置 ====================
-
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM = os.getenv("SMTP_FROM", "noreply@promptchain.com")
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 
 # Token 有效期
 EMAIL_VERIFICATION_EXPIRE_HOURS = 24
 PASSWORD_RESET_EXPIRE_HOURS = 1
 
-# 应用URL（用于生成邮件中的链接）
-APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:3000")
-EMAIL_DEV_LOG_BODY = os.getenv("EMAIL_DEV_LOG_BODY", "false").lower() == "true"
-
 logger = logging.getLogger(__name__)
+
+
+class EmailDeliveryError(RuntimeError):
+    """邮件基础设施发送失败。"""
 
 
 # ==================== Token 生成 ====================
@@ -71,6 +62,11 @@ class EmailService:
         """对包含 token 的链接做脱敏，避免在日志中泄露凭证。"""
         return re.sub(r"(token=)([^&\"'>\s]+)", r"\1***", html_content)
 
+    @staticmethod
+    def _settings():
+        """运行时读取配置，便于测试和本地环境切换。"""
+        return get_settings()
+
     async def send_email(
         self, to_email: str, subject: str, html_content: str, text_content: str | None = None
     ) -> bool:
@@ -84,12 +80,13 @@ class EmailService:
             text_content: 纯文本内容（可选）
 
         Returns:
-            是否发送成功
+            是否发送成功；真实 SMTP 失败时抛出 EmailDeliveryError。
         """
-        if not SMTP_USER or not SMTP_PASSWORD:
+        settings = self._settings()
+        if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
             # 开发回退：未配置 SMTP 时仅输出脱敏摘要。
             logger.warning("SMTP 未配置，跳过真实发送，收件人=%s 主题=%s", to_email, subject)
-            if EMAIL_DEV_LOG_BODY:
+            if settings.EMAIL_DEV_LOG_BODY:
                 logger.debug(
                     "邮件内容(脱敏)=%s",
                     self._sanitize_html_for_log(html_content),
@@ -99,7 +96,7 @@ class EmailService:
         try:
             # 创建邮件
             message = MIMEMultipart("alternative")
-            message["From"] = SMTP_FROM
+            message["From"] = settings.SMTP_FROM
             message["To"] = to_email
             message["Subject"] = subject
 
@@ -111,17 +108,18 @@ class EmailService:
             # 发送邮件
             await aiosmtplib.send(
                 message,
-                hostname=SMTP_HOST,
-                port=SMTP_PORT,
-                username=SMTP_USER,
-                password=SMTP_PASSWORD,
-                start_tls=SMTP_USE_TLS,
+                hostname=settings.SMTP_HOST,
+                port=settings.SMTP_PORT,
+                username=settings.SMTP_USER,
+                password=settings.SMTP_PASSWORD,
+                start_tls=settings.SMTP_USE_TLS,
+                timeout=settings.SMTP_TIMEOUT_SECONDS,
             )
             return True
 
-        except Exception:
+        except Exception as exc:
             logger.exception("邮件发送失败，收件人=%s 主题=%s", to_email, subject)
-            return False
+            raise EmailDeliveryError("邮件服务暂不可用，请稍后重试") from exc
 
     async def send_verification_email(self, user_id: str, email: str) -> bool:
         """
@@ -146,10 +144,10 @@ class EmailService:
             expires_at=expires_at,
         )
         self.session.add(token_orm)
-        await self.session.commit()
+        await self.session.flush()
 
         # 构建验证链接
-        verification_link = f"{APP_BASE_URL}/verify-email?token={token}"
+        verification_link = f"{self._settings().APP_BASE_URL}/verify-email?token={token}"
 
         # 邮件内容
         html_content = f"""
@@ -174,11 +172,13 @@ class EmailService:
         </div>
         """
 
-        return await self.send_email(
+        result = await self.send_email(
             to_email=email,
             subject="验证您的 PromptChain 邮箱",
             html_content=html_content,
         )
+        await self.session.commit()
+        return result
 
     async def send_password_reset_email(self, user_id: str, email: str) -> bool:
         """
@@ -203,10 +203,10 @@ class EmailService:
             expires_at=expires_at,
         )
         self.session.add(token_orm)
-        await self.session.commit()
+        await self.session.flush()
 
         # 构建重置链接
-        reset_link = f"{APP_BASE_URL}/reset-password?token={token}"
+        reset_link = f"{self._settings().APP_BASE_URL}/reset-password?token={token}"
 
         # 邮件内容
         html_content = f"""
@@ -231,11 +231,13 @@ class EmailService:
         </div>
         """
 
-        return await self.send_email(
+        result = await self.send_email(
             to_email=email,
             subject="重置您的 PromptChain 密码",
             html_content=html_content,
         )
+        await self.session.commit()
+        return result
 
     async def verify_email_token(self, token: str) -> str | None:
         """

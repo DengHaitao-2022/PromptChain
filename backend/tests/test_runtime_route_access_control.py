@@ -195,7 +195,13 @@ class _FakeRerunService:
     ):
         return updated_input or {}
 
-    async def create_rerun_workflow(self, workflow_run_id: str, from_node: str, reason: str = ""):
+    async def create_rerun_workflow(
+        self,
+        workflow_run_id: str,
+        from_node: str,
+        reason: str = "",
+        updated_user_input: str | None = None,
+    ):
         return self.store.workflow_runs["wf-rerun"]
 
     async def get_rerun_history(self, workflow_run_id: str):
@@ -242,6 +248,22 @@ class _FakeWorkflow:
 
     async def resume_paused(self, workflow_run_id: str):
         return {"workflow_run_id": workflow_run_id, "status": "running", "state": {}}
+
+    async def rerun_from_node(
+        self,
+        workflow_run_id: str,
+        *,
+        from_node: str,
+        preserved_state: dict,
+    ):
+        return {
+            "workflow_run_id": workflow_run_id,
+            "status": "running",
+            "state": {
+                **preserved_state,
+                "rerun_from_node": from_node,
+            },
+        }
 
     async def resume(self, workflow_run_id: str, user_input: dict):
         return {"workflow_run_id": workflow_run_id, "status": "running", "state": user_input}

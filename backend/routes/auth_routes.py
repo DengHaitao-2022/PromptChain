@@ -4,6 +4,7 @@
 提供登录、注册、登出、Token 刷新等认证功能
 """
 
+import logging
 import os
 from datetime import datetime
 from typing import Any
@@ -22,10 +23,11 @@ from services.auth_service import (
     create_refresh_token,
     verify_access_token,
 )
-from services.email_service import EmailService
+from services.email_service import EmailDeliveryError, EmailService
 from services.permission_service import resolve_membership_role
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Cookie 配置
 ACCESS_TOKEN_COOKIE = "access_token"
@@ -317,6 +319,9 @@ async def register(request: Request, body: RegisterRequest):
 
             return MessageResponse(message="注册成功，请查收验证邮件")
 
+        except EmailDeliveryError as e:
+            await session.rollback()
+            raise HTTPException(status_code=502, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -533,21 +538,26 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
         # 无论用户是否存在都返回成功（安全考虑）
         if user:
             email_service = EmailService(session)
-            await email_service.send_password_reset_email(user.id, user.email)
-            auth_context = await build_auth_context(user.id)
-            workspace = auth_context["workspace"]
-            if workspace:
-                await AuditLogService(session).record(
-                    workspace_id=workspace["id"],
-                    actor_user_id=user.id,
-                    action=AuditAction.USER_PASSWORD_RESET,
-                    request=request,
-                    target_type="user",
-                    target_id=user.id,
-                    detail={"stage": "reset_email_requested"},
-                    target_snapshot=auth_context["user"],
-                )
-                await session.commit()
+            try:
+                await email_service.send_password_reset_email(user.id, user.email)
+            except EmailDeliveryError:
+                await session.rollback()
+                logger.exception("密码重置邮件发送失败，user_id=%s", user.id)
+            else:
+                auth_context = await build_auth_context(user.id)
+                workspace = auth_context["workspace"]
+                if workspace:
+                    await AuditLogService(session).record(
+                        workspace_id=workspace["id"],
+                        actor_user_id=user.id,
+                        action=AuditAction.USER_PASSWORD_RESET,
+                        request=request,
+                        target_type="user",
+                        target_id=user.id,
+                        detail={"stage": "reset_email_requested"},
+                        target_snapshot=auth_context["user"],
+                    )
+                    await session.commit()
 
         return MessageResponse(message="如果该邮箱已注册，您将收到密码重置邮件")
 

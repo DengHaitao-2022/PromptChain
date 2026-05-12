@@ -14,6 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import and_
 from sqlalchemy.future import select
 
+from core.config import get_settings
 from core.time import utc_now_naive
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
@@ -28,7 +29,7 @@ from routes.auth_routes import (
 )
 from services.audit_log_service import AuditLogService
 from services.auth_service import create_access_token
-from services.email_service import EmailService
+from services.email_service import EmailDeliveryError, EmailService
 from services.permission_service import (
     PermissionService,
     resolve_membership_role,
@@ -420,21 +421,23 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
                 "expires_at": invite.expires_at,
             },
         )
-        await session.commit()
 
         # 发送邀请邮件
-        import os
-
-        app_base_url = os.getenv("APP_BASE_URL", "http://localhost:3000")
-        invite_link = f"{app_base_url}/invite?token={token}"
+        invite_link = f"{get_settings().APP_BASE_URL}/invite?token={token}"
 
         email_service = EmailService(session)
-        await email_service.send_workspace_invite_email(
-            email=body.email,
-            workspace_name=workspace.name,
-            inviter_name=inviter.display_name or inviter.email,
-            invite_link=invite_link,
-        )
+        try:
+            await email_service.send_workspace_invite_email(
+                email=body.email,
+                workspace_name=workspace.name,
+                inviter_name=inviter.display_name or inviter.email,
+                invite_link=invite_link,
+            )
+        except EmailDeliveryError as e:
+            await session.rollback()
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        await session.commit()
 
         return {
             "message": f"邀请已发送至 {body.email}",
