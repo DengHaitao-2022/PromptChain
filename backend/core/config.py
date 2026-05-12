@@ -56,6 +56,8 @@ class Settings:
         self.SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
         self.SMTP_FROM: str = os.getenv("SMTP_FROM", self.SMTP_USER or "noreply@promptchain.com")
         self.SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+        # 465 端口使用直连 SSL；587 端口通常使用 STARTTLS，二者不要同时启用。
+        self.SMTP_USE_SSL: bool = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
         self.SMTP_TIMEOUT_SECONDS: float = float(os.getenv("SMTP_TIMEOUT_SECONDS", "20"))
         self.APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
         self.EMAIL_DEV_LOG_BODY: bool = os.getenv("EMAIL_DEV_LOG_BODY", "false").lower() == "true"

@@ -193,7 +193,7 @@ class AuthService:
             if result.scalar_one_or_none():
                 raise ValueError("该用户名已被使用")
 
-        # 创建用户和默认工作空间，尽量收敛到一次提交，避免只写入部分认证数据。
+        # 创建用户和默认工作空间；提交由注册用例统一控制，避免邮件失败后留下不可验证账号。
         user_id = str(uuid.uuid4())
         display_name_value = display_name or email.split("@")[0]
         user_kwargs: dict[str, Any] = {
@@ -213,7 +213,7 @@ class AuthService:
         # 创建默认工作空间
         await self._create_default_workspace(user_id, display_name_value)
 
-        await self.session.commit()
+        await self.session.flush()
 
         return User(
             id=user_id,
@@ -412,6 +412,11 @@ class AuthService:
     async def get_user_by_id(self, user_id: str) -> UserORM | None:
         """根据ID获取用户"""
         result = await self.session.execute(select(UserORM).where(UserORM.id == user_id))
+        return result.scalar_one_or_none()
+
+    async def get_user_by_email(self, email: str) -> UserORM | None:
+        """根据邮箱获取用户。"""
+        result = await self.session.execute(select(UserORM).where(UserORM.email == email))
         return result.scalar_one_or_none()
 
     async def get_user_workspaces(self, user_id: str) -> list[tuple[MembershipORM, WorkspaceORM]]:

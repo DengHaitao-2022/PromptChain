@@ -15,6 +15,7 @@ EMAIL_ENV_KEYS = [
     "SMTP_PASSWORD",
     "SMTP_FROM",
     "SMTP_USE_TLS",
+    "SMTP_USE_SSL",
     "SMTP_TIMEOUT_SECONDS",
     "APP_BASE_URL",
     "EMAIL_DEV_LOG_BODY",
@@ -66,6 +67,7 @@ async def test_send_email_uses_runtime_smtp_settings(monkeypatch):
     monkeypatch.setenv("SMTP_PASSWORD", "smtp-password")
     monkeypatch.setenv("SMTP_FROM", "noreply@example.com")
     monkeypatch.setenv("SMTP_USE_TLS", "false")
+    monkeypatch.setenv("SMTP_USE_SSL", "false")
     monkeypatch.setenv("SMTP_TIMEOUT_SECONDS", "7")
     get_settings.cache_clear()
 
@@ -92,6 +94,7 @@ async def test_send_email_uses_runtime_smtp_settings(monkeypatch):
         "port": 2525,
         "username": "smtp-user",
         "password": "smtp-password",
+        "use_tls": False,
         "start_tls": False,
         "timeout": 7.0,
     }

@@ -69,6 +69,12 @@ class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
 
+class ResendVerificationEmailRequest(BaseModel):
+    """重发验证邮件请求"""
+
+    email: EmailStr
+
+
 class ResetPasswordRequest(BaseModel):
     """重置密码请求"""
 
@@ -518,6 +524,33 @@ async def verify_email(request: Request, body: VerifyEmailRequest):
         return MessageResponse(message="邮箱验证成功，您现在可以登录了")
 
 
+@router.post("/auth/resend-verification-email", response_model=MessageResponse)
+async def resend_verification_email(body: ResendVerificationEmailRequest):
+    """
+    重发验证邮件
+
+    仅对未验证用户重发，其他情况返回中性成功，避免暴露账号状态。
+    """
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        auth_service = AuthService(session)
+        email_service = EmailService(session)
+
+        user = await auth_service.get_user_by_email(body.email)
+        if not user or user.email_verified or user.status != UserStatus.INACTIVE.value:
+            return MessageResponse(message="如果该邮箱需要验证，您将收到验证邮件")
+
+        user_id = user.id  # 预先获取 user_id，避免异常处理里触发懒加载。
+        try:
+            await email_service.send_verification_email(user.id, user.email)
+        except EmailDeliveryError as e:
+            await session.rollback()
+            logger.exception("验证邮件重发失败，user_id=%s", user_id)
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        return MessageResponse(message="如果该邮箱需要验证，您将收到验证邮件")
+
+
 @router.post("/auth/forgot-password", response_model=MessageResponse)
 async def forgot_password(request: Request, body: ForgotPasswordRequest):
     """
@@ -538,11 +571,12 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
         # 无论用户是否存在都返回成功（安全考虑）
         if user:
             email_service = EmailService(session)
+            user_id = user.id  # 预先获取 user_id，避免在异常处理中触发异步查询
             try:
                 await email_service.send_password_reset_email(user.id, user.email)
             except EmailDeliveryError:
                 await session.rollback()
-                logger.exception("密码重置邮件发送失败，user_id=%s", user.id)
+                logger.exception("密码重置邮件发送失败，user_id=%s", user_id)
             else:
                 auth_context = await build_auth_context(user.id)
                 workspace = auth_context["workspace"]

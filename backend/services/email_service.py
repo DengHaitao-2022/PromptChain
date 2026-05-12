@@ -105,20 +105,28 @@ class EmailService:
                 message.attach(MIMEText(text_content, "plain", "utf-8"))
             message.attach(MIMEText(html_content, "html", "utf-8"))
 
-            # 发送邮件
+            # 发送邮件：465 使用直连 SSL，587 使用 STARTTLS，避免混用导致连接失败。
             await aiosmtplib.send(
                 message,
                 hostname=settings.SMTP_HOST,
                 port=settings.SMTP_PORT,
                 username=settings.SMTP_USER,
                 password=settings.SMTP_PASSWORD,
-                start_tls=settings.SMTP_USE_TLS,
+                use_tls=settings.SMTP_USE_SSL,
+                start_tls=settings.SMTP_USE_TLS if not settings.SMTP_USE_SSL else False,
                 timeout=settings.SMTP_TIMEOUT_SECONDS,
             )
             return True
 
         except Exception as exc:
             logger.exception("邮件发送失败，收件人=%s 主题=%s", to_email, subject)
+            # 如果是 SMTP 连接问题，记录更详细的错误信息
+            if "smtp" in str(exc).lower() or "connect" in str(exc).lower():
+                logger.warning(
+                    "SMTP 连接失败，建议检查：1) 465 端口设置 SMTP_USE_SSL=true 且 SMTP_USE_TLS=false "
+                    "2) 587 端口设置 SMTP_USE_SSL=false 且 SMTP_USE_TLS=true "
+                    "3) 用户名密码或应用专用密码是否正确 4) 邮箱服务是否启用 SMTP"
+                )
             raise EmailDeliveryError("邮件服务暂不可用，请稍后重试") from exc
 
     async def send_verification_email(self, user_id: str, email: str) -> bool:
