@@ -224,6 +224,42 @@ export interface WorkflowRunSummary {
   total_duration_ms: number | null;
 }
 
+export interface RerunOption {
+  node_name: string;
+  node_run_id: string;
+  status?: string;
+  completed_at?: string | null;
+  output_artifacts?: Record<string, unknown>[];
+  can_rerun: boolean;
+}
+
+export interface RerunHistoryItem {
+  id: string;
+  workflow_name?: string;
+  status?: WorkflowStatus | string;
+  user_input?: string;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  metadata?: {
+    is_rerun?: boolean;
+    original_workflow_run_id?: string;
+    rerun_from_node?: string;
+    rerun_reason?: string;
+    rerun_at?: string;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+}
+
+export interface RerunResponse {
+  original_workflow_run_id: string;
+  new_workflow_run_id: string;
+  rerun_from_node: string;
+  status: WorkflowStatus | string;
+  state: WorkflowResponse['state'];
+}
+
 export type AuditOutcome = 'success' | 'failure' | 'unknown';
 
 export interface AuditLogEntry {
@@ -484,8 +520,14 @@ export const workflowApi = {
 
   // 获取重跑选项
   getRerunOptions: (workflowRunId: string) =>
-    request<{ options: Record<string, unknown>[] }>(
+    request<{ options: RerunOption[] }>(
       `/workflow/${workflowRunId}/rerun-options`
+    ),
+
+  // 获取重跑历史
+  getRerunHistory: (workflowRunId: string) =>
+    request<{ history: RerunHistoryItem[] }>(
+      `/workflow/${workflowRunId}/rerun-history`
     ),
 
   // 执行重跑
@@ -495,7 +537,7 @@ export const workflowApi = {
     updatedInput?: Record<string, unknown>,
     reason?: string
   ) =>
-    request<Record<string, unknown>>(`/workflow/${workflowRunId}/rerun`, {
+    request<RerunResponse>(`/workflow/${workflowRunId}/rerun`, {
       method: 'POST',
       body: JSON.stringify({
         from_node: fromNode,

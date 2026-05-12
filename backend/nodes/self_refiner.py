@@ -43,6 +43,9 @@ FEEDBACK_PROMPT = """作为一个严格的编辑，请审阅以下文章段落�
 ## 章节标题
 {section_title}
 
+## 重跑修订要求
+{rerun_instruction}
+
 ## 待审阅内容
 {content}
 
@@ -68,6 +71,9 @@ REFINE_PROMPT = """请根据以下反馈，修订文章内容。
 
 ## 反馈意见
 {feedback}
+
+## 重跑修订要求
+{rerun_instruction}
 
 ## 修订要求
 1. 仅修改反馈中指出的问题
@@ -166,6 +172,7 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
     )
     prompt = ChatPromptTemplate.from_template(FEEDBACK_PROMPT)
     chain = prompt | llm
+    rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
 
     feedback = await invoke_with_llm_retry(
         lambda: chain.ainvoke(
@@ -177,6 +184,7 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
                 "section_id": section_id,
                 "content": content,
                 "current_words": len(content),
+                "rerun_instruction": rerun_instruction,
             }
         )
     )
@@ -209,7 +217,13 @@ async def refine_section(
 """
 
     result = await invoke_with_llm_retry(
-        lambda: chain.ainvoke({"original_content": original_content, "feedback": feedback_text})
+        lambda: chain.ainvoke(
+            {
+                "original_content": original_content,
+                "feedback": feedback_text,
+                "rerun_instruction": state.get("rerun_instruction") or "无额外修订要求",
+            }
+        )
     )
 
     return result.content

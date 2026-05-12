@@ -25,6 +25,8 @@ class GraphState(TypedDict, total=False):
     workflow_context: dict[str, Any] | None
     is_paused: bool
     pause_reason: str | None
+    rerun_from_node: str | None
+    rerun_instruction: str | None
 
     # 意图解析
     intent_card: IntentCard | None

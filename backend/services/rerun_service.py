@@ -10,7 +10,14 @@
 from typing import Any
 
 from core.time import utc_now_iso
-from models import ArtifactType, WorkflowRun, WorkflowRunStatus
+from models import (
+    ArtifactType,
+    FactCheckReport,
+    IntentCard,
+    Outline,
+    WorkflowRun,
+    WorkflowRunStatus,
+)
 from services.artifact_store import ArtifactStore, get_artifact_store
 from services.trace_service import TraceService, get_trace_service
 
@@ -76,10 +83,10 @@ class RerunService:
                     content = artifact_data["content"]
 
                     if artifact_type == ArtifactType.INTENT_CARD.value:
-                        preserved_state["intent_card"] = content
+                        preserved_state["intent_card"] = IntentCard.model_validate(content)
                         preserved_state["intent_card_artifact_id"] = aid
                     elif artifact_type == ArtifactType.OUTLINE.value:
-                        preserved_state["outline"] = content
+                        preserved_state["outline"] = Outline.model_validate(content)
                         preserved_state["outline_artifact_id"] = aid
                         preserved_state["outline_approved"] = True
                     elif artifact_type == ArtifactType.SECTION_CONTENT.value:
@@ -95,7 +102,9 @@ class RerunService:
                             )
                             preserved_state["section_artifact_ids"][section_id] = aid
                     elif artifact_type == ArtifactType.FACT_CHECK_REPORT.value:
-                        preserved_state["fact_check_report"] = content
+                        preserved_state["fact_check_report"] = FactCheckReport.model_validate(
+                            content
+                        )
                         preserved_state["fact_check_artifact_id"] = aid
                     elif artifact_type == ArtifactType.FINAL_CONTENT.value:
                         preserved_state["final_content"] = content.get("sections", {})
@@ -108,7 +117,11 @@ class RerunService:
         return preserved_state
 
     async def create_rerun_workflow(
-        self, original_workflow_run_id: str, from_node: str, reason: str = ""
+        self,
+        original_workflow_run_id: str,
+        from_node: str,
+        reason: str = "",
+        updated_user_input: str | None = None,
     ) -> WorkflowRun:
         """
         创建新的 WorkflowRun 用于重跑（关联原始运行）
@@ -125,7 +138,7 @@ class RerunService:
         new_workflow_run = WorkflowRun(
             workflow_name=original.workflow_name,
             workflow_version=original.workflow_version,
-            user_input=original.user_input,
+            user_input=updated_user_input or original.user_input,
             status=WorkflowRunStatus.RUNNING,
             metadata={
                 "is_rerun": True,

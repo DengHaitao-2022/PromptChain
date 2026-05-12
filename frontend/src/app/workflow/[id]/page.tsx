@@ -6,18 +6,23 @@ import {
     Activity,
     AlertTriangle,
     ArrowLeft,
+    ArrowRight,
     Braces,
     CheckCheck,
     CheckCircle2,
     Clock3,
     FileText,
+    GitBranch,
+    History,
     ListChecks,
     LoaderCircle,
     MessageSquareQuote,
-    ShieldAlert,
-    Sparkles,
     Pause,
     Play,
+    RotateCcw,
+    Send,
+    ShieldAlert,
+    Sparkles,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import styles from './page.module.css';
@@ -31,6 +36,8 @@ import {
     type WorkflowTrace,
     type WorkflowStatus,
     type WorkflowEventSnapshot,
+    type RerunOption,
+    type RerunHistoryItem,
 } from '@/lib/api';
 import { formatAppDateTime, toEpochMilliseconds } from '@/lib/date-time';
 import {
@@ -73,6 +80,41 @@ interface ContentSection {
     title: string;
     content: string;
     wordCount: number;
+}
+
+const RERUN_NODE_LABELS: Record<string, string> = {
+    parse_intent: '意图解析',
+    generate_outline: '提纲生成',
+    generate_content: '内容生成',
+    self_refine: '自检修订',
+    check_facts: '事实核查',
+    finalize: '最终输出',
+};
+
+const RERUN_NODE_DESCRIPTIONS: Record<string, string> = {
+    parse_intent: '重新解析用户输入，适合大幅调整主题、受众或目标。',
+    generate_outline: '保留意图卡，从提纲重新生成，适合调整结构和章节重点。',
+    generate_content: '保留已确认提纲，从正文生成重新开始。',
+    self_refine: '保留正文草稿，从自检修订重新开始。',
+    check_facts: '保留修订后内容，从事实核查重新开始。',
+    finalize: '保留核查结果，重新整理最终交付产物。',
+};
+
+function getRerunNodeLabel(nodeName: string): string {
+    return RERUN_NODE_LABELS[nodeName] ?? formatEntryLabel(nodeName);
+}
+
+function getRerunStatusLabel(status?: string): string {
+    switch (status) {
+        case 'completed':
+            return '已完成';
+        case 'interrupted':
+            return '等待确认';
+        case 'failed':
+            return '执行失败';
+        default:
+            return status ?? '可重跑';
+    }
 }
 
 function getStatusMeta(status?: WorkflowStatus): StatusMeta {
@@ -496,6 +538,13 @@ export default function WorkflowDetailPage() {
     const [error, setError] = React.useState<string | null>(null);
     const [actionLoading, setActionLoading] = React.useState(false);
     const [completedView, setCompletedView] = React.useState<'preview' | 'raw'>('preview');
+    const [rerunOptions, setRerunOptions] = React.useState<RerunOption[]>([]);
+    const [rerunHistory, setRerunHistory] = React.useState<RerunHistoryItem[]>([]);
+    const [rerunLoading, setRerunLoading] = React.useState(false);
+    const [rerunSubmitting, setRerunSubmitting] = React.useState(false);
+    const [rerunError, setRerunError] = React.useState<string | null>(null);
+    const [selectedRerunNode, setSelectedRerunNode] = React.useState('');
+    const [rerunInstruction, setRerunInstruction] = React.useState('');
 
     const pollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
     const eventSourceRef = React.useRef<EventSource | null>(null);
@@ -522,6 +571,32 @@ export default function WorkflowDetailPage() {
         setError(null);
         setLoading(false);
     }, []);
+
+    const loadRerunData = React.useCallback(async () => {
+        setRerunLoading(true);
+        try {
+            const [optionsResponse, historyResponse] = await Promise.all([
+                workflowApi.getRerunOptions(workflowId),
+                workflowApi.getRerunHistory(workflowId),
+            ]);
+            const visibleOptions = optionsResponse.options.filter(
+                (option) => option.can_rerun && Boolean(RERUN_NODE_LABELS[option.node_name])
+            );
+            setRerunOptions(visibleOptions);
+            setRerunHistory(historyResponse.history);
+            setSelectedRerunNode((current) => {
+                if (current && visibleOptions.some((option) => option.node_name === current)) {
+                    return current;
+                }
+                return visibleOptions[0]?.node_name ?? '';
+            });
+            setRerunError(null);
+        } catch (err) {
+            setRerunError(err instanceof Error ? err.message : '重跑信息加载失败');
+        } finally {
+            setRerunLoading(false);
+        }
+    }, [workflowId]);
 
     const startPolling = React.useCallback(() => {
         if (!pollIntervalRef.current) {
@@ -597,6 +672,7 @@ export default function WorkflowDetailPage() {
                 stopEventStream();
                 stopPolling();
             }
+            void loadRerunData();
         } catch (err) {
             setError(err instanceof Error ? err.message : '加载失败');
             stopEventStream();
@@ -604,7 +680,7 @@ export default function WorkflowDetailPage() {
         } finally {
             setLoading(false);
         }
-    }, [workflowId, startEventStream, stopEventStream, stopPolling]);
+    }, [workflowId, startEventStream, stopEventStream, stopPolling, loadRerunData]);
 
     React.useEffect(() => {
         loadWorkflow();
@@ -619,6 +695,12 @@ export default function WorkflowDetailPage() {
             setCompletedView('preview');
         }
     }, [workflow?.status]);
+
+    React.useEffect(() => {
+        if (workflow && workflow.status !== 'running') {
+            void loadRerunData();
+        }
+    }, [workflow?.status, workflowId, loadRerunData]);
 
     const handleClarification = async (answers: Record<string, string>) => {
         setActionLoading(true);
@@ -720,6 +802,88 @@ export default function WorkflowDetailPage() {
             setActionLoading(false);
         }
     };
+
+    const refreshWorkflowSnapshot = React.useCallback(async () => {
+        const [workflowResponse, traceResponse] = await Promise.all([
+            workflowApi.getStatus(workflowId),
+            traceApi.getWorkflowTrace(workflowId),
+        ]);
+        setWorkflow(workflowResponse);
+        setTrace(traceResponse);
+        if (shouldUseLiveUpdates(workflowResponse)) {
+            startEventStream();
+        }
+        void loadRerunData();
+        return workflowResponse;
+    }, [workflowId, startEventStream, loadRerunData]);
+
+    const handleResumeWorkflow = React.useCallback(async () => {
+        setActionLoading(true);
+        try {
+            await workflowApi.resume(workflowId);
+            await refreshWorkflowSnapshot();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : '恢复失败');
+        } finally {
+            setActionLoading(false);
+        }
+    }, [workflowId, refreshWorkflowSnapshot]);
+
+    const handlePauseToggle = React.useCallback(async () => {
+        if (!workflow) {
+            return;
+        }
+
+        setActionLoading(true);
+        try {
+            if (workflow.status === 'paused') {
+                await workflowApi.resume(workflowId);
+            } else {
+                await workflowApi.pause(workflowId);
+            }
+            await refreshWorkflowSnapshot();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : '操作失败');
+        } finally {
+            setActionLoading(false);
+        }
+    }, [workflow, workflowId, refreshWorkflowSnapshot]);
+
+    const handleRerunSubmit = React.useCallback(async () => {
+        if (!selectedRerunNode) {
+            setRerunError('请选择一个重跑起点');
+            return;
+        }
+
+        const instruction = rerunInstruction.trim();
+        const updatedInput: Record<string, unknown> = {};
+        if (instruction) {
+            if (selectedRerunNode === 'parse_intent') {
+                updatedInput.user_input = instruction;
+            } else {
+                updatedInput.rerun_instruction = instruction;
+                if (selectedRerunNode === 'generate_outline') {
+                    updatedInput.outline_feedback = instruction;
+                }
+            }
+        }
+
+        setRerunSubmitting(true);
+        setRerunError(null);
+        try {
+            const response = await workflowApi.rerun(
+                workflowId,
+                selectedRerunNode,
+                Object.keys(updatedInput).length > 0 ? updatedInput : undefined,
+                instruction || `从${getRerunNodeLabel(selectedRerunNode)}重跑`
+            );
+            router.push(`/workflow/${response.new_workflow_run_id}`);
+        } catch (err) {
+            setRerunError(err instanceof Error ? err.message : '发起重跑失败');
+        } finally {
+            setRerunSubmitting(false);
+        }
+    }, [workflowId, selectedRerunNode, rerunInstruction, router]);
 
     const calculateSteps = (): WorkflowStep[] => {
         const stepNames = [
@@ -860,6 +1024,13 @@ export default function WorkflowDetailPage() {
         workflow?.status === 'running' &&
         currentStep !== undefined &&
         ['generate_content', 'self_refine', 'check_facts', 'finalize'].includes(currentStep);
+    const availableRerunOptions = React.useMemo(
+        () => rerunOptions.filter((option) => option.can_rerun && Boolean(RERUN_NODE_LABELS[option.node_name])),
+        [rerunOptions]
+    );
+    const selectedRerunOption = availableRerunOptions.find(
+        (option) => option.node_name === selectedRerunNode
+    );
 
     const handleStepClick = React.useCallback((stepId: string) => {
         const node = trace?.nodes.find((item) => (
@@ -987,28 +1158,10 @@ export default function WorkflowDetailPage() {
                     <button
                         type="button"
                         className="btn btn-primary"
-                        onClick={async () => {
-                            setActionLoading(true);
-                            try {
-                                await workflowApi.resume(workflowId);
-                                const [workflowResponse, traceResponse] = await Promise.all([
-                                    workflowApi.getStatus(workflowId),
-                                    traceApi.getWorkflowTrace(workflowId),
-                                ]);
-                                setWorkflow(workflowResponse);
-                                setTrace(traceResponse);
-                                if (shouldUseLiveUpdates(workflowResponse)) {
-                                    startEventStream();
-                                }
-                            } catch (err) {
-                                setError(err instanceof Error ? err.message : '恢复失败');
-                            } finally {
-                                setActionLoading(false);
-                            }
-                        }}
+                        onClick={() => void handleResumeWorkflow()}
                         disabled={actionLoading}
                     >
-                        {actionLoading ? '恢复中...' : '恢复执行'}
+                        {actionLoading ? '恢复中...' : '继续运行'}
                     </button>
                 </div>
             </div>
@@ -1037,6 +1190,185 @@ export default function WorkflowDetailPage() {
             </div>
         </div>
     );
+
+    const renderRerunPanel = () => {
+        if (!workflow) {
+            return null;
+        }
+
+        const canResume = workflow.status === 'paused';
+        const showPanel =
+            canResume ||
+            availableRerunOptions.length > 0 ||
+            rerunHistory.length > 1 ||
+            rerunError;
+
+        if (!showPanel) {
+            return null;
+        }
+
+        return (
+            <section className={styles.rerunPanel} aria-labelledby="rerun-panel-title">
+                <div className={styles.rerunHeader}>
+                    <div className={styles.rerunHeaderIcon}>
+                        <RotateCcw aria-hidden="true" />
+                    </div>
+                    <div>
+                        <p className={styles.rerunEyebrow}>运行控制</p>
+                        <h3 id="rerun-panel-title">继续运行与节点重跑</h3>
+                        <p>
+                            保留上游产物，从指定节点重新执行。新运行会生成独立版本，不覆盖当前结果。
+                        </p>
+                    </div>
+                </div>
+
+                {canResume && (
+                    <div className={styles.resumeBanner}>
+                        <div>
+                            <strong>当前工作流已暂停</strong>
+                            <span>可以直接继续当前运行，也可以选择下方节点创建一次修订重跑。</span>
+                        </div>
+                        <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => void handleResumeWorkflow()}
+                            disabled={actionLoading}
+                        >
+                            <Play aria-hidden="true" />
+                            {actionLoading ? '恢复中...' : '继续运行'}
+                        </button>
+                    </div>
+                )}
+
+                <div className={styles.rerunGrid}>
+                    <div className={styles.rerunOptions}>
+                        <div className={styles.rerunSectionTitle}>
+                            <GitBranch aria-hidden="true" />
+                            <span>选择重跑起点</span>
+                        </div>
+                        {rerunLoading ? (
+                            <div className={styles.rerunEmpty}>
+                                <LoaderCircle className={styles.spinIcon} aria-hidden="true" />
+                                正在加载可重跑节点...
+                            </div>
+                        ) : availableRerunOptions.length > 0 ? (
+                            <div className={styles.rerunOptionList}>
+                                {availableRerunOptions.map((option) => {
+                                    const selected = option.node_name === selectedRerunNode;
+                                    const artifactCount = option.output_artifacts?.length ?? 0;
+
+                                    return (
+                                        <button
+                                            key={`${option.node_name}-${option.node_run_id}`}
+                                            type="button"
+                                            className={`${styles.rerunOption} ${
+                                                selected ? styles.rerunOptionSelected : ''
+                                            }`}
+                                            onClick={() => setSelectedRerunNode(option.node_name)}
+                                        >
+                                            <span className={styles.rerunOptionMain}>
+                                                <strong>{getRerunNodeLabel(option.node_name)}</strong>
+                                                <span>
+                                                    {RERUN_NODE_DESCRIPTIONS[option.node_name] ??
+                                                        '从该节点重新执行后续链路。'}
+                                                </span>
+                                            </span>
+                                            <span className={styles.rerunOptionMeta}>
+                                                {getRerunStatusLabel(option.status)}
+                                                {artifactCount > 0 ? ` · ${artifactCount} 个产物` : ''}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className={styles.rerunEmpty}>
+                                当前还没有可重跑节点。节点完成、中断或失败后会自动出现在这里。
+                            </div>
+                        )}
+                    </div>
+
+                    <div className={styles.rerunComposer}>
+                        <label className={styles.rerunLabel} htmlFor="rerun-instruction">
+                            {selectedRerunNode === 'parse_intent'
+                                ? '新的用户输入'
+                                : '修订说明'}
+                        </label>
+                        <textarea
+                            id="rerun-instruction"
+                            className={styles.rerunTextarea}
+                            value={rerunInstruction}
+                            onChange={(event) => setRerunInstruction(event.target.value)}
+                            placeholder={
+                                selectedRerunNode === 'parse_intent'
+                                    ? '留空则沿用原始输入；填写后会用它重新解析意图。'
+                                    : '例如：强化 Hermes Agent 案例，弱化泛泛的架构介绍。'
+                            }
+                            rows={6}
+                        />
+                        {selectedRerunOption && (
+                            <p className={styles.rerunSelectedHint}>
+                                将从
+                                <strong>{getRerunNodeLabel(selectedRerunOption.node_name)}</strong>
+                                继续，之前节点产物会被保留。
+                            </p>
+                        )}
+                        {rerunError && <p className={styles.rerunError}>{rerunError}</p>}
+                        <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => void handleRerunSubmit()}
+                            disabled={rerunSubmitting || !selectedRerunNode}
+                        >
+                            {rerunSubmitting ? (
+                                <LoaderCircle className={styles.spinIcon} aria-hidden="true" />
+                            ) : (
+                                <Send aria-hidden="true" />
+                            )}
+                            {rerunSubmitting ? '创建重跑中...' : '从此节点重跑'}
+                        </button>
+                    </div>
+                </div>
+
+                {rerunHistory.length > 1 && (
+                    <div className={styles.rerunHistory}>
+                        <div className={styles.rerunSectionTitle}>
+                            <History aria-hidden="true" />
+                            <span>重跑历史</span>
+                        </div>
+                        <div className={styles.rerunHistoryList}>
+                            {rerunHistory.map((item) => {
+                                const metadata: NonNullable<RerunHistoryItem['metadata']> =
+                                    item.metadata ?? {};
+                                const fromNode =
+                                    typeof metadata.rerun_from_node === 'string'
+                                        ? metadata.rerun_from_node
+                                        : '';
+                                return (
+                                    <button
+                                        key={item.id}
+                                        type="button"
+                                        className={`${styles.rerunHistoryItem} ${
+                                            item.id === workflowId ? styles.rerunHistoryCurrent : ''
+                                        }`}
+                                        onClick={() => router.push(`/workflow/${item.id}`)}
+                                    >
+                                        <span>
+                                            {metadata.is_rerun
+                                                ? `从${getRerunNodeLabel(fromNode)}重跑`
+                                                : '原始运行'}
+                                        </span>
+                                        <code>{item.id.slice(0, 8)}...</code>
+                                        <ArrowRight aria-hidden="true" />
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+            </section>
+        );
+    };
 
     const renderCompletedStage = () => {
         const finalArtifact = getLatestArtifactByType(
@@ -1253,31 +1585,7 @@ export default function WorkflowDetailPage() {
                         !workflow.state.gate && (
                             <button
                                 className="btn btn-ghost"
-                                onClick={async () => {
-                                    setActionLoading(true);
-                                    try {
-                                        if (workflow.status === 'paused') {
-                                            await workflowApi.resume(workflowId);
-                                        } else {
-                                            await workflowApi.pause(workflowId);
-                                        }
-                                        const [workflowResponse, traceResponse] = await Promise.all([
-                                            workflowApi.getStatus(workflowId),
-                                            traceApi.getWorkflowTrace(workflowId),
-                                        ]);
-                                        setWorkflow(workflowResponse);
-                                        setTrace(traceResponse);
-                                        if (shouldUseLiveUpdates(workflowResponse)) {
-                                            startEventStream();
-                                        }
-                                    } catch (err) {
-                                        setError(
-                                            err instanceof Error ? err.message : '操作失败'
-                                        );
-                                    } finally {
-                                        setActionLoading(false);
-                                    }
-                                }}
+                                onClick={() => void handlePauseToggle()}
                                 disabled={actionLoading}
                             >
                                 {actionLoading ? (
@@ -1287,7 +1595,7 @@ export default function WorkflowDetailPage() {
                                 ) : (
                                     <Pause />
                                 )}{' '}
-                                {workflow.status === 'paused' ? '恢复' : '暂停'}
+                                {workflow.status === 'paused' ? '继续运行' : '暂停'}
                             </button>
                         )}
 
@@ -1359,7 +1667,10 @@ export default function WorkflowDetailPage() {
                             )}
                         </div>
 
-                        <div className={styles.stageBody}>{renderCurrentStage()}</div>
+                        <div className={styles.stageBody}>
+                            {renderCurrentStage()}
+                            {renderRerunPanel()}
+                        </div>
                     </section>
 
                     {(workflow?.state.intent_card || workflow?.state.outline || contentSections.length > 0 || trace) && (

@@ -105,6 +105,7 @@ async def generate_outline(state: dict) -> dict:
     model_provider_id = state.get("model_provider_id")
     model_name = state.get("model_name")
     outline_feedback = state.get("outline_feedback", "")
+    rerun_instruction = state.get("rerun_instruction", "")
     store = get_artifact_store()
 
     # 创建节点运行记录
@@ -125,6 +126,8 @@ async def generate_outline(state: dict) -> dict:
         prompt_template = OUTLINE_GENERATION_PROMPT
         if outline_feedback:
             prompt_template += f"\n\n## 用户反馈（请根据此反馈调整提纲）\n{outline_feedback}"
+        if rerun_instruction:
+            prompt_template += f"\n\n## 重跑修订要求\n{rerun_instruction}"
 
         llm = await get_structured_llm_for_workspace(
             Outline,
@@ -177,6 +180,7 @@ async def generate_outline(state: dict) -> dict:
             parent_version_id=parent_artifact_id,
             metadata={
                 "feedback": outline_feedback,
+                "rerun_instruction": rerun_instruction,
                 "section_count": len(outline.get_flat_sections()),
                 "awaiting_approval": True,
             },

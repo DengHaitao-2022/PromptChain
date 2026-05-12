@@ -233,8 +233,14 @@ class TraceService:
         trace = await self.get_workflow_trace(workflow_run_id)
 
         options = []
+        rerunnable_statuses = {
+            NodeRunStatus.COMPLETED.value,
+            NodeRunStatus.INTERRUPTED.value,
+            NodeRunStatus.FAILED.value,
+        }
+
         for node in trace["nodes"]:
-            if node["status"] == NodeRunStatus.COMPLETED.value:
+            if node["status"] in rerunnable_statuses:
                 # 获取该节点的输出 Artifact
                 output_artifacts = [
                     trace["artifacts"][aid]
@@ -246,7 +252,8 @@ class TraceService:
                     {
                         "node_name": node["node_name"],
                         "node_run_id": node["id"],
-                        "completed_at": node["completed_at"],
+                        "status": node["status"],
+                        "completed_at": node.get("completed_at"),
                         "output_artifacts": output_artifacts,
                         "can_rerun": True,
                     }

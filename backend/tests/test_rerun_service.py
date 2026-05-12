@@ -10,6 +10,40 @@ from models import ArtifactType
 from services.rerun_service import RerunService
 
 
+def _intent_content(topic: str = "Agent") -> dict:
+    return {
+        "goal": "生成技术文章",
+        "topic": topic,
+        "audience": "中级读者",
+        "tone": "学术专业",
+        "length": 1200,
+        "must_include": [],
+        "must_exclude": [],
+        "source_references": [],
+        "uncertainties": [],
+    }
+
+
+def _outline_content(title: str = "Agent 架构") -> dict:
+    return {
+        "title": title,
+        "abstract": "概述",
+        "sections": [
+            {
+                "id": "intro",
+                "title": "引言",
+                "summary": "介绍背景",
+                "target_words": 300,
+                "subsections": [],
+                "dependencies": [],
+            }
+        ],
+        "total_target_words": 300,
+        "version": 1,
+        "is_approved": True,
+    }
+
+
 class _FakeTraceService:
     def __init__(self, trace: dict):
         self.trace = trace
@@ -69,11 +103,11 @@ async def test_prepare_rerun_state_maps_artifacts_before_from_node():
             "artifacts": {
                 "intent-artifact": {
                     "type": ArtifactType.INTENT_CARD.value,
-                    "content": {"topic": "Agent"},
+                    "content": _intent_content("Agent"),
                 },
                 "outline-artifact": {
                     "type": ArtifactType.OUTLINE.value,
-                    "content": {"sections": ["intro", "body"]},
+                    "content": _outline_content(),
                 },
                 "section-1": {
                     "type": ArtifactType.SECTION_CONTENT.value,
@@ -98,9 +132,9 @@ async def test_prepare_rerun_state_maps_artifacts_before_from_node():
 
     state = await service.prepare_rerun_state("wf-1", "finalize")
 
-    assert state["intent_card"] == {"topic": "Agent"}
+    assert state["intent_card"].topic == "Agent"
     assert state["intent_card_artifact_id"] == "intent-artifact"
-    assert state["outline"] == {"sections": ["intro", "body"]}
+    assert state["outline"].sections[0].id == "intro"
     assert state["outline_artifact_id"] == "outline-artifact"
     assert state["outline_approved"] is True
     assert state["draft_sections"] == {"intro": "Intro draft"}
@@ -128,11 +162,11 @@ async def test_prepare_rerun_state_applies_updated_input_override():
             "artifacts": {
                 "intent-artifact": {
                     "type": ArtifactType.INTENT_CARD.value,
-                    "content": {"topic": "旧主题"},
+                    "content": _intent_content("旧主题"),
                 },
                 "outline-artifact": {
                     "type": ArtifactType.OUTLINE.value,
-                    "content": {"sections": ["旧提纲"]},
+                    "content": _outline_content("旧提纲"),
                 },
             },
         }

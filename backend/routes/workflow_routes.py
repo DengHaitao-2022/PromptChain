@@ -616,8 +616,15 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
         )
 
         # 2. 创建新的 WorkflowRun
+        updated_user_input = None
+        if body.updated_input and isinstance(body.updated_input.get("user_input"), str):
+            updated_user_input = body.updated_input["user_input"]
+
         new_workflow_run = await rerun_service.create_rerun_workflow(
-            workflow_run_id, body.from_node, body.reason or ""
+            workflow_run_id,
+            body.from_node,
+            body.reason or "",
+            updated_user_input=updated_user_input,
         )
         await workflow_helpers.annotate_workflow_run_ownership(
             new_workflow_run.id, user_id, workspace_id
@@ -625,7 +632,11 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
 
         # 3. 使用工作流执行器恢复执行
         workflow = get_workflow()
-        result = await workflow.resume(new_workflow_run.id, preserved_state)
+        result = await workflow.rerun_from_node(
+            new_workflow_run.id,
+            from_node=body.from_node,
+            preserved_state=preserved_state,
+        )
 
         simplified_state = _simplify_state(result["state"])
         refreshed_new_workflow_run = (

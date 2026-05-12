@@ -41,6 +41,9 @@ SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据�
 ## 已完成章节（上下文）
 {previous_sections}
 
+## 重跑修订要求
+{rerun_instruction}
+
 ## 要求
 1. 严格遵循风格要求
 2. 确保与已完成章节的内容连贯
@@ -97,6 +100,7 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
     prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
     chain = prompt | llm
 
+    rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
     result = await invoke_with_llm_retry(
         lambda: chain.ainvoke(
             {
@@ -107,6 +111,7 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
                 "section_summary": section.summary,
                 "target_words": section.target_words,
                 "previous_sections": previous_content or "（这是第一个章节）",
+                "rerun_instruction": rerun_instruction,
             }
         )
     )
