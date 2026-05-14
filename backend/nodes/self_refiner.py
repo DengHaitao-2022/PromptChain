@@ -4,8 +4,11 @@ Self-Refine 自检修订节点
 功能：
 1. 生成→反馈→精炼循环
 2. 自动评估内容质量
-3. 创建 Artifact 版本
+3. 对修订正文提供 token 级流式输出
+4. 创建 Artifact 版本
 """
+
+from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
@@ -18,6 +21,7 @@ from services import (
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
     get_structured_llm_for_workspace,
+    get_workflow_event_bus,
     invoke_with_llm_retry,
     is_llm_rate_limit_error,
 )
@@ -115,6 +119,39 @@ def _build_section_order(state: dict, sections: dict[str, str]) -> list[str]:
     return [
         section.id for section in state["outline"].get_flat_sections() if section.id in sections
     ]
+
+
+def _extract_chunk_text(chunk: Any) -> str:
+    """从 LangChain stream chunk 中提取可展示正文。"""
+    content = getattr(chunk, "content", None)
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+
+    return ""
+
+
+async def _publish_stream_event(
+    state: dict,
+    event_type: str,
+    data: dict[str, Any],
+) -> None:
+    """向工作流详情页发布 refinement 相关增量事件。"""
+    workflow_run_id = state.get("workflow_run_id")
+    if not workflow_run_id:
+        return
+    await get_workflow_event_bus().publish(workflow_run_id, event_type, data)
 
 
 async def _create_final_content_artifact(
@@ -215,18 +252,73 @@ async def refine_section(
 
 质量评分: {feedback.quality_score}/10
 """
+    section_lookup = _build_section_lookup(state)
+    section = section_lookup.get(feedback.section_id)
+    section_title = section.title if section else feedback.section_id
+    payload = {
+        "original_content": original_content,
+        "feedback": feedback_text,
+        "rerun_instruction": state.get("rerun_instruction") or "无额外修订要求",
+    }
 
-    result = await invoke_with_llm_retry(
-        lambda: chain.ainvoke(
-            {
-                "original_content": original_content,
-                "feedback": feedback_text,
-                "rerun_instruction": state.get("rerun_instruction") or "无额外修订要求",
-            }
-        )
+    await _publish_stream_event(
+        state,
+        "section_started",
+        {
+            "node": "self_refine",
+            "section_id": feedback.section_id,
+            "section_title": section_title,
+            "mode": "refine",
+        },
     )
 
-    return result.content
+    chunks: list[str] = []
+    try:
+        async for chunk in chain.astream(payload):
+            token = _extract_chunk_text(chunk)
+            if not token:
+                continue
+
+            chunks.append(token)
+            await _publish_stream_event(
+                state,
+                "token",
+                {
+                    "node": "self_refine",
+                    "section_id": feedback.section_id,
+                    "section_title": section_title,
+                    "delta": token,
+                    "mode": "refine",
+                },
+            )
+    except Exception as exc:
+        await _publish_stream_event(
+            state,
+            "stream_error",
+            {
+                "node": "self_refine",
+                "section_id": feedback.section_id,
+                "section_title": section_title,
+                "detail": str(exc),
+                "mode": "refine",
+            },
+        )
+        raise
+
+    refined_content = "".join(chunks)
+    await _publish_stream_event(
+        state,
+        "section_completed",
+        {
+            "node": "self_refine",
+            "section_id": feedback.section_id,
+            "section_title": section_title,
+            "content_length": len(refined_content),
+            "mode": "refine",
+        },
+    )
+
+    return refined_content
 
 
 async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:

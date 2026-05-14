@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -38,6 +39,7 @@ from routes.workflow_helpers import (
     _simplify_state,
 )
 from services.audit_log_service import AuditLogService
+from services.workflow_event_bus import get_workflow_event_bus
 
 # 由 app.py 统一补齐 /api 前缀，这里只保留资源级前缀，避免重复拼接
 router = APIRouter(prefix="/workflow", tags=["workflow"])
@@ -497,58 +499,83 @@ async def list_workflow_runs(request: Request):
 async def stream_workflow_events(workflow_run_id: str, request: Request):
     """通过 SSE 向详情页推送运行状态和 trace 快照。"""
     await workflow_helpers.require_workflow_run_access(request, workflow_run_id)
+    event_bus = get_workflow_event_bus()
+    event_queue = event_bus.subscribe(workflow_run_id)
 
     async def event_stream():
         last_payload_signature: str | None = None
         event_index = 0
         heartbeat_ticks = 0
+        next_snapshot_at = time.monotonic()
 
-        while not await request.is_disconnected():
-            try:
-                snapshot = await _build_workflow_event_snapshot(workflow_run_id)
-            except HTTPException as exc:
-                yield _format_sse_event(
-                    "error",
-                    {"detail": exc.detail, "status_code": exc.status_code},
-                )
-                break
-            except Exception:
-                logger.exception("工作流 SSE 快照生成失败: workflow_run_id=%s", workflow_run_id)
-                yield _format_sse_event(
-                    "error",
-                    {"detail": INTERNAL_SERVER_ERROR},
-                )
-                break
+        try:
+            while not await request.is_disconnected():
+                # 先按固定节奏发送 snapshot，避免高频 token 事件把快照饿死。
+                if time.monotonic() >= next_snapshot_at:
+                    try:
+                        snapshot = await _build_workflow_event_snapshot(workflow_run_id)
+                    except HTTPException as exc:
+                        yield _format_sse_event(
+                            "error",
+                            {"detail": exc.detail, "status_code": exc.status_code},
+                        )
+                        break
+                    except Exception:
+                        logger.exception(
+                            "工作流 SSE 快照生成失败: workflow_run_id=%s", workflow_run_id
+                        )
+                        yield _format_sse_event(
+                            "error",
+                            {"detail": INTERNAL_SERVER_ERROR},
+                        )
+                        break
 
-            signature = json.dumps(snapshot, sort_keys=True, default=str)
-            if signature != last_payload_signature:
-                event_index += 1
-                heartbeat_ticks = 0
-                last_payload_signature = signature
-                yield _format_sse_event("snapshot", snapshot, event_id=str(event_index))
-            else:
-                heartbeat_ticks += 1
-                if heartbeat_ticks >= 10:
-                    heartbeat_ticks = 0
-                    yield _format_sse_event(
-                        "heartbeat",
-                        {"workflow_run_id": workflow_run_id},
-                        event_id=f"{event_index}:heartbeat",
-                    )
+                    signature = json.dumps(snapshot, sort_keys=True, default=str)
+                    if signature != last_payload_signature:
+                        event_index += 1
+                        heartbeat_ticks = 0
+                        last_payload_signature = signature
+                        yield _format_sse_event("snapshot", snapshot, event_id=str(event_index))
+                    else:
+                        heartbeat_ticks += 1
+                        if heartbeat_ticks >= 10:
+                            heartbeat_ticks = 0
+                            yield _format_sse_event(
+                                "heartbeat",
+                                {"workflow_run_id": workflow_run_id},
+                                event_id=f"{event_index}:heartbeat",
+                            )
 
-            workflow_payload = snapshot.get("workflow", {})
-            if workflow_payload.get("status") in {"completed", "failed"}:
-                yield _format_sse_event(
-                    "done",
-                    {
-                        "workflow_run_id": workflow_run_id,
-                        "status": workflow_payload.get("status"),
-                    },
-                    event_id=f"{event_index}:done",
-                )
-                break
+                    workflow_payload = snapshot.get("workflow", {})
+                    if workflow_payload.get("status") in {"completed", "failed"}:
+                        yield _format_sse_event(
+                            "done",
+                            {
+                                "workflow_run_id": workflow_run_id,
+                                "status": workflow_payload.get("status"),
+                            },
+                            event_id=f"{event_index}:done",
+                        )
+                        break
 
-            await asyncio.sleep(1)
+                    next_snapshot_at = time.monotonic() + 1.0
+                    continue
+
+                # 在两次 snapshot 之间，优先把节点级增量事件透传给前端。
+                timeout = max(next_snapshot_at - time.monotonic(), 0.05)
+                try:
+                    event = await asyncio.wait_for(event_queue.get(), timeout=timeout)
+                except TimeoutError:
+                    continue
+
+                payload = {
+                    "workflow_run_id": event.workflow_run_id,
+                    "timestamp": event.timestamp,
+                    **event.data,
+                }
+                yield _format_sse_event(event.type, payload, event_id=event.event_id)
+        finally:
+            event_bus.unsubscribe(workflow_run_id, event_queue)
 
     return StreamingResponse(
         event_stream(),

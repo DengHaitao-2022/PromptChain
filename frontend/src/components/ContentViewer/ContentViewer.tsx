@@ -19,6 +19,7 @@ interface ContentViewerProps {
     onExport?: (format: 'markdown' | 'html' | 'json') => void;
     isEditable?: boolean;
     isStreaming?: boolean;
+    streamingSectionId?: string | null;
 }
 
 export function ContentViewer({
@@ -29,6 +30,7 @@ export function ContentViewer({
     onExport,
     isEditable = false,
     isStreaming = false,
+    streamingSectionId = null,
 }: ContentViewerProps) {
     const [editingSection, setEditingSection] = React.useState<string | null>(null);
     const [editContent, setEditContent] = React.useState('');
@@ -155,7 +157,7 @@ export function ContentViewer({
                         ) : (
                             <div
                                 className={`${styles.sectionContent} ${
-                                    isStreaming && index === sections.length - 1
+                                    isStreaming && streamingSectionId === section.id
                                         ? styles.streaming
                                         : ''
                                 }`}

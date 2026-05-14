@@ -37,6 +37,7 @@ from .llm_provider import (
 from .llm_retry import invoke_with_llm_retry
 from .rerun_service import RerunService, get_rerun_service
 from .trace_service import TraceService, get_trace_service
+from .workflow_event_bus import WorkflowEventBus, WorkflowStreamEvent, get_workflow_event_bus
 
 __all__ = [
     # artifact_store
@@ -72,4 +73,8 @@ __all__ = [
     # trace_service
     "TraceService",
     "get_trace_service",
+    # workflow_event_bus
+    "WorkflowEventBus",
+    "WorkflowStreamEvent",
+    "get_workflow_event_bus",
 ]

@@ -131,11 +131,45 @@ export interface WorkflowEventSnapshot {
   trace: WorkflowTrace;
 }
 
+export interface WorkflowTokenEvent {
+  workflow_run_id: string;
+  node: string;
+  section_id?: string;
+  section_title?: string;
+  delta: string;
+  mode?: 'generate' | 'refine' | string;
+  timestamp?: string;
+}
+
+export interface WorkflowSectionEvent {
+  workflow_run_id: string;
+  node: string;
+  section_id: string;
+  section_title?: string;
+  content_length?: number;
+  mode?: 'generate' | 'refine' | string;
+  timestamp?: string;
+}
+
+export interface WorkflowStreamErrorEvent {
+  workflow_run_id: string;
+  node: string;
+  section_id?: string;
+  section_title?: string;
+  detail: string;
+  mode?: 'generate' | 'refine' | string;
+  timestamp?: string;
+}
+
 export interface WorkflowEventHandlers {
   onSnapshot?: (snapshot: WorkflowEventSnapshot) => void;
   onDone?: (payload: { workflow_run_id?: string; status?: WorkflowStatus | string }) => void;
   onError?: (error: Error) => void;
   onHeartbeat?: () => void;
+  onToken?: (event: WorkflowTokenEvent) => void;
+  onSectionStarted?: (event: WorkflowSectionEvent) => void;
+  onSectionCompleted?: (event: WorkflowSectionEvent) => void;
+  onStreamError?: (event: WorkflowStreamErrorEvent) => void;
 }
 
 export interface TimelineEvent {
@@ -457,6 +491,34 @@ export const workflowApi = {
 
     source.addEventListener('heartbeat', () => {
       handlers.onHeartbeat?.();
+    });
+
+    source.addEventListener('token', (event) => {
+      const payload = parsePayload<WorkflowTokenEvent>(event as MessageEvent<string>);
+      if (payload) {
+        handlers.onToken?.(payload);
+      }
+    });
+
+    source.addEventListener('section_started', (event) => {
+      const payload = parsePayload<WorkflowSectionEvent>(event as MessageEvent<string>);
+      if (payload) {
+        handlers.onSectionStarted?.(payload);
+      }
+    });
+
+    source.addEventListener('section_completed', (event) => {
+      const payload = parsePayload<WorkflowSectionEvent>(event as MessageEvent<string>);
+      if (payload) {
+        handlers.onSectionCompleted?.(payload);
+      }
+    });
+
+    source.addEventListener('stream_error', (event) => {
+      const payload = parsePayload<WorkflowStreamErrorEvent>(event as MessageEvent<string>);
+      if (payload) {
+        handlers.onStreamError?.(payload);
+      }
     });
 
     source.addEventListener('error', () => {

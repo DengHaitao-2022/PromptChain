@@ -36,6 +36,8 @@ import {
     type WorkflowTrace,
     type WorkflowStatus,
     type WorkflowEventSnapshot,
+    type WorkflowTokenEvent,
+    type WorkflowSectionEvent,
     type RerunOption,
     type RerunHistoryItem,
 } from '@/lib/api';
@@ -80,6 +82,14 @@ interface ContentSection {
     title: string;
     content: string;
     wordCount: number;
+}
+
+interface StreamingSectionState {
+    title: string;
+    content: string;
+    isStreaming: boolean;
+    node: string;
+    mode?: string;
 }
 
 const RERUN_NODE_LABELS: Record<string, string> = {
@@ -504,6 +514,73 @@ function shouldUseLiveUpdates(workflow: WorkflowResponse): boolean {
     );
 }
 
+function getOutlineSectionOrder(outline?: Outline): string[] {
+    if (!outline || !Array.isArray(outline.sections)) {
+        return [];
+    }
+
+    const ids: string[] = [];
+    const visit = (sections: unknown[]) => {
+        sections.forEach((section) => {
+            if (!isRecord(section) || typeof section.id !== 'string') {
+                return;
+            }
+            ids.push(section.id);
+            if (Array.isArray(section.subsections) && section.subsections.length > 0) {
+                visit(section.subsections);
+            }
+        });
+    };
+
+    visit(outline.sections);
+    return ids;
+}
+
+function mergeStreamingContentSections(
+    baseSections: ContentSection[],
+    streamingSections: Record<string, StreamingSectionState>,
+    outline?: Outline
+): ContentSection[] {
+    const baseById = new Map(baseSections.map((section) => [section.id, section]));
+    const mergedById = new Map(baseById);
+
+    Object.entries(streamingSections).forEach(([sectionId, streamingSection]) => {
+        const baseSection = baseById.get(sectionId);
+        const shouldUseStreaming =
+            streamingSection.isStreaming ||
+            !baseSection ||
+            streamingSection.content.length > baseSection.content.length;
+
+        if (!shouldUseStreaming) {
+            return;
+        }
+
+        mergedById.set(sectionId, {
+            id: sectionId,
+            title: streamingSection.title,
+            content: streamingSection.content,
+            wordCount: countWords(streamingSection.content),
+        });
+    });
+
+    const outlineOrder = getOutlineSectionOrder(outline);
+    const fallbackOrder = baseSections.map((section) => section.id);
+    const allIds = Array.from(mergedById.keys());
+    const seen = new Set<string>();
+    const ordered = [...outlineOrder, ...fallbackOrder, ...allIds]
+        .filter((sectionId) => {
+            if (seen.has(sectionId)) {
+                return false;
+            }
+            seen.add(sectionId);
+            return true;
+        })
+        .map((sectionId) => mergedById.get(sectionId))
+        .filter((section): section is ContentSection => Boolean(section));
+
+    return ordered;
+}
+
 function formatEntryLabel(key: string): string {
     return key
         .split('_')
@@ -545,6 +622,9 @@ export default function WorkflowDetailPage() {
     const [rerunError, setRerunError] = React.useState<string | null>(null);
     const [selectedRerunNode, setSelectedRerunNode] = React.useState('');
     const [rerunInstruction, setRerunInstruction] = React.useState('');
+    const [streamingSections, setStreamingSections] = React.useState<
+        Record<string, StreamingSectionState>
+    >({});
 
     const pollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
     const eventSourceRef = React.useRef<EventSource | null>(null);
@@ -570,6 +650,75 @@ export default function WorkflowDetailPage() {
         setTrace(snapshot.trace);
         setError(null);
         setLoading(false);
+    }, []);
+
+    const handleStreamingSectionStarted = React.useCallback((event: WorkflowSectionEvent) => {
+        if (!event.section_id) {
+            return;
+        }
+
+        setStreamingSections((current) => ({
+            ...current,
+            [event.section_id]: {
+                title: event.section_title ?? formatEntryLabel(event.section_id),
+                content: '',
+                isStreaming: true,
+                node: event.node,
+                mode: event.mode,
+            },
+        }));
+    }, []);
+
+    const handleStreamingToken = React.useCallback((event: WorkflowTokenEvent) => {
+        if (!event.section_id) {
+            return;
+        }
+
+        setStreamingSections((current) => {
+            const previous = current[event.section_id] ?? {
+                title: event.section_title ?? formatEntryLabel(event.section_id),
+                content: '',
+                isStreaming: true,
+                node: event.node,
+                mode: event.mode,
+            };
+
+            return {
+                ...current,
+                [event.section_id]: {
+                    ...previous,
+                    title: event.section_title ?? previous.title,
+                    content: previous.content + event.delta,
+                    isStreaming: true,
+                    node: event.node,
+                    mode: event.mode ?? previous.mode,
+                },
+            };
+        });
+    }, []);
+
+    const handleStreamingSectionCompleted = React.useCallback((event: WorkflowSectionEvent) => {
+        if (!event.section_id) {
+            return;
+        }
+
+        setStreamingSections((current) => {
+            const previous = current[event.section_id];
+            if (!previous) {
+                return current;
+            }
+
+            return {
+                ...current,
+                [event.section_id]: {
+                    ...previous,
+                    title: event.section_title ?? previous.title,
+                    isStreaming: false,
+                    node: event.node,
+                    mode: event.mode ?? previous.mode,
+                },
+            };
+        });
     }, []);
 
     const loadRerunData = React.useCallback(async () => {
@@ -644,6 +793,12 @@ export default function WorkflowDetailPage() {
                     eventSourceRef.current = null;
                 }
             },
+            onToken: handleStreamingToken,
+            onSectionStarted: handleStreamingSectionStarted,
+            onSectionCompleted: handleStreamingSectionCompleted,
+            onStreamError: (event) => {
+                setError(event.detail || '流式内容生成失败');
+            },
             onError: () => {
                 if (eventSourceRef.current === source) {
                     eventSourceRef.current = null;
@@ -653,7 +808,15 @@ export default function WorkflowDetailPage() {
         });
 
         eventSourceRef.current = source;
-    }, [applyEventSnapshot, startPolling, stopPolling, workflowId]);
+    }, [
+        applyEventSnapshot,
+        handleStreamingSectionCompleted,
+        handleStreamingSectionStarted,
+        handleStreamingToken,
+        startPolling,
+        stopPolling,
+        workflowId,
+    ]);
 
     const loadWorkflow = React.useCallback(async () => {
         try {
@@ -691,8 +854,18 @@ export default function WorkflowDetailPage() {
     }, [loadWorkflow, stopEventStream, stopPolling]);
 
     React.useEffect(() => {
+        setStreamingSections({});
+    }, [workflowId]);
+
+    React.useEffect(() => {
         if (workflow?.status !== 'completed') {
             setCompletedView('preview');
+        }
+    }, [workflow?.status]);
+
+    React.useEffect(() => {
+        if (workflow?.status === 'completed' || workflow?.status === 'failed') {
+            setStreamingSections({});
         }
     }, [workflow?.status]);
 
@@ -1019,11 +1192,20 @@ export default function WorkflowDetailPage() {
         () => buildContentSections(workflow, trace),
         [workflow, trace]
     );
+    const displayContentSections = React.useMemo(
+        () => mergeStreamingContentSections(contentSections, streamingSections, workflow?.state.outline as Outline | undefined),
+        [contentSections, streamingSections, workflow?.state.outline]
+    );
+    const activeStreamingSectionId = React.useMemo(
+        () =>
+            Object.entries(streamingSections).find(([, section]) => section.isStreaming)?.[0] ?? null,
+        [streamingSections]
+    );
     const isContentStreaming =
-        Boolean(contentSections.length) &&
+        Boolean(displayContentSections.length) &&
         workflow?.status === 'running' &&
         currentStep !== undefined &&
-        ['generate_content', 'self_refine', 'check_facts', 'finalize'].includes(currentStep);
+        ['generate_content', 'self_refine'].includes(currentStep);
     const availableRerunOptions = React.useMemo(
         () => rerunOptions.filter((option) => option.can_rerun && Boolean(RERUN_NODE_LABELS[option.node_name])),
         [rerunOptions]
@@ -1673,7 +1855,7 @@ export default function WorkflowDetailPage() {
                         </div>
                     </section>
 
-                    {(workflow?.state.intent_card || workflow?.state.outline || contentSections.length > 0 || trace) && (
+                    {(workflow?.state.intent_card || workflow?.state.outline || displayContentSections.length > 0 || trace) && (
                         <section className={styles.stageShell} style={{ marginTop: '2rem' }}>
                             <div className={styles.stageHeader}>
                                 <div className={styles.stageHeaderMain}>
@@ -1701,14 +1883,15 @@ export default function WorkflowDetailPage() {
                                         />
                                     </div>
                                 )}
-                                {contentSections.length > 0 && (
+                                {displayContentSections.length > 0 && (
                                     <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成内容</h3>
                                         <ContentViewer
                                             title={workflow?.state.outline?.title || '生成内容'}
                                             abstract={workflow?.state.outline?.abstract || ''}
-                                            sections={contentSections}
+                                            sections={displayContentSections}
                                             isStreaming={isContentStreaming}
+                                            streamingSectionId={activeStreamingSectionId}
                                         />
                                     </div>
                                 )}

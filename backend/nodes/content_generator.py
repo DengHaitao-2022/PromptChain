@@ -3,9 +3,11 @@
 
 功能：
 1. 基于提纲分段生成内容
-2. 支持流式输出
+2. 支持正文 token 级流式输出
 3. 创建 Artifact 版本
 """
+
+from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -23,6 +25,7 @@ from services import (
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
+    get_workflow_event_bus,
     invoke_with_llm_retry,
 )
 
@@ -76,6 +79,39 @@ def _compile_generated_content(outline: Outline, sections: dict[str, str]) -> st
     return "\n\n".join(compiled_sections)
 
 
+def _extract_chunk_text(chunk: Any) -> str:
+    """从 LangChain stream chunk 中尽量提取可展示文本。"""
+    content = getattr(chunk, "content", None)
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+
+    return ""
+
+
+async def _publish_stream_event(
+    state: dict,
+    event_type: str,
+    data: dict[str, Any],
+) -> None:
+    """向工作流详情页发布细粒度 SSE 事件。"""
+    workflow_run_id = state.get("workflow_run_id")
+    if not workflow_run_id:
+        return
+    await get_workflow_event_bus().publish(workflow_run_id, event_type, data)
+
+
 async def generate_section(state: dict, section: OutlineSection, previous_content: str = "") -> str:
     """
     生成单个章节内容
@@ -117,6 +153,95 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
     )
 
     return result.content
+
+
+async def generate_section_streaming(
+    state: dict,
+    section: OutlineSection,
+    previous_content: str = "",
+) -> str:
+    """生成单个章节内容，并把正文增量通过 SSE 推给详情页。"""
+    intent_card: IntentCard = state["intent_card"]
+    outline: Outline = state["outline"]
+
+    llm = await get_llm_for_workspace(
+        state.get("workspace_id"),
+        model=state.get("model_name"),
+        model_provider_id=state.get("model_provider_id"),
+        temperature=0.7,
+    )
+    prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
+    chain = prompt | llm
+
+    rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
+    payload = {
+        "article_title": outline.title,
+        "audience": intent_card.audience.value,
+        "tone": intent_card.tone.value,
+        "section_title": section.title,
+        "section_summary": section.summary,
+        "target_words": section.target_words,
+        "previous_sections": previous_content or "（这是第一个章节）",
+        "rerun_instruction": rerun_instruction,
+    }
+
+    await _publish_stream_event(
+        state,
+        "section_started",
+        {
+            "node": "generate_content",
+            "section_id": section.id,
+            "section_title": section.title,
+            "mode": "generate",
+        },
+    )
+
+    chunks: list[str] = []
+    try:
+        async for chunk in chain.astream(payload):
+            token = _extract_chunk_text(chunk)
+            if not token:
+                continue
+
+            chunks.append(token)
+            await _publish_stream_event(
+                state,
+                "token",
+                {
+                    "node": "generate_content",
+                    "section_id": section.id,
+                    "section_title": section.title,
+                    "delta": token,
+                    "mode": "generate",
+                },
+            )
+    except Exception as exc:
+        await _publish_stream_event(
+            state,
+            "stream_error",
+            {
+                "node": "generate_content",
+                "section_id": section.id,
+                "section_title": section.title,
+                "detail": str(exc),
+                "mode": "generate",
+            },
+        )
+        raise
+
+    content = "".join(chunks)
+    await _publish_stream_event(
+        state,
+        "section_completed",
+        {
+            "node": "generate_content",
+            "section_id": section.id,
+            "section_title": section.title,
+            "content_length": len(content),
+            "mode": "generate",
+        },
+    )
+    return content
 
 
 async def generate_all_sections(state: dict) -> dict:
@@ -165,7 +290,7 @@ async def generate_all_sections(state: dict) -> dict:
         for index, section in enumerate(flat_sections):
             # 生成章节内容
             start_time = utc_now_naive()
-            content = await generate_section(state, section, previous_content)
+            content = await generate_section_streaming(state, section, previous_content)
             end_time = utc_now_naive()
 
             generated_sections[section.id] = content
