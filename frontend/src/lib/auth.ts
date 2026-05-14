@@ -418,6 +418,24 @@ export async function inviteWorkspaceMember(
 }
 
 /**
+ * 接受工作空间邀请
+ */
+export async function acceptWorkspaceInvite(token: string): Promise<{ message: string }> {
+  const response = await authenticatedFetch(
+    apiUrl(`/workspaces/accept-invite?token=${encodeURIComponent(token)}`),
+    {
+      method: 'POST',
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, '接受邀请失败'));
+  }
+
+  return response.json();
+}
+
+/**
  * 修改成员角色
  */
 export async function updateWorkspaceMemberRole(

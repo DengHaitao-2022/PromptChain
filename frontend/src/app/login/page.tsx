@@ -8,6 +8,19 @@ import { login } from '@/lib/auth';
 import { AuthShell } from '@/components/AuthShell/AuthShell';
 import styles from './login.module.css';
 
+function getSafeNextPath() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const nextPath = new URLSearchParams(window.location.search).get('next');
+  if (!nextPath || !nextPath.startsWith('/') || nextPath.startsWith('//')) {
+    return null;
+  }
+
+  return nextPath;
+}
+
 /**
  * 用户登录页。
  * 使用统一认证壳体承接首页延展出的视觉语言。
@@ -28,7 +41,7 @@ export default function LoginPage() {
 
     try {
       await login({ email, password });
-      router.push('/console');
+      router.push(getSafeNextPath() || '/console');
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败，请检查邮箱和密码是否正确');
     } finally {
