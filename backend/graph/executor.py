@@ -555,45 +555,65 @@ class ContentGenerationWorkflow:
         if workflow_run is None:
             raise ValueError(f"WorkflowRun not found: {workflow_run_id}")
 
-        initial_state = await self._build_initial_state(
+        initial_state, updated_config = await self._prepare_rerun_target(
             workflow_run,
-            {
-                **preserved_state,
-                "rerun_from_node": from_node,
-            },
+            from_node=from_node,
+            preserved_state=preserved_state,
         )
-
-        if from_node == "parse_intent":
+        if updated_config is None:
             return await self._drive_workflow(
                 workflow_run_id,
                 initial_state=initial_state,
                 emit_resumed=True,
             )
-
-        predecessor_by_node = {
-            "clarify_intent": "parse_intent",
-            "generate_outline": "parse_intent",
-            "approve_outline": "generate_outline",
-            "generate_content": "approve_outline",
-            "self_refine": "generate_content",
-            "check_facts": "self_refine",
-            "approve_fact_check": "check_facts",
-            "finalize": "check_facts",
-        }
-        predecessor = predecessor_by_node.get(from_node)
-        if predecessor is None:
-            raise ValueError(f"Unsupported rerun node: {from_node}")
-
-        updated_config = await self.graph.aupdate_state(
-            self._base_config(workflow_run_id),
-            initial_state,
-            as_node=predecessor,
-        )
         return await self._drive_workflow(
             workflow_run_id,
             config=updated_config,
             emit_resumed=True,
         )
+
+    async def start_rerun_from_node(
+        self,
+        workflow_run_id: str,
+        *,
+        from_node: str,
+        preserved_state: dict,
+    ) -> dict:
+        """后台启动重跑，避免 HTTP 请求被节点执行时间阻塞。"""
+        workflow_run = await self.store.get_workflow_run(workflow_run_id)
+        if workflow_run is None:
+            raise ValueError(f"WorkflowRun not found: {workflow_run_id}")
+
+        initial_state, updated_config = await self._prepare_rerun_target(
+            workflow_run,
+            from_node=from_node,
+            preserved_state=preserved_state,
+        )
+
+        # 先把目标节点写回运行态，详情页可立即进入轮询/SSE，而不是等待节点跑完。
+        workflow_run.current_node = from_node
+        metadata = dict(workflow_run.metadata or {})
+        metadata["last_public_status"] = "running"
+        metadata.pop("error", None)
+        workflow_run.metadata = metadata
+        await self.store.update_workflow_run(workflow_run)
+
+        if updated_config is None:
+            self._schedule_drive(
+                workflow_run_id,
+                initial_state=initial_state,
+            )
+        else:
+            self._schedule_drive(
+                workflow_run_id,
+                config=updated_config,
+            )
+
+        return {
+            "workflow_run_id": workflow_run_id,
+            "state": {**initial_state, "current_node": from_node},
+            "status": "running",
+        }
 
     async def _resume_from_node(
         self,
@@ -622,6 +642,46 @@ class ContentGenerationWorkflow:
             config=updated_config,
             emit_resumed=True,
         )
+
+    async def _prepare_rerun_target(
+        self,
+        workflow_run: WorkflowRun,
+        *,
+        from_node: str,
+        preserved_state: dict,
+    ) -> tuple[dict, dict | None]:
+        """统一构建重跑入口状态，供同步 rerun 和后台 rerun 复用。"""
+        initial_state = await self._build_initial_state(
+            workflow_run,
+            {
+                **preserved_state,
+                "rerun_from_node": from_node,
+            },
+        )
+
+        if from_node == "parse_intent":
+            return initial_state, None
+
+        predecessor_by_node = {
+            "clarify_intent": "parse_intent",
+            "generate_outline": "parse_intent",
+            "approve_outline": "generate_outline",
+            "generate_content": "approve_outline",
+            "self_refine": "generate_content",
+            "check_facts": "self_refine",
+            "approve_fact_check": "check_facts",
+            "finalize": "check_facts",
+        }
+        predecessor = predecessor_by_node.get(from_node)
+        if predecessor is None:
+            raise ValueError(f"Unsupported rerun node: {from_node}")
+
+        updated_config = await self.graph.aupdate_state(
+            self._base_config(workflow_run.id),
+            initial_state,
+            as_node=predecessor,
+        )
+        return initial_state, updated_config
 
     async def pause(self, workflow_run_id: str, reason: str = "") -> dict:
         """请求手动暂停，当前节点完成后停在下一份 checkpoint。"""

@@ -630,13 +630,20 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
             new_workflow_run.id, user_id, workspace_id
         )
 
-        # 3. 使用工作流执行器恢复执行
+        # 3. 像 start/resume 一样走后台调度，避免重跑请求被节点执行时间阻塞。
         workflow = get_workflow()
-        result = await workflow.rerun_from_node(
-            new_workflow_run.id,
-            from_node=body.from_node,
-            preserved_state=preserved_state,
-        )
+        if hasattr(workflow, "start_rerun_from_node"):
+            result = await workflow.start_rerun_from_node(
+                new_workflow_run.id,
+                from_node=body.from_node,
+                preserved_state=preserved_state,
+            )
+        else:
+            result = await workflow.rerun_from_node(
+                new_workflow_run.id,
+                from_node=body.from_node,
+                preserved_state=preserved_state,
+            )
 
         simplified_state = _simplify_state(result["state"])
         refreshed_new_workflow_run = (
