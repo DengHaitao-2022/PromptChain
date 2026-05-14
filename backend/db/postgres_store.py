@@ -320,7 +320,14 @@ class PostgresArtifactStore:
             "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
         )
         sql_echo = os.getenv("SQL_ECHO", "false").lower() == "true"
-        self.engine = create_async_engine(self.database_url, echo=sql_echo)
+        pool_recycle_seconds = int(os.getenv("DATABASE_POOL_RECYCLE_SECONDS", "1800"))
+        # 连接池取连接前先做健康检查，并定期回收旧连接，避免拿到已失效的 asyncpg 连接。
+        self.engine = create_async_engine(
+            self.database_url,
+            echo=sql_echo,
+            pool_pre_ping=True,
+            pool_recycle=pool_recycle_seconds,
+        )
         self.async_session = async_sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
@@ -346,6 +353,10 @@ class PostgresArtifactStore:
             await conn.run_sync(Base.metadata.create_all)
             for statement in _runtime_schema_statements(self.database_url):
                 await conn.execute(text(statement))
+
+    async def dispose(self) -> None:
+        """在应用关闭或热重载时主动释放连接池中的底层连接。"""
+        await self.engine.dispose()
 
     async def create_artifact(
         self,
@@ -867,6 +878,14 @@ def get_postgres_store() -> PostgresArtifactStore:
     if _postgres_store is None:
         _postgres_store = PostgresArtifactStore()
     return _postgres_store
+
+
+async def dispose_postgres_store() -> None:
+    """若单例已创建，则主动释放其连接池。"""
+    global _postgres_store
+    if _postgres_store is None:
+        return
+    await _postgres_store.dispose()
 
 
 def get_postgres_checkpoint_saver() -> PostgresGraphCheckpointSaver:

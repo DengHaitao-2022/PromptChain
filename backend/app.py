@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
 
     # 注册路由
     _register_routes(application)
+    _register_lifecycle(application)
 
     return application
 
@@ -93,6 +94,17 @@ def _register_routes(application: FastAPI) -> None:
             "service": "PromptChain API",
             "version": get_settings().APP_VERSION,
         }
+
+
+def _register_lifecycle(application: FastAPI) -> None:
+    """注册应用生命周期钩子。"""
+
+    @application.on_event("shutdown")
+    async def shutdown_runtime_resources() -> None:
+        # 热重载或进程退出时主动释放数据库连接池，减少残留失效连接。
+        from db.postgres_store import dispose_postgres_store
+
+        await dispose_postgres_store()
 
 
 # 创建应用实例（uvicorn 入口）
