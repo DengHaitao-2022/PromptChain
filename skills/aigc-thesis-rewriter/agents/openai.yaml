@@ -1,0 +1,3 @@
+interface:
+  display_name: "AIGC Thesis Rewriter"
+  short_description: "Analyze Chinese AIGC reports and rewrite thesis fragments with lower template-like risk."
