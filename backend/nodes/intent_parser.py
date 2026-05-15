@@ -52,7 +52,17 @@ INTENT_EXTRACTION_PROMPT = """你是一个专业的内容规划助手。请根�
 - length: 如果用户提到了字数要求就使用，否则默认1500
 - must_include: 提取用户明确要求必须包含的内容
 - must_exclude: 提取用户明确要求禁止的内容
-- uncertainties: 如果有重要信息不明确，添加澄清问题"""
+- uncertainties: 如果有重要信息不明确，添加澄清问题
+
+## 字段合法性约束
+- audience 只能输出："初学者"、"中级读者"、"专家"、"通用读者"
+- 如果用户说“投资人”“客户”“管理层”“政府”“学校”等具体对象，请选择最接近的 audience，并把原始对象写入 must_include
+- tone 只能输出："正式严谨"、"轻松活泼"、"学术专业"、"叙事性"
+- 如果用户说“专业、严谨、数据驱动”“商业计划书”“投资分析”，tone 应输出 "正式严谨"
+- length 必须是数字，范围 100 到 100000
+- 如果用户要求超过 100000 字，请将 length 设为 100000，并在 must_include 记录原始字数需求
+- uncertainties 必须是对象数组，不能是字符串数组
+- 每个 uncertainty 必须包含 field、question、priority、default_assumption"""
 
 
 def _now_iso() -> str:
@@ -120,10 +130,23 @@ def _coerce_tone(value) -> str:
             return tone.value
 
     lowered = text.lower()
-    if any(keyword in lowered for keyword in ["学术", "专业", "论文", "academic"]):
-        return Tone.ACADEMIC.value
-    if any(keyword in lowered for keyword in ["正式", "严谨", "报告", "formal"]):
+    if any(
+        keyword in lowered
+        for keyword in [
+            "正式",
+            "严谨",
+            "报告",
+            "商业",
+            "投资",
+            "数据驱动",
+            "计划书",
+            "formal",
+            "专业",
+        ]
+    ):
         return Tone.FORMAL.value
+    if any(keyword in lowered for keyword in ["学术", "论文", "研究型", "academic"]):
+        return Tone.ACADEMIC.value
     if any(keyword in lowered for keyword in ["故事", "叙事", "story"]):
         return Tone.STORYTELLING.value
     return Tone.CASUAL.value
@@ -140,6 +163,87 @@ def _question_field(question) -> str | None:
     if isinstance(question, dict):
         return question.get("field")
     return getattr(question, "field", None)
+
+
+def _normalize_uncertainty_item(item, index: int) -> dict:
+    if isinstance(item, dict):
+        question = (
+            item.get("question")
+            or item.get("text")
+            or item.get("content")
+            or item.get("description")
+            or ""
+        )
+        try:
+            priority = int(item.get("priority") or min(index + 1, 5))
+        except (TypeError, ValueError):
+            priority = min(index + 1, 5)
+        return {
+            "field": str(item.get("field") or "general"),
+            "question": str(question),
+            "priority": max(1, min(priority, 5)),
+            "default_assumption": item.get("default_assumption"),
+        }
+
+    return {
+        "field": "general",
+        "question": str(item),
+        "priority": min(index + 1, 5),
+        "default_assumption": None,
+    }
+
+
+def _normalize_intent_card_payload(payload: dict) -> dict:
+    data = dict(payload)
+
+    raw_audience = data.get("audience")
+    raw_tone = data.get("tone")
+    raw_length = data.get("length")
+
+    data["audience"] = _coerce_audience(raw_audience)
+    data["tone"] = _coerce_tone(raw_tone)
+
+    length = _coerce_length(raw_length, 1500)
+    data["length"] = min(10000, max(100, length))
+
+    uncertainties = data.get("uncertainties") or []
+    if not isinstance(uncertainties, list):
+        uncertainties = [uncertainties]
+    data["uncertainties"] = [
+        _normalize_uncertainty_item(item, index) for index, item in enumerate(uncertainties) if item
+    ]
+
+    for key in ("must_include", "must_exclude", "source_references"):
+        value = data.get(key)
+        if value is None:
+            data[key] = []
+        elif isinstance(value, str):
+            data[key] = _coerce_list_answer(value)
+        elif not isinstance(value, list):
+            data[key] = [str(value)]
+
+    preserved_constraints: list[str] = []
+    valid_audience_values = {audience.value for audience in Audience}
+    valid_tone_values = {tone.value for tone in Tone}
+
+    if raw_audience and str(raw_audience).strip() not in valid_audience_values:
+        preserved_constraints.append(f"目标受众：{raw_audience}")
+
+    if raw_tone and str(raw_tone).strip() not in valid_tone_values:
+        preserved_constraints.append(f"原始风格要求：{raw_tone}")
+
+    if length > 10000:
+        preserved_constraints.append(
+            f"用户期望篇幅：{length} 字；当前单次生成上限为 10000 字，后续应按章节/分批扩展。"
+        )
+
+    if preserved_constraints:
+        data["must_include"] = _merge_unique(
+            data.get("must_include", []),
+            preserved_constraints,
+        )
+
+    return data
 
 
 def _apply_clarifications(intent_card: IntentCard, clarifications: dict) -> dict:
@@ -237,7 +341,12 @@ async def parse_intent(state: dict) -> dict:
         # 调用 LLM
         start_time = utc_now_naive()
         intent_card, usage = await invoke_with_llm_retry(
-            lambda: invoke_structured_with_usage(chain, {"user_input": user_input})
+            lambda: invoke_structured_with_usage(
+                chain,
+                {"user_input": user_input},
+                schema=IntentCard,
+                normalizer=_normalize_intent_card_payload,
+            )
         )
         end_time = utc_now_naive()
         usage = ensure_usage_metadata(

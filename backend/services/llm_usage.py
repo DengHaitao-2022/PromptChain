@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from pydantic import BaseModel
 
 
 def _as_int(value: Any) -> int:
@@ -83,20 +86,67 @@ def ensure_usage_metadata(
 async def invoke_structured_with_usage(
     chain: Any,
     payload: dict[str, Any],
+    *,
+    schema: type[BaseModel] | None = None,
+    normalizer=None,
 ) -> tuple[Any, dict[str, int]]:
     """执行结构化输出调用，同时把 raw usage 提出来。"""
     result = await chain.ainvoke(payload)
 
     if isinstance(result, dict) and "raw" in result:
         raw = result.get("raw")
+        usage = extract_usage_metadata(raw)
         parsed = result.get("parsed")
         parsing_error = result.get("parsing_error")
-        if parsed is None:
-            if isinstance(parsing_error, BaseException):
-                raise parsing_error
-            if parsing_error:
-                raise ValueError(str(parsing_error))
-            raise ValueError("结构化输出解析失败")
-        return parsed, extract_usage_metadata(raw)
+        if parsed is not None:
+            return parsed, usage
+
+        if schema is not None:
+            data = _parse_raw_structured_payload(raw)
+            if normalizer is not None:
+                data = normalizer(data)
+            return schema.model_validate(data), usage
+
+        if isinstance(parsing_error, BaseException):
+            raise parsing_error
+        if parsing_error:
+            raise ValueError(str(parsing_error))
+        raise ValueError("结构化输出解析失败")
 
     return result, extract_usage_metadata(result)
+
+
+def _parse_raw_structured_payload(raw: Any) -> dict[str, Any]:
+    """把结构化输出 raw 响应解析成 dict。"""
+    if isinstance(raw, dict):
+        return raw
+
+    content = getattr(raw, "content", "")
+    if isinstance(content, str):
+        return json.loads(_strip_code_fence(content))
+
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                text_parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    text_parts.append(text)
+        return json.loads(_strip_code_fence("".join(text_parts)))
+
+    raise ValueError("结构化输出解析失败：raw content 不是可解析 JSON 文本")
+
+
+def _strip_code_fence(text: str) -> str:
+    normalized = text.strip()
+    if normalized.startswith("```"):
+        lines = normalized.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        normalized = "\n".join(lines).strip()
+    return normalized
