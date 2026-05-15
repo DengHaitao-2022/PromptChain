@@ -21,6 +21,7 @@ from services.llm_provider import (
     _build_workspace_runtime_config,
     _resolve_effective_structured_output_method,
 )
+from services.llm_usage import extract_usage_metadata
 from services.structured_output_prompt import ensure_json_mode_instruction_text
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -412,7 +413,7 @@ async def _probe_structured_output(
     model: str,
     *,
     method_override: str | None = None,
-) -> tuple[Any, str | None]:
+) -> tuple[Any, str | None, dict[str, int]]:
     """用当前 LangChain 配置直接探测结构化输出可用性。"""
     effective_method = _resolve_effective_structured_output_method(
         runtime_config,
@@ -432,9 +433,17 @@ async def _probe_structured_output(
     prompt = ensure_json_mode_instruction_text(
         _STRUCTURED_OUTPUT_TEST_PROMPT,
         effective_method,
+        schema=StructuredOutputProbe,
     )
     result = await structured_llm.ainvoke(prompt)
-    return result, effective_method
+
+    if isinstance(result, dict) and "parsed" in result:
+        parsed = result.get("parsed")
+        if parsed is None:
+            raise result.get("parsing_error") or ValueError("结构化输出解析失败")
+        return parsed, effective_method, extract_usage_metadata(result.get("raw"))
+
+    return result, effective_method, extract_usage_metadata(result)
 
 
 async def _build_structured_output_step(
@@ -449,7 +458,7 @@ async def _build_structured_output_step(
     """生成单个结构化输出测试步骤。"""
     started_at = _now_ms()
     try:
-        result, effective_method = await _probe_structured_output(
+        result, effective_method, usage = await _probe_structured_output(
             runtime_config,
             model,
             method_override=method_override,
@@ -477,6 +486,9 @@ async def _build_structured_output_step(
             "method": method_text,
             "response_text": preview[:500],
             "response_preview": preview[:120],
+            "prompt_tokens": usage["prompt_tokens"],
+            "completion_tokens": usage["completion_tokens"],
+            "total_tokens": usage["total_tokens"],
         },
     )
 

@@ -21,8 +21,10 @@ from models import (
 )
 from services import (
     build_structured_chain_for_workspace,
+    ensure_usage_metadata,
     get_artifact_store,
     get_current_model_info_for_workspace,
+    invoke_structured_with_usage,
     invoke_with_llm_retry,
 )
 
@@ -137,8 +139,9 @@ async def generate_outline(state: dict) -> dict:
 
         # 调用 LLM
         start_time = utc_now_naive()
-        outline: Outline = await invoke_with_llm_retry(
-            lambda: chain.ainvoke(
+        outline, usage = await invoke_with_llm_retry(
+            lambda: invoke_structured_with_usage(
+                chain,
                 {
                     "goal": intent_card.goal,
                     "topic": intent_card.topic,
@@ -147,10 +150,15 @@ async def generate_outline(state: dict) -> dict:
                     "length": intent_card.length,
                     "must_include": ", ".join(intent_card.must_include) or "无特殊要求",
                     "must_exclude": ", ".join(intent_card.must_exclude) or "无",
-                }
+                },
             )
         )
         end_time = utc_now_naive()
+        usage = ensure_usage_metadata(
+            usage,
+            prompt_text=intent_card.topic,
+            completion_text=outline.title,
+        )
 
         # 记录 LLM 调用（动态获取模型配置）
         model_info = await get_current_model_info_for_workspace(
@@ -161,6 +169,9 @@ async def generate_outline(state: dict) -> dict:
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],
+            prompt_tokens=usage["prompt_tokens"],
+            completion_tokens=usage["completion_tokens"],
+            total_tokens=usage["total_tokens"],
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
             prompt_preview=intent_card.topic[:100],
             response_preview=outline.title[:100],

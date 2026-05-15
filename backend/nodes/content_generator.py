@@ -22,6 +22,8 @@ from models import (
     OutlineSection,
 )
 from services import (
+    ensure_usage_metadata,
+    extract_usage_metadata,
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
@@ -112,7 +114,11 @@ async def _publish_stream_event(
     await get_workflow_event_bus().publish(workflow_run_id, event_type, data)
 
 
-async def generate_section(state: dict, section: OutlineSection, previous_content: str = "") -> str:
+async def generate_section(
+    state: dict,
+    section: OutlineSection,
+    previous_content: str = "",
+) -> tuple[str, dict[str, int]]:
     """
     生成单个章节内容
 
@@ -152,14 +158,19 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
         )
     )
 
-    return result.content
+    usage = ensure_usage_metadata(
+        extract_usage_metadata(result),
+        prompt_text=f"{section.title}\n{section.summary}\n{previous_content}",
+        completion_text=result.content,
+    )
+    return result.content, usage
 
 
 async def generate_section_streaming(
     state: dict,
     section: OutlineSection,
     previous_content: str = "",
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """生成单个章节内容，并把正文增量通过 SSE 推给详情页。"""
     intent_card: IntentCard = state["intent_card"]
     outline: Outline = state["outline"]
@@ -184,6 +195,7 @@ async def generate_section_streaming(
         "previous_sections": previous_content or "（这是第一个章节）",
         "rerun_instruction": rerun_instruction,
     }
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     await _publish_stream_event(
         state,
@@ -199,6 +211,9 @@ async def generate_section_streaming(
     chunks: list[str] = []
     try:
         async for chunk in chain.astream(payload):
+            chunk_usage = extract_usage_metadata(chunk)
+            if chunk_usage["total_tokens"] > 0:
+                usage = chunk_usage
             token = _extract_chunk_text(chunk)
             if not token:
                 continue
@@ -230,6 +245,11 @@ async def generate_section_streaming(
         raise
 
     content = "".join(chunks)
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=f"{section.title}\n{section.summary}\n{previous_content}",
+        completion_text=content,
+    )
     await _publish_stream_event(
         state,
         "section_completed",
@@ -241,7 +261,7 @@ async def generate_section_streaming(
             "mode": "generate",
         },
     )
-    return content
+    return content, usage
 
 
 async def generate_all_sections(state: dict) -> dict:
@@ -290,7 +310,7 @@ async def generate_all_sections(state: dict) -> dict:
         for index, section in enumerate(flat_sections):
             # 生成章节内容
             start_time = utc_now_naive()
-            content = await generate_section_streaming(state, section, previous_content)
+            content, usage = await generate_section_streaming(state, section, previous_content)
             end_time = utc_now_naive()
 
             generated_sections[section.id] = content
@@ -304,6 +324,9 @@ async def generate_all_sections(state: dict) -> dict:
             llm_call = LLMCallRecord(
                 model=model_info["model"],
                 provider=model_info["provider"],
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+                total_tokens=usage["total_tokens"],
                 latency_ms=int((end_time - start_time).total_seconds() * 1000),
                 prompt_preview=section.title,
                 response_preview=content[:200] if len(content) > 200 else content,
@@ -412,7 +435,7 @@ async def regenerate_section(state: dict) -> dict:
 
         # 重新生成
         start_time = utc_now_naive()
-        new_content = await generate_section(state, target_section, previous_content)
+        new_content, usage = await generate_section(state, target_section, previous_content)
         end_time = utc_now_naive()
 
         # 更新
@@ -443,6 +466,9 @@ async def regenerate_section(state: dict) -> dict:
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],
+            prompt_tokens=usage["prompt_tokens"],
+            completion_tokens=usage["completion_tokens"],
+            total_tokens=usage["total_tokens"],
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
             prompt_preview=target_section.title,
             response_preview=new_content[:200],

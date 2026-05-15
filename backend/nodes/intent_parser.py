@@ -24,8 +24,10 @@ from models import (
 )
 from services import (
     build_structured_chain_for_workspace,
+    ensure_usage_metadata,
     get_artifact_store,
     get_current_model_info_for_workspace,
+    invoke_structured_with_usage,
     invoke_with_llm_retry,
 )
 
@@ -234,10 +236,15 @@ async def parse_intent(state: dict) -> dict:
 
         # 调用 LLM
         start_time = utc_now_naive()
-        intent_card: IntentCard = await invoke_with_llm_retry(
-            lambda: chain.ainvoke({"user_input": user_input})
+        intent_card, usage = await invoke_with_llm_retry(
+            lambda: invoke_structured_with_usage(chain, {"user_input": user_input})
         )
         end_time = utc_now_naive()
+        usage = ensure_usage_metadata(
+            usage,
+            prompt_text=user_input,
+            completion_text=str(intent_card.model_dump()),
+        )
 
         # 记录 LLM 调用（动态获取模型配置）
         model_info = await get_current_model_info_for_workspace(
@@ -248,6 +255,9 @@ async def parse_intent(state: dict) -> dict:
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],
+            prompt_tokens=usage["prompt_tokens"],
+            completion_tokens=usage["completion_tokens"],
+            total_tokens=usage["total_tokens"],
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
             prompt_preview=user_input[:200] if len(user_input) > 200 else user_input,
             response_preview=str(intent_card.model_dump())[:200],

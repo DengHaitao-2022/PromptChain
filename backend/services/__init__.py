@@ -38,6 +38,12 @@ from .llm_provider import (
     get_structured_llm_runtime_for_workspace,
 )
 from .llm_retry import invoke_with_llm_retry
+from .llm_usage import (
+    ensure_usage_metadata,
+    estimate_tokens,
+    extract_usage_metadata,
+    invoke_structured_with_usage,
+)
 from .rerun_service import RerunService, get_rerun_service
 from .trace_service import TraceService, get_trace_service
 from .workflow_event_bus import WorkflowEventBus, WorkflowStreamEvent, get_workflow_event_bus
@@ -73,6 +79,10 @@ __all__ = [
     "is_retryable_llm_error",
     "is_llm_service_error",
     "invoke_with_llm_retry",
+    "extract_usage_metadata",
+    "ensure_usage_metadata",
+    "estimate_tokens",
+    "invoke_structured_with_usage",
     # rerun_service
     "RerunService",
     "get_rerun_service",

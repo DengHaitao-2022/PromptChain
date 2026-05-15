@@ -28,9 +28,12 @@ from models import (
 )
 from services import (
     build_structured_chain_for_workspace,
+    ensure_usage_metadata,
+    extract_usage_metadata,
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
+    invoke_structured_with_usage,
     invoke_with_llm_retry,
 )
 
@@ -259,7 +262,7 @@ async def extract_fact_claims(
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
     model_name: str | None = None,
-) -> list[FactClaim]:
+) -> tuple[list[FactClaim], dict[str, int]]:
     """
     步骤1：从内容中提取事实性声明
     """
@@ -271,13 +274,20 @@ async def extract_fact_claims(
         model_provider_id=model_provider_id,
     )
 
-    result: ClaimList = await invoke_with_llm_retry(lambda: chain.ainvoke({"content": content}))
+    result, usage = await invoke_with_llm_retry(
+        lambda: invoke_structured_with_usage(chain, {"content": content})
+    )
 
     # 为每个claim设置section_id
     for claim in result.claims:
         claim.section_id = section_id
 
-    return result.claims
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=content,
+        completion_text=str(result.model_dump()),
+    )
+    return result.claims, usage
 
 
 async def generate_verification_question(
@@ -285,7 +295,7 @@ async def generate_verification_question(
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
     model_name: str | None = None,
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """
     步骤2：为声明生成验证问题
     """
@@ -302,7 +312,13 @@ async def generate_verification_question(
         lambda: chain.ainvoke({"claim_text": claim.text, "claim_category": claim.category})
     )
 
-    return result.content.strip()
+    question = result.content.strip()
+    usage = ensure_usage_metadata(
+        extract_usage_metadata(result),
+        prompt_text=claim.text,
+        completion_text=question,
+    )
+    return question, usage
 
 
 async def execute_verification(
@@ -310,7 +326,7 @@ async def execute_verification(
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
     model_name: str | None = None,
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """
     步骤3：独立回答验证问题（Factored模式）
 
@@ -327,7 +343,13 @@ async def execute_verification(
 
     result = await invoke_with_llm_retry(lambda: chain.ainvoke({"question": question}))
 
-    return result.content.strip()
+    answer = result.content.strip()
+    usage = ensure_usage_metadata(
+        extract_usage_metadata(result),
+        prompt_text=question,
+        completion_text=answer,
+    )
+    return answer, usage
 
 
 async def evaluate_claim_accuracy(
@@ -337,7 +359,7 @@ async def evaluate_claim_accuracy(
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
     model_name: str | None = None,
-) -> VerificationResult:
+) -> tuple[VerificationResult, dict[str, int]]:
     """
     步骤4：评估声明准确性
     """
@@ -349,24 +371,33 @@ async def evaluate_claim_accuracy(
         model_provider_id=model_provider_id,
     )
 
-    evaluation: VerificationEvaluation = await invoke_with_llm_retry(
-        lambda: chain.ainvoke(
+    evaluation, usage = await invoke_with_llm_retry(
+        lambda: invoke_structured_with_usage(
+            chain,
             {
                 "claim_text": claim.text,
                 "verification_question": verification_question,
                 "verification_answer": verification_answer,
-            }
+            },
         )
     )
 
-    return VerificationResult(
-        claim_id=claim.id,
-        is_verified=evaluation.is_verified,
-        confidence=evaluation.confidence,
-        risk_level=evaluation.risk_level,
-        suggested_correction=evaluation.suggested_correction,
-        verification_question=verification_question,
-        verification_answer=verification_answer,
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=f"{claim.text}\n{verification_question}\n{verification_answer}",
+        completion_text=str(evaluation.model_dump()),
+    )
+    return (
+        VerificationResult(
+            claim_id=claim.id,
+            is_verified=evaluation.is_verified,
+            confidence=evaluation.confidence,
+            risk_level=evaluation.risk_level,
+            suggested_correction=evaluation.suggested_correction,
+            verification_question=verification_question,
+            verification_answer=verification_answer,
+        ),
+        usage,
     )
 
 
@@ -420,7 +451,7 @@ async def check_facts(state: dict) -> dict:
         for section_id, content in content_dict.items():
             # 步骤1：提取事实声明
             start_time = utc_now_naive()
-            claims = await extract_fact_claims(
+            claims, usage = await extract_fact_claims(
                 content,
                 section_id,
                 workspace_id,
@@ -440,6 +471,9 @@ async def check_facts(state: dict) -> dict:
             llm_call = LLMCallRecord(
                 model=model_info["model"],
                 provider=model_info["provider"],
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+                total_tokens=usage["total_tokens"],
                 latency_ms=int((end_time - start_time).total_seconds() * 1000),
                 prompt_preview=f"Extract claims from section {section_id}",
                 response_preview=f"Found {len(claims)} claims",
@@ -450,7 +484,7 @@ async def check_facts(state: dict) -> dict:
             for claim in claims:
                 # 步骤2：生成验证问题
                 start_time = utc_now_naive()
-                question = await generate_verification_question(
+                question, question_usage = await generate_verification_question(
                     claim,
                     workspace_id,
                     model_provider_id,
@@ -458,7 +492,7 @@ async def check_facts(state: dict) -> dict:
                 )
 
                 # 步骤3：独立执行验证
-                answer = await execute_verification(
+                answer, answer_usage = await execute_verification(
                     question,
                     workspace_id,
                     model_provider_id,
@@ -466,7 +500,7 @@ async def check_facts(state: dict) -> dict:
                 )
 
                 # 步骤4：评估准确性
-                result = await evaluate_claim_accuracy(
+                result, evaluation_usage = await evaluate_claim_accuracy(
                     claim,
                     question,
                     answer,
@@ -487,6 +521,21 @@ async def check_facts(state: dict) -> dict:
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],
+                    prompt_tokens=(
+                        question_usage["prompt_tokens"]
+                        + answer_usage["prompt_tokens"]
+                        + evaluation_usage["prompt_tokens"]
+                    ),
+                    completion_tokens=(
+                        question_usage["completion_tokens"]
+                        + answer_usage["completion_tokens"]
+                        + evaluation_usage["completion_tokens"]
+                    ),
+                    total_tokens=(
+                        question_usage["total_tokens"]
+                        + answer_usage["total_tokens"]
+                        + evaluation_usage["total_tokens"]
+                    ),
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Verify: {claim.text[:50]}...",
                     response_preview=f"Verified: {result.is_verified}, Risk: {result.risk_level}",

@@ -17,11 +17,14 @@ from core.time import utc_now_naive
 from models import ArtifactType, IntentCard, LLMCallRecord, NodeRun, NodeRunStatus, OutlineSection
 from services import (
     build_structured_chain_for_workspace,
+    ensure_usage_metadata,
+    extract_usage_metadata,
     format_workflow_error,
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
     get_workflow_event_bus,
+    invoke_structured_with_usage,
     invoke_with_llm_retry,
     is_llm_rate_limit_error,
 )
@@ -187,7 +190,11 @@ async def _create_final_content_artifact(
     )
 
 
-async def generate_feedback(state: dict, section_id: str, content: str) -> RefinementFeedback:
+async def generate_feedback(
+    state: dict,
+    section_id: str,
+    content: str,
+) -> tuple[RefinementFeedback, dict[str, int]]:
     """为单个章节生成反馈"""
     intent_card: IntentCard = state["intent_card"]
     outline = state["outline"]
@@ -210,8 +217,9 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
     )
     rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
 
-    feedback = await invoke_with_llm_retry(
-        lambda: chain.ainvoke(
+    feedback, usage = await invoke_with_llm_retry(
+        lambda: invoke_structured_with_usage(
+            chain,
             {
                 "audience": intent_card.audience.value,
                 "tone": intent_card.tone.value,
@@ -221,16 +229,21 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
                 "content": content,
                 "current_words": len(content),
                 "rerun_instruction": rerun_instruction,
-            }
+            },
         )
     )
 
-    return feedback
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=f"{section_title}\n{content}",
+        completion_text=str(feedback.model_dump()),
+    )
+    return feedback, usage
 
 
 async def refine_section(
     state: dict, section_id: str, original_content: str, feedback: RefinementFeedback
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """根据反馈修订章节"""
     llm = await get_llm_for_workspace(
         state.get("workspace_id"),
@@ -259,6 +272,7 @@ async def refine_section(
         "feedback": feedback_text,
         "rerun_instruction": state.get("rerun_instruction") or "无额外修订要求",
     }
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     await _publish_stream_event(
         state,
@@ -274,6 +288,9 @@ async def refine_section(
     chunks: list[str] = []
     try:
         async for chunk in chain.astream(payload):
+            chunk_usage = extract_usage_metadata(chunk)
+            if chunk_usage["total_tokens"] > 0:
+                usage = chunk_usage
             token = _extract_chunk_text(chunk)
             if not token:
                 continue
@@ -305,6 +322,11 @@ async def refine_section(
         raise
 
     refined_content = "".join(chunks)
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=f"{section_id}\n{original_content}\n{feedback_text}",
+        completion_text=refined_content,
+    )
     await _publish_stream_event(
         state,
         "section_completed",
@@ -317,7 +339,7 @@ async def refine_section(
         },
     )
 
-    return refined_content
+    return refined_content, usage
 
 
 async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
@@ -366,7 +388,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
             feedback_list: list[RefinementFeedback] = []
             for section_id, content in current_content.items():
                 start_time = utc_now_naive()
-                feedback = await generate_feedback(state, section_id, content)
+                feedback, usage = await generate_feedback(state, section_id, content)
                 end_time = utc_now_naive()
 
                 feedback_list.append(feedback)
@@ -403,6 +425,9 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],
+                    prompt_tokens=usage["prompt_tokens"],
+                    completion_tokens=usage["completion_tokens"],
+                    total_tokens=usage["total_tokens"],
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Feedback for {section_id}",
                     response_preview=f"Score: {feedback.quality_score}",
@@ -421,7 +446,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
             for feedback in sections_needing_revision:
                 section = section_lookup[feedback.section_id]
                 start_time = utc_now_naive()
-                refined_content = await refine_section(
+                refined_content, usage = await refine_section(
                     state, feedback.section_id, current_content[feedback.section_id], feedback
                 )
                 end_time = utc_now_naive()
@@ -457,6 +482,9 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],
+                    prompt_tokens=usage["prompt_tokens"],
+                    completion_tokens=usage["completion_tokens"],
+                    total_tokens=usage["total_tokens"],
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Refine {feedback.section_id}",
                     response_preview=refined_content[:100],

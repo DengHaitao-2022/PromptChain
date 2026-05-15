@@ -429,8 +429,8 @@ def _bind_structured_output_model(
         method_override=method_override,
     )
     if method:
-        return llm.with_structured_output(schema, method=method)
-    return llm.with_structured_output(schema)
+        return llm.with_structured_output(schema, method=method, include_raw=True)
+    return llm.with_structured_output(schema, include_raw=True)
 
 
 def _build_environment_runtime_config(
@@ -496,6 +496,7 @@ def _build_model_from_runtime_config(
             "api_key": runtime_config.credential,
             **kwargs,
         }
+        openai_kwargs.setdefault("stream_usage", True)
         if runtime_config.base_url:
             openai_kwargs["base_url"] = runtime_config.base_url
         return ChatOpenAI(**openai_kwargs)
@@ -527,12 +528,14 @@ def _build_model_from_runtime_config(
 
         if not runtime_config.credential:
             raise _build_missing_credential_error("github", "GITHUB_MODEL_TOKEN")
-        return ChatOpenAI(
-            model=runtime_config.model,
-            base_url=runtime_config.base_url or DEFAULT_GITHUB_MODELS_BASE_URL,
-            api_key=runtime_config.credential,
+        github_kwargs: dict[str, Any] = {
+            "model": runtime_config.model,
+            "base_url": runtime_config.base_url or DEFAULT_GITHUB_MODELS_BASE_URL,
+            "api_key": runtime_config.credential,
             **kwargs,
-        )
+        }
+        github_kwargs.setdefault("stream_usage", True)
+        return ChatOpenAI(**github_kwargs)
 
     if runtime_config.provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -724,6 +727,7 @@ async def build_structured_chain_for_workspace(
     prompt = build_structured_chat_prompt(
         prompt_template,
         runtime.effective_method,
+        schema=schema,
     )
     return prompt | runtime.llm, runtime
 
