@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { FileText, BarChart2, Pencil } from 'lucide-react';
+import { MarkdownRenderer } from '@/components/MarkdownRenderer/MarkdownRenderer';
 import styles from './ContentViewer.module.css';
 
 interface ContentSection {
@@ -155,19 +156,13 @@ export function ContentViewer({
                                 </div>
                             </div>
                         ) : (
-                            <div
-                                className={`${styles.sectionContent} ${
-                                    isStreaming && streamingSectionId === section.id
-                                        ? styles.streaming
-                                        : ''
-                                }`}
-                            >
-                                {section.content
-                                    .split(/\n{2,}/)
-                                    .filter((paragraph) => paragraph.trim())
-                                    .map((paragraph, pIndex) => (
-                                        <p key={pIndex}>{paragraph}</p>
-                                    ))}
+                            <div className={styles.sectionContent}>
+                                <MarkdownRenderer
+                                    content={section.content}
+                                    isStreaming={
+                                        isStreaming && streamingSectionId === section.id
+                                    }
+                                />
                             </div>
                         )}
                     </div>

@@ -591,7 +591,6 @@
     margin: 0;
     color: var(--color-text-secondary);
     line-height: 1.8;
-    white-space: pre-wrap;
     word-break: break-word;
 }
 

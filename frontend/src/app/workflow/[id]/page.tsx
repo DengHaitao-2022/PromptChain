@@ -52,6 +52,7 @@ import {
     TraceViewer,
     type WorkflowStep,
 } from '@/components';
+import { MarkdownRenderer } from '@/components/MarkdownRenderer/MarkdownRenderer';
 
 type StageTone = 'brand' | 'success' | 'warning' | 'danger' | 'muted';
 
@@ -1626,7 +1627,9 @@ export default function WorkflowDetailPage() {
                                             aria-hidden="true"
                                         />
                                     </div>
-                                    <p className={styles.previewText}>{entry.content}</p>
+                                    <div className={styles.previewText}>
+                                        <MarkdownRenderer content={entry.content} compact />
+                                    </div>
                                 </article>
                             ))
                         ) : (
