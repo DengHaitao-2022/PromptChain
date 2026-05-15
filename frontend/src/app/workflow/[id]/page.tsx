@@ -85,14 +85,10 @@ function getWorkflowFocusTarget(
     return null;
 }
 
-function isNearViewportBottom(threshold = 160) {
-    if (typeof window === 'undefined') return false;
-    const distance =
-        document.documentElement.scrollHeight -
-        window.scrollY -
-        window.innerHeight;
-
-    return distance < threshold;
+function isNearElementBottom(element: HTMLElement | null, threshold = 240) {
+    if (!element) return true;
+    const rect = element.getBoundingClientRect();
+    return rect.bottom - window.innerHeight < threshold;
 }
 
 type StageTone = 'brand' | 'success' | 'warning' | 'danger' | 'muted';
@@ -686,6 +682,12 @@ export default function WorkflowDetailPage() {
     const [autoFollowStreaming, setAutoFollowStreaming] = React.useState(true);
     const autoFollowRef = React.useRef(true);
     const lastAutoFocusKeyRef = React.useRef<string | null>(null);
+    const lastStreamingSectionRef = React.useRef<string | null>(null);
+
+    const programmaticScrollUntilRef = React.useRef(0);
+    const markProgrammaticScroll = React.useCallback((durationMs = 500) => {
+        programmaticScrollUntilRef.current = Date.now() + durationMs;
+    }, []);
 
     React.useEffect(() => {
         autoFollowRef.current = autoFollowStreaming;
@@ -1278,11 +1280,16 @@ export default function WorkflowDetailPage() {
             Object.entries(streamingSections).find(([, section]) => section.isStreaming)?.[0] ?? null,
         [streamingSections]
     );
+
+    const activeStreamingSection = activeStreamingSectionId
+        ? streamingSections[activeStreamingSectionId]
+        : null;
+
     const isContentStreaming =
-        Boolean(displayContentSections.length) &&
         workflow?.status === 'running' &&
-        currentStep !== undefined &&
-        ['generate_content', 'self_refine'].includes(currentStep);
+        Boolean(activeStreamingSection) &&
+        ['generate_content', 'self_refine'].includes(activeStreamingSection?.node ?? '');
+
     const availableRerunOptions = React.useMemo(
         () => rerunOptions.filter((option) => option.can_rerun && Boolean(RERUN_NODE_LABELS[option.node_name])),
         [rerunOptions]
@@ -1314,11 +1321,13 @@ export default function WorkflowDetailPage() {
         const handleScroll = () => {
             if (!isContentStreaming) return;
 
-            if (!isNearViewportBottom(240)) {
-                setAutoFollowStreaming(false);
-            } else {
-                setAutoFollowStreaming(true);
+            if (Date.now() < programmaticScrollUntilRef.current) {
+                return;
             }
+
+            setAutoFollowStreaming(
+                isNearElementBottom(contentBottomRef.current, 240)
+            );
         };
 
         window.addEventListener('scroll', handleScroll, { passive: true });
@@ -1329,11 +1338,30 @@ export default function WorkflowDetailPage() {
         if (!isContentStreaming) return;
         if (!autoFollowRef.current) return;
 
+        markProgrammaticScroll(120);
+
         contentBottomRef.current?.scrollIntoView({
             behavior: 'auto',
             block: 'end',
         });
-    }, [isContentStreaming, activeStreamingSectionId, activeStreamingContentLength]);
+    }, [isContentStreaming, activeStreamingSectionId, activeStreamingContentLength, markProgrammaticScroll]);
+
+    React.useEffect(() => {
+        if (!activeStreamingSectionId) return;
+
+        if (lastStreamingSectionRef.current !== activeStreamingSectionId) {
+            lastStreamingSectionRef.current = activeStreamingSectionId;
+            setAutoFollowStreaming(true);
+
+            window.requestAnimationFrame(() => {
+                markProgrammaticScroll(800);
+                contentSectionRef.current?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start',
+                });
+            });
+        }
+    }, [activeStreamingSectionId, markProgrammaticScroll]);
 
     React.useEffect(() => {
         if (!workflow || loading) return;
@@ -1372,6 +1400,7 @@ export default function WorkflowDetailPage() {
                     element = currentStageRef.current;
                     break;
             }
+            markProgrammaticScroll(800);
             element?.scrollIntoView({
                 behavior: 'smooth',
                 block: 'start',
@@ -1383,6 +1412,7 @@ export default function WorkflowDetailPage() {
         isContentStreaming,
         activeStreamingSectionId,
         loading,
+        markProgrammaticScroll,
     ]);
 
     const buildStageMetrics = (): StageMetric[] => {
@@ -2069,6 +2099,7 @@ export default function WorkflowDetailPage() {
                                                     className={styles.followStreamButton}
                                                     onClick={() => {
                                                         setAutoFollowStreaming(true);
+                                                        markProgrammaticScroll(800);
                                                         contentBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
                                                     }}
                                                 >
