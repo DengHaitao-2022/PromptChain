@@ -21,6 +21,7 @@ from services.llm_provider import (
     _build_workspace_runtime_config,
     _resolve_effective_structured_output_method,
 )
+from services.structured_output_prompt import ensure_json_mode_instruction_text
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com"
@@ -29,8 +30,8 @@ ANTHROPIC_VERSION = "2023-06-01"
 GITHUB_API_VERSION = "2026-03-10"
 DEFAULT_TEST_PROMPT = "请只回复 OK。"
 _STRUCTURED_OUTPUT_TEST_PROMPT = (
-    "请严格按照结构化输出要求返回结果：status 字段固定为 ok，"
-    "message 字段固定为 structured_output_ok。"
+    "请严格按照结构化输出要求返回结果："
+    "status 字段固定为 ok，message 字段固定为 structured_output_ok。"
 )
 _OPENAI_COMPATIBLE_PROVIDERS = {"openai", "github"}
 
@@ -413,6 +414,10 @@ async def _probe_structured_output(
     method_override: str | None = None,
 ) -> tuple[Any, str | None]:
     """用当前 LangChain 配置直接探测结构化输出可用性。"""
+    effective_method = _resolve_effective_structured_output_method(
+        runtime_config,
+        method_override=method_override,
+    )
     llm = _build_model_from_runtime_config(
         replace(runtime_config, model=model),
         temperature=0,
@@ -424,11 +429,12 @@ async def _probe_structured_output(
         runtime_config,
         method_override=method_override,
     )
-    result = await structured_llm.ainvoke(_STRUCTURED_OUTPUT_TEST_PROMPT)
-    return result, _resolve_effective_structured_output_method(
-        runtime_config,
-        method_override=method_override,
+    prompt = ensure_json_mode_instruction_text(
+        _STRUCTURED_OUTPUT_TEST_PROMPT,
+        effective_method,
     )
+    result = await structured_llm.ainvoke(prompt)
+    return result, effective_method
 
 
 async def _build_structured_output_step(

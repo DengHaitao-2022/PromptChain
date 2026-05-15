@@ -22,6 +22,7 @@ from sqlalchemy.future import select
 
 from core.config import get_settings
 from services.secret_crypto import decrypt_config_value
+from services.structured_output_prompt import build_structured_chat_prompt
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_FALLBACK_MODEL = "gpt-4o"
@@ -215,6 +216,15 @@ class RuntimeModelConfig:
     provider_name: str | None = None
     source: str = "environment"
     structured_output_method: str | None = None
+
+
+@dataclass(frozen=True)
+class StructuredLLMRuntime:
+    """结构化输出运行时信息。"""
+
+    llm: Any
+    runtime_config: RuntimeModelConfig
+    effective_method: str | None
 
 
 # 统一 registry 只声明支持列表与默认元数据，避免分支判断散落到 helper 中。
@@ -643,16 +653,79 @@ async def get_structured_llm_for_workspace(
     workspace_id: str | None = None,
     model: str | None = None,
     model_provider_id: str | None = None,
+    *,
+    method_override: str | None = None,
     **kwargs,
 ) -> BaseChatModel:
     """按工作空间动态配置获取结构化输出 LLM。"""
+    runtime = await get_structured_llm_runtime_for_workspace(
+        schema,
+        workspace_id,
+        model,
+        model_provider_id,
+        method_override=method_override,
+        **kwargs,
+    )
+    return runtime.llm
+
+
+async def get_structured_llm_runtime_for_workspace(
+    schema: type[BaseModel],
+    workspace_id: str | None = None,
+    model: str | None = None,
+    model_provider_id: str | None = None,
+    *,
+    method_override: str | None = None,
+    **kwargs,
+) -> StructuredLLMRuntime:
+    """按工作空间动态配置获取结构化输出 LLM 及最终生效模式。"""
     runtime_config = await get_workspace_runtime_model_config(
         workspace_id,
         model,
         model_provider_id,
     )
     llm = _build_model_from_runtime_config(runtime_config, **kwargs)
-    return _bind_structured_output_model(llm, schema, runtime_config)
+    effective_method = _resolve_effective_structured_output_method(
+        runtime_config,
+        method_override=method_override,
+    )
+    structured_llm = _bind_structured_output_model(
+        llm,
+        schema,
+        runtime_config,
+        method_override=method_override,
+    )
+    return StructuredLLMRuntime(
+        llm=structured_llm,
+        runtime_config=runtime_config,
+        effective_method=effective_method,
+    )
+
+
+async def build_structured_chain_for_workspace(
+    schema: type[BaseModel],
+    prompt_template: str,
+    workspace_id: str | None = None,
+    model: str | None = None,
+    model_provider_id: str | None = None,
+    *,
+    method_override: str | None = None,
+    **kwargs,
+) -> tuple[Any, StructuredLLMRuntime]:
+    """按工作空间动态配置构建结构化输出 chain。"""
+    runtime = await get_structured_llm_runtime_for_workspace(
+        schema,
+        workspace_id,
+        model,
+        model_provider_id,
+        method_override=method_override,
+        **kwargs,
+    )
+    prompt = build_structured_chat_prompt(
+        prompt_template,
+        runtime.effective_method,
+    )
+    return prompt | runtime.llm, runtime
 
 
 async def get_current_model_info_for_workspace(

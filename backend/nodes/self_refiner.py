@@ -16,11 +16,11 @@ from pydantic import BaseModel, Field
 from core.time import utc_now_naive
 from models import ArtifactType, IntentCard, LLMCallRecord, NodeRun, NodeRunStatus, OutlineSection
 from services import (
+    build_structured_chain_for_workspace,
     format_workflow_error,
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
-    get_structured_llm_for_workspace,
     get_workflow_event_bus,
     invoke_with_llm_retry,
     is_llm_rate_limit_error,
@@ -201,14 +201,13 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
             target_words = section.target_words
             break
 
-    llm = await get_structured_llm_for_workspace(
+    chain, _structured_runtime = await build_structured_chain_for_workspace(
         RefinementFeedback,
+        FEEDBACK_PROMPT,
         state.get("workspace_id"),
         model=state.get("model_name"),
         model_provider_id=state.get("model_provider_id"),
     )
-    prompt = ChatPromptTemplate.from_template(FEEDBACK_PROMPT)
-    chain = prompt | llm
     rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
 
     feedback = await invoke_with_llm_retry(

@@ -9,8 +9,6 @@
 
 import json
 
-from langchain_core.prompts import ChatPromptTemplate
-
 from core.time import utc_now_iso, utc_now_naive
 from models import (
     ArtifactType,
@@ -22,9 +20,9 @@ from models import (
     Outline,
 )
 from services import (
+    build_structured_chain_for_workspace,
     get_artifact_store,
     get_current_model_info_for_workspace,
-    get_structured_llm_for_workspace,
     invoke_with_llm_retry,
 )
 
@@ -129,14 +127,13 @@ async def generate_outline(state: dict) -> dict:
         if rerun_instruction:
             prompt_template += f"\n\n## 重跑修订要求\n{rerun_instruction}"
 
-        llm = await get_structured_llm_for_workspace(
+        chain, _structured_runtime = await build_structured_chain_for_workspace(
             Outline,
+            prompt_template,
             workspace_id,
             model=model_name,
             model_provider_id=model_provider_id,
         )
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-        chain = prompt | llm
 
         # 调用 LLM
         start_time = utc_now_naive()

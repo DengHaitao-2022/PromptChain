@@ -27,10 +27,10 @@ from models import (
     VerificationResult,
 )
 from services import (
+    build_structured_chain_for_workspace,
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
-    get_structured_llm_for_workspace,
     invoke_with_llm_retry,
 )
 
@@ -263,14 +263,13 @@ async def extract_fact_claims(
     """
     步骤1：从内容中提取事实性声明
     """
-    llm = await get_structured_llm_for_workspace(
+    chain, _structured_runtime = await build_structured_chain_for_workspace(
         ClaimList,
+        EXTRACT_CLAIMS_PROMPT,
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
     )
-    prompt = ChatPromptTemplate.from_template(EXTRACT_CLAIMS_PROMPT)
-    chain = prompt | llm
 
     result: ClaimList = await invoke_with_llm_retry(lambda: chain.ainvoke({"content": content}))
 
@@ -342,14 +341,13 @@ async def evaluate_claim_accuracy(
     """
     步骤4：评估声明准确性
     """
-    llm = await get_structured_llm_for_workspace(
+    chain, _structured_runtime = await build_structured_chain_for_workspace(
         VerificationEvaluation,
+        EVALUATE_CLAIM_PROMPT,
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
     )
-    prompt = ChatPromptTemplate.from_template(EVALUATE_CLAIM_PROMPT)
-    chain = prompt | llm
 
     evaluation: VerificationEvaluation = await invoke_with_llm_retry(
         lambda: chain.ainvoke(
