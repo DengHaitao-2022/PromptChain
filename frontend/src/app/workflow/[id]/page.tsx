@@ -54,6 +54,47 @@ import {
 } from '@/components';
 import { MarkdownRenderer } from '@/components/MarkdownRenderer/MarkdownRenderer';
 
+type WorkflowFocusTarget =
+    | 'clarification'
+    | 'outline'
+    | 'fact_check'
+    | 'running'
+    | 'content'
+    | 'completed'
+    | 'failed'
+    | null;
+
+function getWorkflowFocusTarget(
+    workflow: WorkflowResponse | null,
+    isContentStreaming: boolean
+): WorkflowFocusTarget {
+    if (!workflow) return null;
+
+    if (workflow.status === 'needs_clarification') return 'clarification';
+    if (workflow.status === 'awaiting_outline_approval') return 'outline';
+    if (workflow.status === 'awaiting_fact_check_approval') return 'fact_check';
+
+    if (workflow.status === 'running' && isContentStreaming) {
+        return 'content';
+    }
+
+    if (workflow.status === 'running') return 'running';
+    if (workflow.status === 'completed') return 'completed';
+    if (workflow.status === 'failed') return 'failed';
+
+    return null;
+}
+
+function isNearViewportBottom(threshold = 160) {
+    if (typeof window === 'undefined') return false;
+    const distance =
+        document.documentElement.scrollHeight -
+        window.scrollY -
+        window.innerHeight;
+
+    return distance < threshold;
+}
+
 type StageTone = 'brand' | 'success' | 'warning' | 'danger' | 'muted';
 
 interface StageMetric {
@@ -634,6 +675,22 @@ export default function WorkflowDetailPage() {
     const traceSectionRef = React.useRef<HTMLDivElement | null>(null);
     const [focusedTraceNodeId, setFocusedTraceNodeId] = React.useState<string | null>(null);
 
+    const currentStageRef = React.useRef<HTMLDivElement | null>(null);
+    const clarificationRef = React.useRef<HTMLDivElement | null>(null);
+    const outlineApprovalRef = React.useRef<HTMLDivElement | null>(null);
+    const factCheckRef = React.useRef<HTMLDivElement | null>(null);
+    const runningStageRef = React.useRef<HTMLDivElement | null>(null);
+    const contentSectionRef = React.useRef<HTMLDivElement | null>(null);
+    const contentBottomRef = React.useRef<HTMLDivElement | null>(null);
+
+    const [autoFollowStreaming, setAutoFollowStreaming] = React.useState(true);
+    const autoFollowRef = React.useRef(true);
+    const lastAutoFocusKeyRef = React.useRef<string | null>(null);
+
+    React.useEffect(() => {
+        autoFollowRef.current = autoFollowStreaming;
+    }, [autoFollowStreaming]);
+
     const stopPolling = React.useCallback(() => {
         if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
@@ -673,13 +730,14 @@ export default function WorkflowDetailPage() {
     }, []);
 
     const handleStreamingToken = React.useCallback((event: WorkflowTokenEvent) => {
-        if (!event.section_id) {
+        const sectionId = event.section_id;
+        if (!sectionId) {
             return;
         }
 
         setStreamingSections((current) => {
-            const previous = current[event.section_id] ?? {
-                title: event.section_title ?? formatEntryLabel(event.section_id),
+            const previous = current[sectionId] ?? {
+                title: event.section_title ?? formatEntryLabel(sectionId),
                 content: '',
                 isStreaming: true,
                 node: event.node,
@@ -688,7 +746,7 @@ export default function WorkflowDetailPage() {
 
             return {
                 ...current,
-                [event.section_id]: {
+                [sectionId]: {
                     ...previous,
                     title: event.section_title ?? previous.title,
                     content: previous.content + event.delta,
@@ -882,7 +940,7 @@ export default function WorkflowDetailPage() {
         if (workflow && workflow.status !== 'running') {
             void loadRerunData();
         }
-    }, [workflow?.status, workflowId, loadRerunData]);
+    }, [workflow, workflow?.status, workflowId, loadRerunData]);
 
     const handleClarification = async (answers: Record<string, string>) => {
         setActionLoading(true);
@@ -1246,6 +1304,86 @@ export default function WorkflowDetailPage() {
         }
         traceSectionRef.current?.scrollIntoView({ block: 'start' });
     }, [trace]);
+
+    const activeStreamingContentLength = React.useMemo(() => {
+        if (!activeStreamingSectionId) return 0;
+        return streamingSections[activeStreamingSectionId]?.content.length ?? 0;
+    }, [activeStreamingSectionId, streamingSections]);
+
+    React.useEffect(() => {
+        const handleScroll = () => {
+            if (!isContentStreaming) return;
+
+            if (!isNearViewportBottom(240)) {
+                setAutoFollowStreaming(false);
+            } else {
+                setAutoFollowStreaming(true);
+            }
+        };
+
+        window.addEventListener('scroll', handleScroll, { passive: true });
+        return () => window.removeEventListener('scroll', handleScroll);
+    }, [isContentStreaming]);
+
+    React.useEffect(() => {
+        if (!isContentStreaming) return;
+        if (!autoFollowRef.current) return;
+
+        contentBottomRef.current?.scrollIntoView({
+            behavior: 'auto',
+            block: 'end',
+        });
+    }, [isContentStreaming, activeStreamingSectionId, activeStreamingContentLength]);
+
+    React.useEffect(() => {
+        if (!workflow || loading) return;
+
+        const target = getWorkflowFocusTarget(workflow, isContentStreaming);
+        if (!target) return;
+
+        const key = `${workflowId}:${workflow.status}:${target}:${activeStreamingSectionId ?? ''}`;
+
+        if (lastAutoFocusKeyRef.current === key) {
+            return;
+        }
+
+        lastAutoFocusKeyRef.current = key;
+
+        window.requestAnimationFrame(() => {
+            let element: HTMLElement | null = null;
+            switch (target) {
+                case 'clarification':
+                    element = clarificationRef.current;
+                    break;
+                case 'outline':
+                    element = outlineApprovalRef.current;
+                    break;
+                case 'fact_check':
+                    element = factCheckRef.current;
+                    break;
+                case 'content':
+                    element = contentSectionRef.current;
+                    break;
+                case 'running':
+                    element = runningStageRef.current;
+                    break;
+                case 'failed':
+                case 'completed':
+                    element = currentStageRef.current;
+                    break;
+            }
+            element?.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start',
+            });
+        });
+    }, [
+        workflow,
+        workflowId,
+        isContentStreaming,
+        activeStreamingSectionId,
+        loading,
+    ]);
 
     const buildStageMetrics = (): StageMetric[] => {
         if (!workflow) {
@@ -1686,34 +1824,40 @@ export default function WorkflowDetailPage() {
 
         if (status === 'needs_clarification' && state.clarification_questions) {
             return (
-                <ClarificationDialog
-                    questions={state.clarification_questions}
-                    onSubmit={handleClarification}
-                    isLoading={actionLoading}
-                />
+                <div ref={clarificationRef}>
+                    <ClarificationDialog
+                        questions={state.clarification_questions}
+                        onSubmit={handleClarification}
+                        isLoading={actionLoading}
+                    />
+                </div>
             );
         }
 
         if (status === 'awaiting_outline_approval' && state.outline) {
             return (
-                <OutlineEditor
-                    outline={state.outline as Outline}
-                    onApprove={handleOutlineApprove}
-                    onModify={handleOutlineModify}
-                    onRegenerate={handleOutlineRegenerate}
-                    isLoading={actionLoading}
-                    isReadOnly={!isOutlineGate}
-                />
+                <div ref={outlineApprovalRef}>
+                    <OutlineEditor
+                        outline={state.outline as Outline}
+                        onApprove={handleOutlineApprove}
+                        onModify={handleOutlineModify}
+                        onRegenerate={handleOutlineRegenerate}
+                        isLoading={actionLoading}
+                        isReadOnly={!isOutlineGate}
+                    />
+                </div>
             );
         }
 
         if (status === 'awaiting_fact_check_approval' && state.fact_check_report) {
             return (
-                <FactCheckViewer
-                    report={state.fact_check_report as FactCheckReport}
-                    onApprove={handleFactCheckApprove}
-                    isLoading={actionLoading}
-                />
+                <div ref={factCheckRef}>
+                    <FactCheckViewer
+                        report={state.fact_check_report as FactCheckReport}
+                        onApprove={handleFactCheckApprove}
+                        isLoading={actionLoading}
+                    />
+                </div>
             );
         }
 
@@ -1730,7 +1874,11 @@ export default function WorkflowDetailPage() {
         }
 
         // Default to running stage if none of the above
-        return renderRunningStage();
+        return (
+            <div ref={runningStageRef}>
+                {renderRunningStage()}
+            </div>
+        );
     };
 
     if (loading) {
@@ -1912,14 +2060,29 @@ export default function WorkflowDetailPage() {
                                     </div>
                                 )}
                                 {displayContentSections.length > 0 && (
-                                    <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
-                                        <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成内容</h3>
+                                    <div ref={contentSectionRef} className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
+                                        <div className={styles.contentSectionHeader}>
+                                            <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成内容</h3>
+                                            {isContentStreaming && !autoFollowStreaming ? (
+                                                <button
+                                                    type="button"
+                                                    className={styles.followStreamButton}
+                                                    onClick={() => {
+                                                        setAutoFollowStreaming(true);
+                                                        contentBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                                                    }}
+                                                >
+                                                    继续跟随输出
+                                                </button>
+                                            ) : null}
+                                        </div>
                                         <ContentViewer
                                             title={workflow?.state.outline?.title || '生成内容'}
                                             abstract={workflow?.state.outline?.abstract || ''}
                                             sections={displayContentSections}
                                             isStreaming={isContentStreaming}
                                             streamingSectionId={activeStreamingSectionId}
+                                            streamingBottomRef={contentBottomRef}
                                         />
                                     </div>
                                 )}

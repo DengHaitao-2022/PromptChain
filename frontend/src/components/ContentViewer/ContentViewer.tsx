@@ -21,6 +21,7 @@ interface ContentViewerProps {
     isEditable?: boolean;
     isStreaming?: boolean;
     streamingSectionId?: string | null;
+    streamingBottomRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 export function ContentViewer({
@@ -32,6 +33,7 @@ export function ContentViewer({
     isEditable = false,
     isStreaming = false,
     streamingSectionId = null,
+    streamingBottomRef,
 }: ContentViewerProps) {
     const [editingSection, setEditingSection] = React.useState<string | null>(null);
     const [editContent, setEditContent] = React.useState('');
@@ -163,6 +165,9 @@ export function ContentViewer({
                                         isStreaming && streamingSectionId === section.id
                                     }
                                 />
+                                {isStreaming && streamingSectionId === section.id && (
+                                    <div ref={streamingBottomRef} />
+                                )}
                             </div>
                         )}
                     </div>

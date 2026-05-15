@@ -368,6 +368,39 @@
     color: var(--color-text-primary);
 }
 
+.contentSectionHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+
+.contentSectionHeader h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+.followStreamButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--workflow-brand-border);
+    border-radius: var(--radius-full);
+    background: var(--workflow-brand-soft);
+    color: var(--color-brand-primary);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.followStreamButton:hover {
+    background: var(--color-brand-primary);
+    color: white;
+}
+
 .runningStage,
 .completedStage,
 .failedStage {
