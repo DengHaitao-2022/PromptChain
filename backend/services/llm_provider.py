@@ -214,6 +214,7 @@ class RuntimeModelConfig:
     provider_id: str | None = None
     provider_name: str | None = None
     source: str = "environment"
+    structured_output_method: str | None = None
 
 
 # 统一 registry 只声明支持列表与默认元数据，避免分支判断散落到 helper 中。
@@ -329,6 +330,7 @@ class LLMProviderFactory:
 
 _MODEL_CONFIG_KEYS = ("model", "model_name")
 _BASE_URL_CONFIG_KEYS = ("base_url", "endpoint", "api_base")
+_STRUCTURED_OUTPUT_METHOD_KEYS = ("structured_output_method", "response_format_method")
 _CREDENTIAL_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "openai": ("api_key", "openai_api_key"),
     "anthropic": ("api_key", "anthropic_api_key"),
@@ -336,6 +338,8 @@ _CREDENTIAL_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "github": ("api_key", "github_model_token", "token"),
 }
 _RUNTIME_DEFAULT_CONFIG_KEY = "_runtime_default"
+_ALLOWED_STRUCTURED_OUTPUT_METHODS = {"json_schema", "json_mode", "function_calling"}
+_OPENAI_COMPATIBLE_METHOD_PROVIDERS = {"openai", "github"}
 
 
 def _clean_config_value(value: Any) -> str | None:
@@ -360,6 +364,63 @@ def _pick_config_value(config: dict[str, Any], keys: tuple[str, ...]) -> str | N
 def _is_runtime_default(config: dict[str, Any] | None) -> bool:
     """判断配置是否被标记为运行默认。"""
     return bool((config or {}).get(_RUNTIME_DEFAULT_CONFIG_KEY))
+
+
+def _normalize_structured_output_method(value: str | None) -> str | None:
+    """标准化结构化输出模式配置。"""
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def _supports_explicit_structured_output_method(runtime_config: RuntimeModelConfig) -> bool:
+    """当前仅对 langchain-openai 路径显式传 method，避免影响其它 provider。"""
+    return runtime_config.provider in _OPENAI_COMPATIBLE_METHOD_PROVIDERS
+
+
+def _resolve_effective_structured_output_method(
+    runtime_config: RuntimeModelConfig,
+    *,
+    method_override: str | None = None,
+) -> str | None:
+    """解析最终生效的结构化输出模式。"""
+    method = _normalize_structured_output_method(method_override)
+    if method is None:
+        method = _normalize_structured_output_method(runtime_config.structured_output_method)
+
+    if method == "auto":
+        method = None
+
+    if method is not None and method not in _ALLOWED_STRUCTURED_OUTPUT_METHODS:
+        supported = ", ".join(sorted(_ALLOWED_STRUCTURED_OUTPUT_METHODS))
+        raise ValueError(f"不支持的 structured_output_method: {method}，支持: {supported}")
+
+    if method is not None:
+        return method if _supports_explicit_structured_output_method(runtime_config) else None
+
+    base_url = (runtime_config.base_url or "").lower()
+    if _supports_explicit_structured_output_method(runtime_config) and "hf.space" in base_url:
+        return "json_mode"
+
+    return None
+
+
+def _bind_structured_output_model(
+    llm: BaseChatModel,
+    schema: type[BaseModel],
+    runtime_config: RuntimeModelConfig,
+    *,
+    method_override: str | None = None,
+):
+    """按运行时配置绑定结构化输出模式。"""
+    method = _resolve_effective_structured_output_method(
+        runtime_config,
+        method_override=method_override,
+    )
+    if method:
+        return llm.with_structured_output(schema, method=method)
+    return llm.with_structured_output(schema)
 
 
 def _build_environment_runtime_config(
@@ -406,6 +467,7 @@ def _build_workspace_runtime_config(provider_row: Any) -> RuntimeModelConfig:
         provider_id=provider_row.id,
         provider_name=provider_row.name,
         source="workspace",
+        structured_output_method=_pick_config_value(config, _STRUCTURED_OUTPUT_METHOD_KEYS),
     )
 
 
@@ -479,12 +541,21 @@ def _build_model_from_runtime_config(
 
 def _runtime_config_to_info(runtime_config: RuntimeModelConfig) -> dict[str, Any]:
     """转换为可返回给前端或写入 LLMCallRecord 的脱敏读模型。"""
+    try:
+        effective_structured_output_method = _resolve_effective_structured_output_method(
+            runtime_config
+        )
+    except ValueError:
+        effective_structured_output_method = runtime_config.structured_output_method
+
     return {
         "provider": runtime_config.provider,
         "model": runtime_config.model,
         "source": runtime_config.source,
         "provider_id": runtime_config.provider_id,
         "provider_name": runtime_config.provider_name,
+        "structured_output_method": runtime_config.structured_output_method,
+        "effective_structured_output_method": effective_structured_output_method,
     }
 
 
@@ -547,6 +618,7 @@ async def get_workspace_runtime_model_config(
             provider_id=runtime_config.provider_id,
             provider_name=runtime_config.provider_name,
             source=runtime_config.source,
+            structured_output_method=runtime_config.structured_output_method,
         )
     return runtime_config
 
@@ -580,7 +652,7 @@ async def get_structured_llm_for_workspace(
         model_provider_id,
     )
     llm = _build_model_from_runtime_config(runtime_config, **kwargs)
-    return llm.with_structured_output(schema)
+    return _bind_structured_output_model(llm, schema, runtime_config)
 
 
 async def get_current_model_info_for_workspace(
@@ -603,6 +675,8 @@ async def get_current_model_info_for_workspace(
             "source": "environment",
             "provider_id": None,
             "provider_name": None,
+            "structured_output_method": None,
+            "effective_structured_output_method": None,
         }
 
 

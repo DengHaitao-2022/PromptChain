@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import json
 import time
+from dataclasses import replace
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import httpx
+from pydantic import BaseModel, Field
 
 from services.llm_provider import (
     DEFAULT_GITHUB_MODELS_BASE_URL,
     DEFAULT_OLLAMA_BASE_URL,
     LLMProviderFactory,
     RuntimeModelConfig,
+    _bind_structured_output_model,
+    _build_model_from_runtime_config,
     _build_workspace_runtime_config,
+    _resolve_effective_structured_output_method,
 )
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -22,8 +28,20 @@ DEFAULT_GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 ANTHROPIC_VERSION = "2023-06-01"
 GITHUB_API_VERSION = "2026-03-10"
 DEFAULT_TEST_PROMPT = "请只回复 OK。"
+_STRUCTURED_OUTPUT_TEST_PROMPT = (
+    "请严格按照结构化输出要求返回结果：status 字段固定为 ok，"
+    "message 字段固定为 structured_output_ok。"
+)
+_OPENAI_COMPATIBLE_PROVIDERS = {"openai", "github"}
 
 StepStatus = str
+
+
+class StructuredOutputProbe(BaseModel):
+    """结构化输出连通性测试模型。"""
+
+    status: str = Field(description="固定返回 ok")
+    message: str = Field(description="固定返回 structured_output_ok")
 
 
 def _now_ms() -> float:
@@ -381,6 +399,82 @@ def _extract_prompt_preview(payload: Any) -> str | None:
     return None
 
 
+def _stringify_structured_result(value: Any) -> str:
+    """把结构化结果转成可展示文本。"""
+    if hasattr(value, "model_dump"):
+        value = value.model_dump()
+    return json.dumps(value, ensure_ascii=False)
+
+
+async def _probe_structured_output(
+    runtime_config: RuntimeModelConfig,
+    model: str,
+    *,
+    method_override: str | None = None,
+) -> tuple[Any, str | None]:
+    """用当前 LangChain 配置直接探测结构化输出可用性。"""
+    llm = _build_model_from_runtime_config(
+        replace(runtime_config, model=model),
+        temperature=0,
+        max_tokens=64,
+    )
+    structured_llm = _bind_structured_output_model(
+        llm,
+        StructuredOutputProbe,
+        runtime_config,
+        method_override=method_override,
+    )
+    result = await structured_llm.ainvoke(_STRUCTURED_OUTPUT_TEST_PROMPT)
+    return result, _resolve_effective_structured_output_method(
+        runtime_config,
+        method_override=method_override,
+    )
+
+
+async def _build_structured_output_step(
+    runtime_config: RuntimeModelConfig,
+    model: str,
+    *,
+    name: str,
+    label: str,
+    method_override: str | None = None,
+    failure_status: StepStatus = "failed",
+) -> dict[str, Any]:
+    """生成单个结构化输出测试步骤。"""
+    started_at = _now_ms()
+    try:
+        result, effective_method = await _probe_structured_output(
+            runtime_config,
+            model,
+            method_override=method_override,
+        )
+    except Exception as exc:
+        method_text = method_override or runtime_config.structured_output_method or "default"
+        return _step(
+            name,
+            label,
+            failure_status,
+            f"结构化输出调用失败：{_sanitize_message(str(exc), runtime_config.credential)}",
+            started_at=started_at,
+            detail={"method": method_text},
+        )
+
+    preview = _stringify_structured_result(result)
+    method_text = effective_method or "default"
+    return _step(
+        name,
+        label,
+        "success",
+        "结构化输出调用成功",
+        started_at=started_at,
+        detail={
+            "method": method_text,
+            "response_text": preview[:500],
+            "response_preview": preview[:120],
+        },
+    )
+
+
 async def test_model_provider(
     provider_row: Any,
     *,
@@ -658,6 +752,149 @@ async def test_model_provider(
                             },
                         )
                     )
+
+        if not model:
+            steps.append(
+                _skip_step(
+                    "structured_output_json_mode",
+                    "json_mode 结构化输出",
+                    "未选择模型，跳过结构化输出测试",
+                )
+            )
+            steps.append(
+                _skip_step(
+                    "structured_output_json_schema",
+                    "json_schema 结构化输出",
+                    "未选择模型，跳过结构化输出测试",
+                )
+            )
+            steps.append(
+                _skip_step(
+                    "structured_output_configured",
+                    "当前结构化输出配置",
+                    "未选择模型，跳过结构化输出测试",
+                )
+            )
+        elif any(step["name"] == "api_key_valid" and step["status"] == "failed" for step in steps):
+            steps.append(
+                _skip_step(
+                    "structured_output_json_mode",
+                    "json_mode 结构化输出",
+                    "API Key 校验失败，跳过结构化输出测试",
+                )
+            )
+            steps.append(
+                _skip_step(
+                    "structured_output_json_schema",
+                    "json_schema 结构化输出",
+                    "API Key 校验失败，跳过结构化输出测试",
+                )
+            )
+            steps.append(
+                _skip_step(
+                    "structured_output_configured",
+                    "当前结构化输出配置",
+                    "API Key 校验失败，跳过结构化输出测试",
+                )
+            )
+        elif runtime_config.provider not in _OPENAI_COMPATIBLE_PROVIDERS:
+            steps.append(
+                _skip_step(
+                    "structured_output_json_mode",
+                    "json_mode 结构化输出",
+                    "当前供应商不是 OpenAI-compatible 路径，跳过该测试",
+                )
+            )
+            steps.append(
+                _skip_step(
+                    "structured_output_json_schema",
+                    "json_schema 结构化输出",
+                    "当前供应商不是 OpenAI-compatible 路径，跳过该测试",
+                )
+            )
+            steps.append(
+                _skip_step(
+                    "structured_output_configured",
+                    "当前结构化输出配置",
+                    "当前供应商不是 OpenAI-compatible 路径，跳过该测试",
+                )
+            )
+        else:
+            json_mode_step = await _build_structured_output_step(
+                runtime_config,
+                model,
+                name="structured_output_json_mode",
+                label="json_mode 结构化输出",
+                method_override="json_mode",
+                failure_status="warning",
+            )
+            steps.append(json_mode_step)
+
+            json_schema_step = await _build_structured_output_step(
+                runtime_config,
+                model,
+                name="structured_output_json_schema",
+                label="json_schema 结构化输出",
+                method_override="json_schema",
+                failure_status="warning",
+            )
+            steps.append(json_schema_step)
+
+            try:
+                configured_method = _resolve_effective_structured_output_method(runtime_config)
+            except ValueError as exc:
+                steps.append(
+                    _step(
+                        "structured_output_configured",
+                        "当前结构化输出配置",
+                        "failed",
+                        str(exc),
+                        detail={
+                            "method": runtime_config.structured_output_method or "default",
+                        },
+                    )
+                )
+                configured_method = None
+
+            if steps and steps[-1]["name"] == "structured_output_configured":
+                pass
+            elif configured_method == "json_mode":
+                configured_step = {
+                    **json_mode_step,
+                    "name": "structured_output_configured",
+                    "label": "当前结构化输出配置",
+                    "status": "success" if json_mode_step["status"] == "success" else "failed",
+                    "message": (
+                        "当前配置对应的结构化输出调用成功"
+                        if json_mode_step["status"] == "success"
+                        else "当前配置的结构化输出调用失败"
+                    ),
+                }
+            elif configured_method == "json_schema":
+                configured_step = {
+                    **json_schema_step,
+                    "name": "structured_output_configured",
+                    "label": "当前结构化输出配置",
+                    "status": "success" if json_schema_step["status"] == "success" else "failed",
+                    "message": (
+                        "当前配置对应的结构化输出调用成功"
+                        if json_schema_step["status"] == "success"
+                        else "当前配置的结构化输出调用失败"
+                    ),
+                }
+            else:
+                configured_step = await _build_structured_output_step(
+                    runtime_config,
+                    model,
+                    name="structured_output_configured",
+                    label="当前结构化输出配置",
+                )
+                if configured_step["status"] == "success":
+                    configured_step["message"] = "当前配置对应的结构化输出调用成功"
+                else:
+                    configured_step["message"] = "当前配置的结构化输出调用失败"
+            if steps and steps[-1]["name"] != "structured_output_configured":
+                steps.append(configured_step)
 
     ok = bool(steps) and all(step["status"] in {"success", "skipped"} for step in steps)
     return {

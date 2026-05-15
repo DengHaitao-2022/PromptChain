@@ -32,6 +32,7 @@ interface ModelProviderConfig {
   base_url?: string;
   model?: string;
   model_name?: string;
+  structured_output_method?: string;
   [key: string]: string | number | boolean | null | undefined;
 }
 
@@ -54,6 +55,7 @@ interface RuntimeModelInfo {
   source: string;
   provider_id: string | null;
   provider_name: string | null;
+  structured_output_method?: string | null;
 }
 
 type TestStepStatus = 'success' | 'warning' | 'failed' | 'skipped';
@@ -85,12 +87,15 @@ interface ModelProviderTestResult {
   duration_ms: number;
 }
 
+type StructuredOutputMethod = '' | 'auto' | 'json_schema' | 'json_mode' | 'function_calling';
+
 interface ModelProviderForm {
   provider: ProviderType;
   name: string;
   model: string;
   baseUrl: string;
   apiKey: string;
+  structuredOutputMethod: StructuredOutputMethod;
   description: string;
   enabled: boolean;
   setAsDefault: boolean;
@@ -124,6 +129,7 @@ function createEmptyForm(): ModelProviderForm {
     model: providerDefaultModels.openai,
     baseUrl: '',
     apiKey: '',
+    structuredOutputMethod: 'auto',
     description: '',
     enabled: true,
     setAsDefault: true,
@@ -284,6 +290,9 @@ export default function ModelsPage() {
       model: String(provider.config?.model || provider.config?.model_name || ''),
       baseUrl: String(provider.config?.base_url || ''),
       apiKey: '',
+      structuredOutputMethod: String(
+        provider.config?.structured_output_method || 'auto'
+      ) as StructuredOutputMethod,
       description: provider.description || '',
       enabled: provider.enabled,
       setAsDefault: provider.is_default,
@@ -312,6 +321,11 @@ export default function ModelsPage() {
     }
     if (form.apiKey.trim()) {
       config.api_key = form.apiKey.trim();
+    }
+    if (form.structuredOutputMethod && form.structuredOutputMethod !== 'auto') {
+      config.structured_output_method = form.structuredOutputMethod;
+    } else {
+      config.structured_output_method = 'auto';
     }
     return config;
   }
@@ -546,6 +560,12 @@ export default function ModelsPage() {
             <span className={styles.summaryLabel}>模型</span>
             <span className={styles.runtimeValue}>{runtime?.model || '未配置'}</span>
           </div>
+          {runtime?.structured_output_method ? (
+            <div className={styles.runtimeItem}>
+              <span className={styles.summaryLabel}>结构化输出</span>
+              <span className={styles.runtimeValue}>{runtime.structured_output_method}</span>
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -613,6 +633,25 @@ export default function ModelsPage() {
                     onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))}
                     placeholder={form.provider === 'ollama' ? 'http://localhost:11434' : '默认留空'}
                   />
+                </label>
+
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>结构化输出模式</span>
+                  <select
+                    className={styles.select}
+                    value={form.structuredOutputMethod}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        structuredOutputMethod: event.target.value as StructuredOutputMethod,
+                      }))
+                    }
+                  >
+                    <option value="auto">自动选择</option>
+                    <option value="json_schema">json_schema：强 Schema，适合 OpenAI 官方</option>
+                    <option value="json_mode">json_mode：JSON Object，适合 HF Space 等兼容接口</option>
+                    <option value="function_calling">function_calling：函数调用兼容模式</option>
+                  </select>
                 </label>
 
                 <label className={styles.field}>
@@ -727,6 +766,11 @@ export default function ModelsPage() {
                         {getProviderLabel(provider.provider)}
                       </span>
                       <span className={`${styles.pill} ${styles.neutral}`}>{getProviderModel(provider)}</span>
+                      {provider.config?.structured_output_method && provider.config.structured_output_method !== 'auto' ? (
+                        <span className={`${styles.pill} ${styles.neutral}`}>
+                          结构化输出：{provider.config.structured_output_method}
+                        </span>
+                      ) : null}
                       {provider.config?.base_url ? (
                         <span className={`${styles.pill} ${styles.neutral}`}>自定义 Base URL</span>
                       ) : null}

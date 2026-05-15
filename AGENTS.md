@@ -273,7 +273,7 @@ specify init --here --ai codex --force
 - 前端全局主题架构统一采用 `Design Token` 分层：`primitive -> semantic -> legacy alias`。`CSS Variables` 集中落在 `frontend/src/app/globals.css`，运行时主题状态统一由 `frontend/src/lib/theme.ts` 与 `frontend/src/contexts/ThemeContext.tsx` 管理，根布局通过 `data-theme` / `data-theme-preference` 与首屏初始化脚本完成主题切换、系统偏好兜底和 `localStorage` 持久化。新增页面或组件应优先消费语义 token，禁止继续散落硬编码颜色值或自建平行主题状态。
 - 凡涉及 `frontend/` 下任何代码文件的新增、修改、重构、样式调整、交互实现、动画实现、页面实现、组件实现、hooks/lib 客户端实现，默认工作流改为：Codex 产出可直接粘贴的任务提示词、文件边界、验收标准和 CR gate，由用户在 IDE 的智能助手中实际执行编码；这条规则同样适用于 `frontend/src/lib/api.ts`、`frontend/src/lib/auth.ts` 等前端契约与客户端代码。
 - 若用户在 IDE 智能助手中执行前端任务，Codex 不再强制要求 Gemini CLI 或固定模型顺序；Gemini CLI 仅作为可选实现渠道，不再是默认执行路径。
-- Codex 在前端任务中的职责仅限于统筹分工、定义接口约束、准备任务说明、检查 diff、做 CR、执行验收和控制合并 gate；除非用户明确推翻本规则，否则 Codex 不直接编写前端业务代码，也不直接代替用户调用 IDE 智能助手。
+- Codex 在前端任务中的职责仅限于统筹分工、定义接口约束、准备任务说明、检查 diff、做 CR、执行验收和控制合并 gate；除非用户明确授权，否则 Codex 不直接编写前端业务代码，也不直接代替用户调用 IDE 智能助手。
 - 凡涉及前端代码落地的开发任务，必须使用 `git worktree` 隔离工作区；优先进入对应已有的 `code/feat/*` 分支 worktree，如不存在则先新建 `code/feat/*` 分支与 worktree 后再开发。
 - 每个前端任务在申请评审前，必须在共享日志中记录对应 worktree、分支、执行者（例如 IDE 智能助手）和执行说明；没有这条记录，不得进入 `spec-review`、`code-review` 或合并流程。
 
