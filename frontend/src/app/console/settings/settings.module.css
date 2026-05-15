@@ -15,6 +15,8 @@
   --settings-text-muted: var(--console-text-muted, #62768b);
   --settings-shadow-md: var(--shadow-md);
   --settings-shadow-lg: var(--shadow-lg);
+  --settings-detail-surface: rgba(15, 23, 42, 0.34);
+  --settings-detail-surface-strong: rgba(3, 7, 18, 0.46);
 }
 
 .hero {
@@ -584,7 +586,9 @@
   padding: 14px;
   border: 1px solid var(--settings-border);
   border-radius: 16px;
-  background: rgba(15, 23, 42, 0.28);
+  background:
+  linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 100%),
+  var(--settings-detail-surface);
 }
 
 .testHeader {
@@ -649,7 +653,9 @@
   padding: 10px 12px;
   border: 1px solid var(--settings-border);
   border-radius: 12px;
-  background: rgba(15, 23, 42, 0.34);
+   background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 100%),
+    var(--settings-detail-surface-strong);
 }
 
 .testIoLabel {
@@ -947,6 +953,11 @@
   border-color: rgba(51, 65, 85, 0.16);
   background: rgba(248, 250, 252, 0.92);
   color: #334155;
+}
+
+:global(html[data-theme='light']) .container {
+  --settings-detail-surface: rgba(248, 250, 252, 0.92);
+  --settings-detail-surface-strong: #ffffff;
 }
 
 .pagination {
