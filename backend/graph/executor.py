@@ -175,8 +175,22 @@ class ContentGenerationWorkflow:
         metadata["workflow_context_loaded"] = bool(state.get("workflow_context"))
         workflow_run.metadata = metadata
 
+        await self._refresh_workflow_stats(workflow_run)
         await self.store.update_workflow_run(workflow_run)
         return workflow_run
+
+    async def _refresh_workflow_stats(self, workflow_run: WorkflowRun) -> None:
+        """刷新运行态统计，避免 Gate/失败态顶部摘要长期停留在 0。"""
+        node_runs = await self.store.get_node_runs_by_workflow(workflow_run.id)
+
+        workflow_run.total_node_runs = len(node_runs)
+        workflow_run.total_llm_calls = sum(len(node.llm_calls) for node in node_runs)
+        workflow_run.total_tokens = sum(
+            call.total_tokens for node in node_runs for call in node.llm_calls
+        )
+
+        # 这里使用节点耗时之和，避免把 Gate 等待时间也计入运行耗时。
+        workflow_run.total_duration_ms = sum(node.duration_ms or 0 for node in node_runs)
 
     async def _mark_failed(self, workflow_run_id: str, error: str) -> None:
         workflow_run = await self.store.get_workflow_run(workflow_run_id)
