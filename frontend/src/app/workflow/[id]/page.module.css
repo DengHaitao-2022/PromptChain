@@ -872,6 +872,13 @@
     color: var(--color-brand-primary);
 }
 
+.rerunStatus {
+    margin: 0;
+    color: var(--color-brand-primary);
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
 .rerunError {
     margin: 0;
     color: var(--color-danger);

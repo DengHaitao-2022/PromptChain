@@ -609,6 +609,7 @@ export default function WorkflowDetailPage() {
     const params = useParams();
     const router = useRouter();
     const workflowId = params.id as string;
+    const [isRerunNavigating, startRerunNavigation] = React.useTransition();
 
     const [workflow, setWorkflow] = React.useState<WorkflowResponse | null>(null);
     const [trace, setTrace] = React.useState<WorkflowTrace | null>(null);
@@ -621,6 +622,7 @@ export default function WorkflowDetailPage() {
     const [rerunLoading, setRerunLoading] = React.useState(false);
     const [rerunSubmitting, setRerunSubmitting] = React.useState(false);
     const [rerunError, setRerunError] = React.useState<string | null>(null);
+    const [rerunStatus, setRerunStatus] = React.useState<string | null>(null);
     const [selectedRerunNode, setSelectedRerunNode] = React.useState('');
     const [rerunInstruction, setRerunInstruction] = React.useState('');
     const [streamingSections, setStreamingSections] = React.useState<
@@ -859,6 +861,12 @@ export default function WorkflowDetailPage() {
     }, [workflowId]);
 
     React.useEffect(() => {
+        setRerunSubmitting(false);
+        setRerunError(null);
+        setRerunStatus(null);
+    }, [workflowId]);
+
+    React.useEffect(() => {
         if (workflow?.status !== 'completed') {
             setCompletedView('preview');
         }
@@ -1044,6 +1052,8 @@ export default function WorkflowDetailPage() {
 
         setRerunSubmitting(true);
         setRerunError(null);
+        setRerunStatus(null);
+        let rerunCreated = false;
         try {
             const response = await workflowApi.rerun(
                 workflowId,
@@ -1051,13 +1061,21 @@ export default function WorkflowDetailPage() {
                 Object.keys(updatedInput).length > 0 ? updatedInput : undefined,
                 instruction || `从${getRerunNodeLabel(selectedRerunNode)}重跑`
             );
-            router.push(`/workflow/${response.new_workflow_run_id}`);
+            rerunCreated = true;
+            const rerunNodeLabel = getRerunNodeLabel(selectedRerunNode);
+            setRerunStatus(`已创建从${rerunNodeLabel}开始的新运行，正在跳转到详情页...`);
+            startRerunNavigation(() => {
+                router.push(`/workflow/${response.new_workflow_run_id}`);
+            });
         } catch (err) {
+            setRerunStatus(null);
             setRerunError(err instanceof Error ? err.message : '发起重跑失败');
         } finally {
-            setRerunSubmitting(false);
+            if (!rerunCreated) {
+                setRerunSubmitting(false);
+            }
         }
-    }, [workflowId, selectedRerunNode, rerunInstruction, router]);
+    }, [workflowId, selectedRerunNode, rerunInstruction, router, startRerunNavigation]);
 
     const calculateSteps = (): WorkflowStep[] => {
         const stepNames = [
@@ -1496,19 +1514,26 @@ export default function WorkflowDetailPage() {
                                 继续，之前节点产物会被保留。
                             </p>
                         )}
+                        {rerunStatus && <p className={styles.rerunStatus}>{rerunStatus}</p>}
                         {rerunError && <p className={styles.rerunError}>{rerunError}</p>}
                         <button
                             type="button"
                             className="btn btn-primary"
                             onClick={() => void handleRerunSubmit()}
-                            disabled={rerunSubmitting || !selectedRerunNode}
+                            disabled={rerunSubmitting || isRerunNavigating || !selectedRerunNode}
                         >
-                            {rerunSubmitting ? (
+                            {rerunSubmitting || isRerunNavigating ? (
                                 <LoaderCircle className={styles.spinIcon} aria-hidden="true" />
                             ) : (
                                 <Send aria-hidden="true" />
                             )}
-                            {rerunSubmitting ? '创建重跑中...' : '从此节点重跑'}
+                            {rerunSubmitting
+                                ? rerunStatus
+                                  ? '正在跳转到新运行...'
+                                  : '创建重跑中...'
+                                : isRerunNavigating
+                                  ? '正在跳转到新运行...'
+                                  : '从此节点重跑'}
                         </button>
                     </div>
                 </div>
