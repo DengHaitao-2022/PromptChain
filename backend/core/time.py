@@ -4,6 +4,7 @@
 """
 
 from datetime import UTC, datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 APP_TIMEZONE_NAME = "Asia/Shanghai"
@@ -35,6 +36,24 @@ def to_utc_iso(value: datetime) -> str:
     """将 aware 或 naive UTC datetime 统一转为带 Z 的 ISO 字符串。"""
     utc_value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     return utc_value.isoformat().replace("+00:00", "Z")
+
+
+def to_utc_iso_or_none(value: datetime | None) -> str | None:
+    """将可空 datetime 统一转为带 Z 的 ISO 字符串。"""
+    if value is None:
+        return None
+    return to_utc_iso(value)
+
+
+def normalize_api_datetime(value: Any) -> Any:
+    """递归把 API 响应中的 datetime 统一转为 UTC ISO Z 字符串。"""
+    if isinstance(value, datetime):
+        return to_utc_iso(value)
+    if isinstance(value, list):
+        return [normalize_api_datetime(item) for item in value]
+    if isinstance(value, dict):
+        return {key: normalize_api_datetime(item) for key, item in value.items()}
+    return value
 
 
 def app_now() -> datetime:

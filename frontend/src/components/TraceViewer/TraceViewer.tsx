@@ -16,7 +16,7 @@ import {
     AlertTriangle,
 } from 'lucide-react';
 import styles from './TraceViewer.module.css';
-import type { WorkflowTrace, TimelineEvent } from '@/lib/api';
+import type { WorkflowGateState, WorkflowTrace, TimelineEvent } from '@/lib/api';
 import { formatAppTime } from '@/lib/date-time';
 
 interface TraceViewerProps {
@@ -156,6 +156,9 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
     const [expandedNodeId, setExpandedNodeId] = React.useState<string | null>(
         focusedNodeId ?? null
     );
+    const gate = isRecord(trace.workflow.gate)
+        ? (trace.workflow.gate as WorkflowGateState)
+        : null;
 
     React.useEffect(() => {
         if (focusedNodeId) {
@@ -206,6 +209,30 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
                     </div>
                 </div>
             </div>
+
+            {gate ? (
+                <div className={styles.gatePanel}>
+                    <h4 className={styles.sectionTitle}>人工 Gate</h4>
+                    <dl className={styles.detailGrid}>
+                        <div>
+                            <dt>Gate 类型</dt>
+                            <dd>{asString(gate.gate_type)}</dd>
+                        </div>
+                        <div>
+                            <dt>打开时间</dt>
+                            <dd>{formatTime(gate.opened_at)}</dd>
+                        </div>
+                        <div>
+                            <dt>处理时间</dt>
+                            <dd>{formatTime(gate.handled_at)}</dd>
+                        </div>
+                        <div>
+                            <dt>等待耗时</dt>
+                            <dd>{formatDuration(gate.waiting_duration_ms)}</dd>
+                        </div>
+                    </dl>
+                </div>
+            ) : null}
 
             <div className={styles.nodesSection}>
                 <h4 className={styles.sectionTitle}>执行节点</h4>
@@ -262,11 +289,11 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
 
                                         <dl className={styles.detailGrid}>
                                             <div>
-                                                <dt>开始时间</dt>
+                                                <dt>节点执行开始</dt>
                                                 <dd>{formatTime(node.started_at)}</dd>
                                             </div>
                                             <div>
-                                                <dt>完成时间</dt>
+                                                <dt>节点执行结束</dt>
                                                 <dd>{formatTime(node.completed_at)}</dd>
                                             </div>
                                             <div>

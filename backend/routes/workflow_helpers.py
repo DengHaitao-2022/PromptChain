@@ -10,7 +10,7 @@ from typing import Any, Literal
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
-from core.time import to_utc_iso, utc_now_iso
+from core.time import to_utc_iso, to_utc_iso_or_none
 from models.auth_models import MemberRole
 
 # ==================== 类型定义 ====================
@@ -98,8 +98,8 @@ class WorkflowRunListItem(BaseModel):
     status: WorkflowStatus
     current_node: str | None = None
     user_input: str
-    started_at: datetime
-    completed_at: datetime | None = None
+    started_at: str
+    completed_at: str | None = None
     total_duration_ms: int | None = None
 
 
@@ -171,8 +171,8 @@ def _build_workflow_run_list_response(workflow_runs: list[Any]) -> WorkflowRunLi
             status=_get_workflow_public_status(workflow_run),
             current_node=getattr(workflow_run, "current_node", None),
             user_input=getattr(workflow_run, "user_input", ""),
-            started_at=workflow_run.started_at,
-            completed_at=getattr(workflow_run, "completed_at", None),
+            started_at=to_utc_iso(workflow_run.started_at),
+            completed_at=to_utc_iso_or_none(getattr(workflow_run, "completed_at", None)),
             total_duration_ms=getattr(workflow_run, "total_duration_ms", None),
         )
         for workflow_run in workflow_runs
@@ -464,9 +464,17 @@ def _coerce_iso(value: Any) -> str | None:
     return str(value)
 
 
-def _now_iso() -> str:
-    """获取当前 UTC 时间的 ISO 字符串"""
-    return utc_now_iso()
+def _duration_between_iso(start: str | None, end: str | None) -> int | None:
+    """计算两个 ISO 时间之间的耗时，统一以毫秒返回。"""
+    if not start or not end:
+        return None
+
+    def _parse(value: str) -> datetime:
+        text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(text)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+    return int((_parse(end) - _parse(start)).total_seconds() * 1000)
 
 
 # ==================== 澄清问题规范化 ====================
@@ -616,13 +624,17 @@ def _normalize_gate_state(
         answers = state.get("fact_check_decisions") or state.get("manual_corrections")
         trigger_reason = gate_metadata.get("trigger_reason") or "fact_risk"
 
+    opened_at = _coerce_iso(gate_metadata.get("opened_at"))
+    handled_at = _coerce_iso(gate_metadata.get("handled_at"))
+
     return {
         "gate_type": gate_type,
         "trigger_reason": trigger_reason,
         "questions": questions,
         "answers": answers or gate_metadata.get("answers"),
-        "opened_at": _coerce_iso(gate_metadata.get("opened_at")),
-        "handled_at": _coerce_iso(gate_metadata.get("handled_at")),
+        "opened_at": opened_at,
+        "handled_at": handled_at,
+        "waiting_duration_ms": _duration_between_iso(opened_at, handled_at),
         "resolution": gate_metadata.get("resolution"),
     }
 
@@ -699,12 +711,14 @@ def _enrich_timeline(
         )
 
     gate = _normalize_gate_state(status, graph_state, workflow_run)
-    if gate and "workflow_gate_waiting" not in event_names:
+    gate_opened_at = None
+    if gate:
+        gate_opened_at = gate.get("opened_at") or _infer_gate_opened_at_from_timeline(events)
+
+    if gate and gate_opened_at and "workflow_gate_waiting" not in event_names:
         events.append(
             {
-                "timestamp": gate.get("opened_at")
-                or _coerce_iso(getattr(workflow_run, "started_at", None))
-                or _now_iso(),
+                "timestamp": gate_opened_at,
                 "event": "workflow_gate_waiting",
                 "gate_type": gate["gate_type"],
                 "questions": gate.get("questions", []),
@@ -734,3 +748,16 @@ def _timeline_sort_key(event: dict[str, Any]) -> tuple[int, float]:
         return (0, parsed.timestamp())
     except ValueError:
         return (1, float("inf"))
+
+
+def _infer_gate_opened_at_from_timeline(events: list[dict[str, Any]]) -> str | None:
+    """兼容旧数据：缺少 opened_at 时，回退到最近一次节点完成时间。"""
+    completed_events = [
+        event
+        for event in events
+        if event.get("event") == "node_completed" and event.get("timestamp")
+    ]
+    if not completed_events:
+        return None
+    completed_events.sort(key=_timeline_sort_key)
+    return str(completed_events[-1]["timestamp"])

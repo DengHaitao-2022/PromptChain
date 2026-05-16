@@ -3,12 +3,39 @@ const APP_TIME_ZONE = 'Asia/Shanghai';
 
 type DateInput = string | number | Date | null | undefined;
 
+function hasExplicitTimezone(value: string): boolean {
+  return /Z$|[+-]\d{2}:\d{2}$/i.test(value);
+}
+
+function normalizeApiDateString(value: string): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (hasExplicitTimezone(trimmed)) {
+    return trimmed;
+  }
+
+  if (process.env.NODE_ENV !== 'production' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)) {
+    console.warn('[time] API datetime has no timezone:', trimmed);
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)) {
+    return `${trimmed}Z`;
+  }
+
+  return trimmed;
+}
+
 export function parseAppDate(value: DateInput): Date | null {
   if (value === null || value === undefined || value === '') {
     return null;
   }
 
-  const date = value instanceof Date ? value : new Date(value);
+  const normalized = typeof value === 'string' ? normalizeApiDateString(value) : value;
+  const date = normalized instanceof Date ? normalized : new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 

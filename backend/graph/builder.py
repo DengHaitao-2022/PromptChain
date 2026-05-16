@@ -13,6 +13,7 @@
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from core.time import utc_now_naive
 from graph.conditions import (
     should_clarify,
     should_proceed_after_fact_check,
@@ -51,8 +52,8 @@ async def finalize_output(state: GraphState) -> GraphState:
         workflow_run.total_tokens = sum(
             call.total_tokens for n in node_runs for call in n.llm_calls
         )
-
-        workflow_run.complete()
+        workflow_run.completed_at = utc_now_naive()
+        workflow_run.total_duration_ms = sum(node.duration_ms or 0 for node in node_runs)
         await store.update_workflow_run(workflow_run)
 
     return state

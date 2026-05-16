@@ -29,13 +29,11 @@ from routes.workflow_helpers import (
     _assert_status,
     _build_workflow_response,
     _build_workflow_run_list_response,
-    _ensure_workflow_metadata,
     _get_workflow_run_if_exists,
     _is_admin_role,
     _load_runtime_context,
     _normalize_status,
     _normalize_trace_payload,
-    _now_iso,
     _simplify_state,
 )
 from services.audit_log_service import AuditLogService
@@ -203,7 +201,7 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
         access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
-        store, workflow, workflow_run, graph_state, status = await _load_runtime_context(
+        _, workflow, workflow_run, graph_state, status = await _load_runtime_context(
             workflow_run_id
         )
 
@@ -228,18 +226,6 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
         )
 
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
-        metadata = _ensure_workflow_metadata(refreshed_workflow_run)
-        previous_pause = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
-        paused_at = previous_pause.get("paused_at")
-        if paused_at is None or previous_pause.get("resumed_at") is not None:
-            paused_at = _now_iso()
-        metadata["pause"] = {
-            "reason": body.reason,
-            "paused_at": paused_at,
-            "resumed_at": None,
-            "source": "user",
-        }
-        await store.update_workflow_run(refreshed_workflow_run)
         actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
         await _record_workflow_audit(
             request,
@@ -272,7 +258,7 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
         access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
-        store, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
+        _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
         from routes.workflow_helpers import _get_workflow_run_status
 
         raw_status = _get_workflow_run_status(workflow_run)
@@ -287,15 +273,6 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
 
         result = await workflow.resume_paused(workflow_run_id)
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
-        metadata = _ensure_workflow_metadata(refreshed_workflow_run)
-        previous_pause = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
-        metadata["pause"] = {
-            "reason": previous_pause.get("reason"),
-            "paused_at": previous_pause.get("paused_at") or _now_iso(),
-            "resumed_at": _now_iso(),
-            "source": previous_pause.get("source") or "user",
-        }
-        await store.update_workflow_run(refreshed_workflow_run)
         actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
         await _record_workflow_audit(
             request,

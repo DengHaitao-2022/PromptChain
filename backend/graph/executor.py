@@ -11,6 +11,7 @@ ContentGenerationWorkflow 负责：
 import asyncio
 from typing import Any
 
+from core.time import utc_now_iso
 from graph.builder import build_content_generation_graph
 from graph.state import GraphState
 from models import WorkflowRun, WorkflowRunStatus
@@ -705,6 +706,16 @@ class ContentGenerationWorkflow:
 
         workflow_run.status = WorkflowRunStatus.PAUSED
         metadata = dict(workflow_run.metadata or {})
+        previous_pause = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
+        paused_at = previous_pause.get("paused_at")
+        if paused_at is None or previous_pause.get("resumed_at") is not None:
+            paused_at = utc_now_iso()
+        metadata["pause"] = {
+            "reason": reason,
+            "paused_at": paused_at,
+            "resumed_at": None,
+            "source": previous_pause.get("source") or "user",
+        }
         metadata["pause_reason"] = reason
         workflow_run.metadata = metadata
         await self.store.update_workflow_run(workflow_run)
@@ -745,6 +756,13 @@ class ContentGenerationWorkflow:
 
         workflow_run.status = WorkflowRunStatus.RUNNING
         metadata = dict(workflow_run.metadata or {})
+        previous_pause = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
+        metadata["pause"] = {
+            "reason": previous_pause.get("reason"),
+            "paused_at": previous_pause.get("paused_at") or utc_now_iso(),
+            "resumed_at": utc_now_iso(),
+            "source": previous_pause.get("source") or "user",
+        }
         metadata["pause_reason"] = None
         workflow_run.metadata = metadata
         await self.store.update_workflow_run(workflow_run)

@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 import routes.workflow_helpers as workflow_helpers
+from core.time import normalize_api_datetime
 from routes.workflow_helpers import (
     _extract_workflow_status,
     _get_graph_state,
@@ -78,7 +79,7 @@ async def get_node_detail(node_run_id: str, request: Request):
 async def get_artifact(artifact_id: str, request: Request):
     """获取 Artifact 详情"""
     artifact = await workflow_helpers.require_artifact_access(request, artifact_id)
-    return artifact.model_dump()
+    return normalize_api_datetime(artifact.model_dump())
 
 
 @router.get("/artifact/{artifact_id}/history")

@@ -62,6 +62,7 @@ export interface WorkflowGateState {
   answers?: Record<string, unknown> | null;
   opened_at?: string | null;
   handled_at?: string | null;
+  waiting_duration_ms?: number | null;
   resolution?: string | null;
 }
 
@@ -176,9 +177,15 @@ export interface TimelineEvent {
   timestamp: string;
   event: string;
   node?: string;
+  node_run_id?: string;
   artifact_id?: string;
   model?: string;
   tokens?: number;
+  duration_ms?: number;
+  status?: string;
+  current_node?: string;
+  gate_type?: WorkflowGateType;
+  questions?: WorkflowGateQuestion[];
 }
 
 export interface WorkflowConnectedEvent {

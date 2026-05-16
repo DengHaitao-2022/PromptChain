@@ -9,7 +9,7 @@
 
 from typing import Any
 
-from core.time import utc_now_iso
+from core.time import normalize_api_datetime, utc_now_iso
 from models import (
     ArtifactType,
     FactCheckReport,
@@ -162,7 +162,7 @@ class RerunService:
         if not current:
             return []
 
-        history = [current.model_dump()]
+        history = [normalize_api_datetime(current.model_dump())]
 
         # 向上追溯原始工作流
         metadata = current.metadata or {}
@@ -170,7 +170,7 @@ class RerunService:
             original_id = metadata["original_workflow_run_id"]
             original = await self.store.get_workflow_run(original_id)
             if original:
-                history.insert(0, original.model_dump())
+                history.insert(0, normalize_api_datetime(original.model_dump()))
                 metadata = original.metadata or {}
             else:
                 break
@@ -180,7 +180,7 @@ class RerunService:
         for run in all_runs:
             run_metadata = run.metadata or {}
             if run_metadata.get("original_workflow_run_id") == workflow_run_id:
-                history.append(run.model_dump())
+                history.append(normalize_api_datetime(run.model_dump()))
 
         return history
 
