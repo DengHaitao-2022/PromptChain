@@ -29,7 +29,7 @@ class Settings:
         # 服务配置
         self.API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
         self.API_PORT: int = int(os.getenv("API_PORT", "8000"))
-        self.DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
+        self.DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
 
         # 数据库配置
         self.DATABASE_URL: str = os.getenv(
@@ -46,8 +46,17 @@ class Settings:
         self.GITHUB_MODEL_TOKEN: str = os.getenv("GITHUB_MODEL_TOKEN", "")
         self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
-        # CORS 配置
-        self.CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "*").split(",")
+        # CORS 配置：带 Cookie 的跨源请求不能使用 "*"，本地默认显式允许前端来源。
+        self.CORS_ORIGINS: list[str] = [
+            origin.strip()
+            for origin in os.getenv(
+                "CORS_ORIGINS",
+                "http://localhost:3000,http://127.0.0.1:3000",
+            ).split(",")
+            if origin.strip()
+        ]
+        if not self.DEBUG and "*" in self.CORS_ORIGINS:
+            raise RuntimeError("生产环境必须显式配置 CORS_ORIGINS，不能使用通配符 *")
 
         # 邮件配置
         self.SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
