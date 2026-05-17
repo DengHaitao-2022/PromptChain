@@ -9,26 +9,58 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 import type { WebsocketProvider } from 'y-websocket';
-import { yNodes, yEdges, ydoc, resetSharedDocument } from './ydoc';
+import { yNodes, yEdges, yMeta, ydoc, resetSharedDocument } from './ydoc';
 import { initProvider, destroyProvider } from './provider';
 import { useWorkflowStoreInstance } from '../../provider/WorkflowProvider';
 import { getNodesArray, getEdgesArray } from './sync';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+type InitialSource = {
+    nodes: Node[];
+    edges: Edge[];
+    snapshotKey?: string;
+};
 
 function normalizeConnectionStatus(status: string): ConnectionStatus {
     return status === 'connecting' || status === 'connected' ? status : 'disconnected';
 }
 
-export function useYjsBindings(workflowId?: string, initialNodes?: Node[], initialEdges?: Edge[]) {
+function seedGraphFromSnapshot(docId: string, snapshotKey: string | undefined, nodes: Node[], edges: Edge[]) {
+    yNodes.clear();
+    yEdges.clear();
+    nodes.forEach((node) => yNodes.set(node.id, node));
+    edges.forEach((edge) => yEdges.set(edge.id, edge));
+    yMeta.set('seedDocId', docId);
+    yMeta.set('seedSnapshotKey', snapshotKey ?? null);
+    yMeta.set('seededAt', new Date().toISOString());
+}
+
+export function useYjsBindings(
+    workflowId?: string,
+    initialNodes?: Node[],
+    initialEdges?: Edge[],
+    initialSnapshotKey?: string,
+) {
     const store = useWorkflowStoreInstance();
     const [status, setStatus] = useState<ConnectionStatus>('disconnected');
     const [providerInstance, setProviderInstance] = useState<WebsocketProvider | null>(null);
     const draftRoomId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
     const draftRoomRef = useRef(`draft-${draftRoomId}`);
+    const initialSourceRef = useRef<InitialSource>({
+        nodes: initialNodes ?? [],
+        edges: initialEdges ?? [],
+        snapshotKey: initialSnapshotKey,
+    });
+
+    initialSourceRef.current = {
+        nodes: initialNodes ?? [],
+        edges: initialEdges ?? [],
+        snapshotKey: initialSnapshotKey,
+    };
 
     useEffect(() => {
         const docId = workflowId || draftRoomRef.current;
+        const { nodes: snapshotNodes, edges: snapshotEdges, snapshotKey } = initialSourceRef.current;
         resetSharedDocument();
 
         // 生成临时用户信息（如果有 AuthContext 可以传进来，目前生成随机数做演示）
@@ -45,28 +77,13 @@ export function useYjsBindings(workflowId?: string, initialNodes?: Node[], initi
             setStatus(normalizeConnectionStatus(event.status));
         });
 
-        // 仅在文档为空且有初始节点时同步到 Yjs
-        const initDoc = () => {
-             if (yNodes.size === 0 && initialNodes?.length) {
-                 ydoc.transact(() => {
-                     initialNodes.forEach(n => yNodes.set(n.id, n));
-                     initialEdges?.forEach(e => yEdges.set(e.id, e));
-                 }, 'init');
-             }
-        };
-
-        if (p.synced) {
-            initDoc();
-        } else {
-            p.on('sync', (isSynced: boolean) => {
-                if (isSynced) {
-                    initDoc();
-                }
-            });
-        }
-
         // 核心同步：Yjs 更新 -> 写入 Zustand 渲染缓存
+        let sourceReady = false;
         const updateZustand = () => {
+            if (!sourceReady) {
+                return;
+            }
+
             // 本地选中态不存 Yjs，重置时需合并回来
             const localNodes = store.getState().nodes;
             const selectionMap = new Map(localNodes.map((n) => [n.id, Boolean(n.selected)]));
@@ -85,8 +102,49 @@ export function useYjsBindings(workflowId?: string, initialNodes?: Node[], initi
         yNodes.observe(updateZustand);
         yEdges.observe(updateZustand);
 
-        // 初始拉取一次
-        updateZustand();
+        let sourceApplied = false;
+        const applyInitialSource = () => {
+            if (sourceApplied) {
+                return;
+            }
+            sourceApplied = true;
+
+            const hasSnapshotGraph = snapshotNodes.length > 0 || snapshotEdges.length > 0;
+
+            if (snapshotKey) {
+                const seededDocId = yMeta.get('seedDocId');
+                const seededSnapshotKey = yMeta.get('seedSnapshotKey');
+                const shouldReseed = seededDocId !== docId || seededSnapshotKey !== snapshotKey;
+
+                sourceReady = true;
+                if (shouldReseed) {
+                    // 数据库草稿是页面打开时的持久化基线；Yjs 房间只保留同一快照内的协作态。
+                    ydoc.transact(() => {
+                        seedGraphFromSnapshot(docId, snapshotKey, snapshotNodes, snapshotEdges);
+                    }, 'init');
+                }
+                updateZustand();
+                return;
+            }
+
+            sourceReady = true;
+            if (yNodes.size === 0 && yEdges.size === 0 && hasSnapshotGraph) {
+                ydoc.transact(() => {
+                    seedGraphFromSnapshot(docId, undefined, snapshotNodes, snapshotEdges);
+                }, 'init');
+            }
+            updateZustand();
+        };
+
+        if (p.synced) {
+            applyInitialSource();
+        } else {
+            p.on('sync', (isSynced: boolean) => {
+                if (isSynced) {
+                    applyInitialSource();
+                }
+            });
+        }
 
         return () => {
             yNodes.unobserve(updateZustand);
@@ -95,7 +153,23 @@ export function useYjsBindings(workflowId?: string, initialNodes?: Node[], initi
             setProviderInstance(null);
             setStatus('disconnected');
         };
-    }, [workflowId, store, initialNodes, initialEdges]);
+    }, [workflowId, store]);
+
+    useEffect(() => {
+        if (!providerInstance || !workflowId || !initialSnapshotKey) {
+            return;
+        }
+
+        const seededDocId = yMeta.get('seedDocId');
+        if (seededDocId !== workflowId) {
+            return;
+        }
+
+        ydoc.transact(() => {
+            yMeta.set('seedSnapshotKey', initialSnapshotKey);
+            yMeta.set('seededAt', new Date().toISOString());
+        }, 'save');
+    }, [workflowId, initialSnapshotKey, providerInstance]);
 
     return { status, provider: providerInstance };
 }

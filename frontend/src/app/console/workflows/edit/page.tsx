@@ -16,6 +16,14 @@ import { serializeNodes, serializeEdges } from '@/components/WorkflowEditor/doma
 import { deserializeNodes, deserializeEdges } from '@/components/WorkflowEditor/domain/deserializer';
 import styles from './page.module.css';
 
+function createWorkflowSnapshotKey(workflow: WorkflowDefinition): string {
+    return [
+        workflow.id,
+        workflow.version ?? 1,
+        workflow.updated_at ?? 'no-updated-at',
+    ].join(':');
+}
+
 export default function WorkflowEditPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -40,6 +48,10 @@ export default function WorkflowEditPage() {
     const [description, setDescription] = useState('');
     const [initialNodes, setInitialNodes] = useState<Node[] | undefined>(undefined);
     const [initialEdges, setInitialEdges] = useState<Edge[] | undefined>(undefined);
+    const [initialSnapshotKey, setInitialSnapshotKey] = useState<string | undefined>(undefined);
+    const [editorResetKey, setEditorResetKey] = useState(() => (
+        draftId ? `workflow-${draftId}` : 'new-workflow'
+    ));
     const [pageLoading, setPageLoading] = useState(Boolean(draftId));
     const [isSaving, setIsSaving] = useState(false);
     const [isValidating, setIsValidating] = useState(false);
@@ -67,6 +79,7 @@ export default function WorkflowEditPage() {
         applyWorkflowMeta(workflow);
         setInitialNodes(deserializeNodes(workflow.nodes));
         setInitialEdges(deserializeEdges(workflow.edges));
+        setInitialSnapshotKey(createWorkflowSnapshotKey(workflow));
     }, [applyWorkflowMeta]);
 
     useEffect(() => {
@@ -89,6 +102,7 @@ export default function WorkflowEditPage() {
                 if (!cancelled) {
                     loadedIdRef.current = currentId;
                     applyWorkflowAll(workflow);
+                    setEditorResetKey(`workflow-${currentId}`);
                 }
             } catch (error) {
                 if (!cancelled) {
@@ -118,6 +132,8 @@ export default function WorkflowEditPage() {
         setDescription('');
         setInitialNodes(undefined);
         setInitialEdges(undefined);
+        setInitialSnapshotKey(undefined);
+        setEditorResetKey('new-workflow');
         setIsPublished(false);
         setPublishedVersion(null);
         setPublishedAt(null);
@@ -158,6 +174,9 @@ export default function WorkflowEditPage() {
                 ? await saveWorkflowDefinition(workflowId, payload)
                 : await createWorkflow(payload);
 
+            setInitialNodes(deserializeNodes(workflow.nodes));
+            setInitialEdges(deserializeEdges(workflow.edges));
+            setInitialSnapshotKey(createWorkflowSnapshotKey(workflow));
             applyWorkflowMeta(workflow);
             if (!workflowId) {
                 loadedIdRef.current = workflow.id;
@@ -365,6 +384,8 @@ export default function WorkflowEditPage() {
 
             <WorkflowEditor
                 workflowId={workflowId}
+                resetKey={editorResetKey}
+                initialSnapshotKey={initialSnapshotKey}
                 initialNodes={initialNodes}
                 initialEdges={initialEdges}
                 name={name}

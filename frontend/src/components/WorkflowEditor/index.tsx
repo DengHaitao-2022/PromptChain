@@ -1,6 +1,6 @@
 'use client';
 
-import { type Node, type Edge } from '@xyflow/react';
+import { ReactFlowProvider, type Node, type Edge } from '@xyflow/react';
 import type { ValidationResult } from './hooks/useWorkflowApi';
 import { WorkflowProvider } from './provider/WorkflowProvider';
 import { WorkflowEditorShell } from './WorkflowEditorShell';
@@ -17,6 +17,8 @@ interface WorkflowEditorActionState {
 
 export interface WorkflowEditorProps {
     workflowId?: string;
+    resetKey?: string;
+    initialSnapshotKey?: string;
     readOnly?: boolean;
     initialNodes?: Node[];
     initialEdges?: Edge[];
@@ -39,7 +41,7 @@ export interface WorkflowEditorProps {
  * 真正的画布和 UI 逻辑在 WorkflowEditorShell 中。
  */
 export default function WorkflowEditor(props: WorkflowEditorProps) {
-    const autoResetKey = `${props.workflowId ?? 'new'}-${!!props.initialNodes}`;
+    const providerResetKey = props.resetKey ?? (props.workflowId ? `workflow-${props.workflowId}` : 'new-workflow');
 
     const initialState = useMemo(() => ({
         nodes: props.initialNodes ?? [],
@@ -48,8 +50,10 @@ export default function WorkflowEditor(props: WorkflowEditorProps) {
     }), [props.initialNodes, props.initialEdges, props.readOnly]);
 
     return (
-        <WorkflowProvider key={autoResetKey} initialState={initialState}>
-            <WorkflowEditorShell {...props} />
+        <WorkflowProvider key={providerResetKey} initialState={initialState}>
+            <ReactFlowProvider>
+                <WorkflowEditorShell {...props} />
+            </ReactFlowProvider>
         </WorkflowProvider>
     );
 }
