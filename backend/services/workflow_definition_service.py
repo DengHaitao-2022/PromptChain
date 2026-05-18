@@ -12,6 +12,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import to_utc_iso, utc_now_iso, utc_now_naive
+from graph.runtime_plan import compile_workflow_runtime_plan
 from models.workflow_definition import (
     WorkflowCompileResult,
     WorkflowDefinition,
@@ -783,7 +784,7 @@ class WorkflowDefinitionService:
         )
 
     def compile(self, definition: WorkflowDefinition) -> WorkflowCompileResult:
-        """将工作流定义编译为 LangGraph 代码预览。"""
+        """将工作流定义编译为 LangGraph 代码预览和受限运行计划。"""
         validation = self.validate(definition, mode=WorkflowValidationMode.PUBLISH)
         if not validation.is_valid:
             return WorkflowCompileResult(success=False, errors=validation.errors)
@@ -799,7 +800,7 @@ class WorkflowDefinitionService:
             "graph = StateGraph(WorkflowState)",
             "",
             "# 说明: 扩展节点类型会先映射到当前运行时支持的五大类别。",
-            "# 这里生成的是兼容预览，不代表执行引擎已经拥有全部专用 handler。",
+            "# 这里的 LangGraph 代码是预览；实际运行会同时使用 runtime_plan 控制受限执行闭环。",
             "",
             "# 添加节点",
         ]
@@ -829,7 +830,22 @@ class WorkflowDefinitionService:
             code_lines.extend(["", "# 设置入口", f"graph.set_entry_point('{entry}')"])
 
         code_lines.extend(["", "# 编译图", "workflow = graph.compile()"])
-        return WorkflowCompileResult(success=True, graph_code="\n".join(code_lines))
+        runtime_plan = compile_workflow_runtime_plan(
+            {
+                "workflow_definition_id": definition.id,
+                "workflow_version_id": definition.published_version_id,
+                "definition_name": definition.name,
+                "definition_description": definition.description,
+                "version": definition.version,
+                "nodes": [node.model_dump(mode="json") for node in definition.nodes],
+                "edges": [edge.model_dump(mode="json") for edge in definition.edges],
+            }
+        )
+        return WorkflowCompileResult(
+            success=True,
+            graph_code="\n".join(code_lines),
+            runtime_plan=runtime_plan,
+        )
 
     def _resolve_runtime_node_type(self, node_type: str) -> str:
         normalized = node_type.strip().lower().replace("-", "_")

@@ -6,10 +6,11 @@
 
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 class Settings:
@@ -37,6 +38,19 @@ class Settings:
             "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain",
         )
 
+        # Redis / 事件总线配置。默认继续使用 memory，避免本地开发强依赖 Redis。
+        self.REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6380/0")
+        self.WORKFLOW_EVENT_BUS_BACKEND: str = os.getenv(
+            "WORKFLOW_EVENT_BUS_BACKEND",
+            "memory",
+        ).lower()
+        if self.WORKFLOW_EVENT_BUS_BACKEND not in {"memory", "redis"}:
+            raise RuntimeError("WORKFLOW_EVENT_BUS_BACKEND 仅支持 memory 或 redis")
+        self.WORKFLOW_EVENT_BUS_REDIS_CHANNEL_PREFIX: str = os.getenv(
+            "WORKFLOW_EVENT_BUS_REDIS_CHANNEL_PREFIX",
+            "promptchain:workflow-events",
+        )
+
         # LLM 配置 - 关键修改：这里现在在 __init__ 中读取，支持 monkeypatch
         self.DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
         self.DEFAULT_MODEL_NAME: str = os.getenv("DEFAULT_MODEL_NAME", "gpt-4o")
@@ -46,7 +60,8 @@ class Settings:
         self.GITHUB_MODEL_TOKEN: str = os.getenv("GITHUB_MODEL_TOKEN", "")
         self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
-        # CORS 配置：带 Cookie 的跨源请求不能使用 "*"，本地默认显式允许前端来源。
+        # CORS 配置：带 Cookie 的跨源请求不能使用 "*"，
+        # 本地默认显式允许前端来源。
         self.CORS_ORIGINS: list[str] = [
             origin.strip()
             for origin in os.getenv(
@@ -55,8 +70,8 @@ class Settings:
             ).split(",")
             if origin.strip()
         ]
-        if not self.DEBUG and "*" in self.CORS_ORIGINS:
-            raise RuntimeError("生产环境必须显式配置 CORS_ORIGINS，不能使用通配符 *")
+        if "*" in self.CORS_ORIGINS:
+            raise RuntimeError("CORS_ORIGINS 不能包含通配符 *，跨源 Cookie 请求必须显式配置 Origin")
 
         # 邮件配置
         self.SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")

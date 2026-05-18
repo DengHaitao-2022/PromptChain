@@ -137,6 +137,7 @@ async def generate_section(
         state.get("workspace_id"),
         model=state.get("model_name"),
         model_provider_id=state.get("model_provider_id"),
+        model_provider_name=state.get("model_provider_name"),
         temperature=0.7,
     )
     prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
@@ -179,6 +180,7 @@ async def generate_section_streaming(
         state.get("workspace_id"),
         model=state.get("model_name"),
         model_provider_id=state.get("model_provider_id"),
+        model_provider_name=state.get("model_provider_name"),
         temperature=0.7,
     )
     prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
@@ -319,6 +321,7 @@ async def generate_all_sections(state: dict) -> dict:
             model_info = await get_current_model_info_for_workspace(
                 state.get("workspace_id"),
                 model_provider_id=state.get("model_provider_id"),
+                model_provider_name=state.get("model_provider_name"),
                 model=state.get("model_name"),
             )
             llm_call = LLMCallRecord(
@@ -461,6 +464,7 @@ async def regenerate_section(state: dict) -> dict:
         model_info = await get_current_model_info_for_workspace(
             state.get("workspace_id"),
             model_provider_id=state.get("model_provider_id"),
+            model_provider_name=state.get("model_provider_name"),
             model=state.get("model_name"),
         )
         llm_call = LLMCallRecord(

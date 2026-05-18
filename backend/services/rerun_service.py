@@ -37,7 +37,34 @@ class RerunService:
 
         返回每个节点及其最新 Artifact 版本，供用户选择重跑起点
         """
-        return await self.traces.get_rerun_options(workflow_run_id)
+        options = await self.traces.get_rerun_options(workflow_run_id)
+        allowed_nodes = await self._get_runtime_plan_node_ids(workflow_run_id)
+        if not allowed_nodes:
+            return options
+        return [option for option in options if option.get("node_name") in allowed_nodes]
+
+    async def _get_runtime_plan_node_ids(self, workflow_run_id: str) -> set[str]:
+        workflow_run = await self.store.get_workflow_run(workflow_run_id)
+        metadata = dict(workflow_run.metadata or {}) if workflow_run else {}
+        plan = metadata.get("runtime_plan")
+        if not isinstance(plan, dict):
+            return set()
+
+        steps = plan.get("steps")
+        if not isinstance(steps, list):
+            return set()
+
+        node_ids = {
+            str(step.get("id")) for step in steps if isinstance(step, dict) and step.get("id")
+        }
+        if "parse_intent" in node_ids:
+            node_ids.add("clarify_intent")
+        return node_ids
+
+    async def _ensure_rerun_node_allowed(self, workflow_run_id: str, from_node: str) -> None:
+        allowed_nodes = await self._get_runtime_plan_node_ids(workflow_run_id)
+        if allowed_nodes and from_node not in allowed_nodes:
+            raise ValueError(f"Node '{from_node}' is not enabled by this workflow runtime plan")
 
     async def prepare_rerun_state(
         self, workflow_run_id: str, from_node: str, updated_input: dict[str, Any] | None = None
@@ -55,6 +82,8 @@ class RerunService:
         Returns:
             可用于启动新工作流的状态字典
         """
+        await self._ensure_rerun_node_allowed(workflow_run_id, from_node)
+
         # 获取原工作流追踪
         trace = await self.traces.get_workflow_trace(workflow_run_id)
 
@@ -134,19 +163,41 @@ class RerunService:
         if not original:
             raise ValueError(f"WorkflowRun not found: {original_workflow_run_id}")
 
-        # 创建新的 WorkflowRun
-        new_workflow_run = WorkflowRun(
-            workflow_name=original.workflow_name,
-            workflow_version=original.workflow_version,
-            user_input=updated_user_input or original.user_input,
-            status=WorkflowRunStatus.RUNNING,
-            metadata={
+        original_metadata = dict(original.metadata or {})
+        inherited_metadata = {
+            key: original_metadata[key]
+            for key in (
+                "workspace_id",
+                "user_id",
+                "model_provider_id",
+                "model_provider_name",
+                "model_name",
+                "runtime_model",
+                "requested_model_provider_id",
+                "requested_model_name",
+                "runtime_plan",
+            )
+            if key in original_metadata
+        }
+        inherited_metadata.update(
+            {
                 "is_rerun": True,
                 "original_workflow_run_id": original_workflow_run_id,
                 "rerun_from_node": from_node,
                 "rerun_reason": reason,
                 "rerun_at": utc_now_iso(),
-            },
+            }
+        )
+
+        # 创建新的 WorkflowRun
+        new_workflow_run = WorkflowRun(
+            workflow_name=original.workflow_name,
+            workflow_version=original.workflow_version,
+            workflow_definition_id=original.workflow_definition_id,
+            workflow_version_id=original.workflow_version_id,
+            user_input=updated_user_input or original.user_input,
+            status=WorkflowRunStatus.RUNNING,
+            metadata=inherited_metadata,
         )
 
         await self.store.create_workflow_run(new_workflow_run)
@@ -162,25 +213,54 @@ class RerunService:
         if not current:
             return []
 
-        history = [normalize_api_datetime(current.model_dump())]
-
-        # 向上追溯原始工作流
+        # 先向上找到重跑树根节点，再从根节点向下收集整棵派生树。
+        root = current
+        visited_ancestors: set[str] = set()
         metadata = current.metadata or {}
         while metadata.get("is_rerun") and metadata.get("original_workflow_run_id"):
             original_id = metadata["original_workflow_run_id"]
-            original = await self.store.get_workflow_run(original_id)
-            if original:
-                history.insert(0, normalize_api_datetime(original.model_dump()))
-                metadata = original.metadata or {}
-            else:
+            if original_id in visited_ancestors:
                 break
+            visited_ancestors.add(original_id)
 
-        # 向下查找派生的重跑
+            original = await self.store.get_workflow_run(original_id)
+            if not original:
+                break
+            root = original
+            metadata = original.metadata or {}
+
         all_runs = await self.store.get_all_workflow_runs()
+        children_by_parent: dict[str, list[WorkflowRun]] = {}
         for run in all_runs:
             run_metadata = run.metadata or {}
-            if run_metadata.get("original_workflow_run_id") == workflow_run_id:
-                history.append(normalize_api_datetime(run.model_dump()))
+            parent_id = run_metadata.get("original_workflow_run_id")
+            if parent_id:
+                children_by_parent.setdefault(parent_id, []).append(run)
+
+        def _sort_key(run: WorkflowRun) -> tuple[str, str]:
+            run_metadata = run.metadata or {}
+            timestamp = (
+                run_metadata.get("rerun_at")
+                or getattr(run, "created_at", None)
+                or getattr(run, "started_at", None)
+                or ""
+            )
+            return str(timestamp), run.id
+
+        history: list[dict[str, Any]] = []
+        visited_descendants: set[str] = set()
+
+        def _append_tree(run: WorkflowRun) -> None:
+            if run.id in visited_descendants:
+                return
+            visited_descendants.add(run.id)
+            history.append(normalize_api_datetime(run.model_dump()))
+
+            children = sorted(children_by_parent.get(run.id, []), key=_sort_key)
+            for child in children:
+                _append_tree(child)
+
+        _append_tree(root)
 
         return history
 

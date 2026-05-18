@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 
 from core.config import get_settings
@@ -28,7 +29,7 @@ from routes.auth_routes import (
     get_current_user,
 )
 from services.audit_log_service import AuditLogService
-from services.auth_service import create_access_token
+from services.auth_service import create_access_token, normalize_email, user_email_matches
 from services.email_service import EmailDeliveryError, EmailService
 from services.permission_service import (
     PermissionService,
@@ -116,6 +117,19 @@ class InviteResponse(BaseModel):
 
 
 # ==================== API 路由 ====================
+
+
+def set_current_workspace_cookie(response: Response, user_id: str, workspace_id: str) -> None:
+    """刷新 access_token 中的当前工作空间，保证后续请求进入新上下文。"""
+    access_token = create_access_token(user_id=user_id, workspace_id=workspace_id)
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE,
+        value=access_token,
+        httponly=COOKIE_HTTPONLY,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=15 * 60,
+    )
 
 
 @router.get("/workspaces")
@@ -367,8 +381,11 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "member", "manage")
 
+        # 统一使用小写邀请邮箱，避免大小写差异导致成员匹配和邀请记录漂移。
+        invite_email = normalize_email(body.email)
+
         # 检查是否已经是成员
-        result = await session.execute(select(UserORM).where(UserORM.email == body.email))
+        result = await session.execute(select(UserORM).where(user_email_matches(invite_email)))
         existing_user = result.scalar_one_or_none()
 
         if existing_user:
@@ -399,7 +416,7 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         invite = WorkspaceInviteORM(
             id=str(uuid.uuid4()),
             workspace_id=workspace_id,
-            email=body.email,
+            email=invite_email,
             role=body.role.value,
             invited_by=user_id,
             token_hash=token_hash,
@@ -413,7 +430,7 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
             request=request,
             target_type="workspace_invite",
             target_id=invite.id,
-            detail={"email": body.email, "role": body.role.value},
+            detail={"email": invite_email, "role": body.role.value},
             target_snapshot={
                 "id": invite.id,
                 "email": invite.email,
@@ -428,7 +445,7 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         email_service = EmailService(session)
         try:
             await email_service.send_workspace_invite_email(
-                email=body.email,
+                email=invite_email,
                 workspace_name=workspace.name,
                 inviter_name=inviter.display_name or inviter.email,
                 invite_link=invite_link,
@@ -440,13 +457,13 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         await session.commit()
 
         return {
-            "message": f"邀请已发送至 {body.email}",
+            "message": f"邀请已发送至 {invite_email}",
             "invite_id": invite.id,
         }
 
 
 @router.post("/workspaces/accept-invite")
-async def accept_invite(request: Request, token: str):
+async def accept_invite(request: Request, response: Response, token: str):
     """
     接受工作空间邀请
     """
@@ -457,63 +474,139 @@ async def accept_invite(request: Request, token: str):
 
     store = get_postgres_store()
     async with store.async_session() as session:
-        # 查找邀请
+        # 先按 token 定位邀请，再区分过期、已接受和幂等访问状态。
         result = await session.execute(
-            select(WorkspaceInviteORM).where(
-                and_(
-                    WorkspaceInviteORM.token_hash == token_hash,
-                    WorkspaceInviteORM.accepted_at.is_(None),
-                    WorkspaceInviteORM.expires_at > utc_now_naive(),
-                )
-            )
+            select(WorkspaceInviteORM).where(WorkspaceInviteORM.token_hash == token_hash)
         )
         invite = result.scalar_one_or_none()
 
         if not invite:
             raise HTTPException(status_code=400, detail="邀请链接无效或已过期")
 
+        invite_id = invite.id
+        invite_workspace_id = invite.workspace_id
+        invite_role = invite.role
+        invite_invited_by = invite.invited_by
+        invite_accepted_at = invite.accepted_at
+        if invite.expires_at <= utc_now_naive() and invite_accepted_at is None:
+            raise HTTPException(status_code=400, detail="邀请链接无效或已过期")
+
+        result = await session.execute(select(UserORM).where(UserORM.id == user_id))
+        current_user = result.scalar_one_or_none()
+        if not current_user:
+            raise HTTPException(status_code=401, detail="当前登录状态无效")
+
+        # 邀请链接必须由被邀请邮箱对应的登录账号接受，避免链接被转发后越权入组。
+        if normalize_email(current_user.email) != normalize_email(invite.email):
+            raise HTTPException(
+                status_code=403,
+                detail="该邀请链接不属于当前登录账号，请切换到被邀请邮箱后重试",
+            )
+
         # 检查是否已经是成员
         result = await session.execute(
             select(MembershipORM).where(
                 and_(
                     MembershipORM.user_id == user_id,
-                    MembershipORM.workspace_id == invite.workspace_id,
+                    MembershipORM.workspace_id == invite_workspace_id,
                 )
             )
         )
-        if result.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="您已经是该工作空间的成员")
+        existing_membership = result.scalar_one_or_none()
+        if existing_membership:
+            if invite_accepted_at is None:
+                invite.accepted_at = utc_now_naive()
+                await AuditLogService(session).record(
+                    workspace_id=invite_workspace_id,
+                    actor_user_id=user_id,
+                    action=AuditAction.MEMBER_ACCEPT,
+                    request=request,
+                    target_type="membership",
+                    target_id=existing_membership.id,
+                    detail={
+                        "invite_id": invite_id,
+                        "accepted": True,
+                        "already_member": True,
+                        "role": existing_membership.role,
+                    },
+                    target_snapshot={
+                        "id": existing_membership.id,
+                        "user_id": user_id,
+                        "role": existing_membership.role,
+                        "workspace_id": invite_workspace_id,
+                    },
+                )
+                await session.commit()
+
+            set_current_workspace_cookie(response, user_id, invite_workspace_id)
+            return {
+                "message": "您已经是该工作空间的成员",
+                "workspace_id": invite_workspace_id,
+                "role": existing_membership.role,
+                "already_member": True,
+            }
+
+        if invite_accepted_at is not None:
+            raise HTTPException(status_code=400, detail="邀请链接已被使用")
 
         # 添加为成员
         membership = MembershipORM(
             id=str(uuid.uuid4()),
             user_id=user_id,
-            workspace_id=invite.workspace_id,
-            role=invite.role,
-            invited_by=invite.invited_by,
+            workspace_id=invite_workspace_id,
+            role=invite_role,
+            invited_by=invite_invited_by,
         )
         session.add(membership)
 
         # 标记邀请为已接受
         invite.accepted_at = utc_now_naive()
         await AuditLogService(session).record(
-            workspace_id=invite.workspace_id,
+            workspace_id=invite_workspace_id,
             actor_user_id=user_id,
             action=AuditAction.MEMBER_ACCEPT,
             request=request,
             target_type="membership",
             target_id=membership.id,
-            detail={"invite_id": invite.id, "accepted": True, "role": invite.role},
+            detail={"invite_id": invite_id, "accepted": True, "role": invite_role},
             target_snapshot={
                 "id": membership.id,
                 "user_id": user_id,
-                "role": invite.role,
-                "workspace_id": invite.workspace_id,
+                "role": invite_role,
+                "workspace_id": invite_workspace_id,
             },
         )
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            result = await session.execute(
+                select(MembershipORM).where(
+                    and_(
+                        MembershipORM.user_id == user_id,
+                        MembershipORM.workspace_id == invite_workspace_id,
+                    )
+                )
+            )
+            concurrent_membership = result.scalar_one_or_none()
+            if not concurrent_membership:
+                raise
 
-        return {"message": "您已成功加入工作空间"}
+            set_current_workspace_cookie(response, user_id, invite_workspace_id)
+            return {
+                "message": "您已经是该工作空间的成员",
+                "workspace_id": invite_workspace_id,
+                "role": concurrent_membership.role,
+                "already_member": True,
+            }
+
+        set_current_workspace_cookie(response, user_id, invite_workspace_id)
+        return {
+            "message": "您已成功加入工作空间",
+            "workspace_id": invite_workspace_id,
+            "role": invite_role,
+            "already_member": False,
+        }
 
 
 @router.patch("/memberships/{membership_id}")
@@ -671,15 +764,7 @@ async def switch_workspace(request: Request, response: Response, body: SwitchWor
         )
         await session.commit()
 
-        access_token = create_access_token(user_id=user_id, workspace_id=body.workspace_id)
-        response.set_cookie(
-            key=ACCESS_TOKEN_COOKIE,
-            value=access_token,
-            httponly=COOKIE_HTTPONLY,
-            secure=COOKIE_SECURE,
-            samesite=COOKIE_SAMESITE,
-            max_age=15 * 60,
-        )
+        set_current_workspace_cookie(response, user_id, body.workspace_id)
 
         return {
             "message": "工作空间已切换",

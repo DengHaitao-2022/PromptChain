@@ -10,6 +10,7 @@
 import json
 
 from core.time import utc_now_iso, utc_now_naive
+from graph.runtime_plan import runtime_feature_enabled
 from models import (
     ArtifactType,
     HumanDecision,
@@ -103,6 +104,7 @@ async def generate_outline(state: dict) -> dict:
     workflow_run_id = state["workflow_run_id"]
     workspace_id = state.get("workspace_id")
     model_provider_id = state.get("model_provider_id")
+    model_provider_name = state.get("model_provider_name")
     model_name = state.get("model_name")
     outline_feedback = state.get("outline_feedback", "")
     rerun_instruction = state.get("rerun_instruction", "")
@@ -135,6 +137,7 @@ async def generate_outline(state: dict) -> dict:
             workspace_id,
             model=model_name,
             model_provider_id=model_provider_id,
+            model_provider_name=model_provider_name,
         )
 
         # 调用 LLM
@@ -164,6 +167,7 @@ async def generate_outline(state: dict) -> dict:
         model_info = await get_current_model_info_for_workspace(
             workspace_id,
             model_provider_id=model_provider_id,
+            model_provider_name=model_provider_name,
             model=model_name,
         )
         llm_call = LLMCallRecord(
@@ -178,6 +182,8 @@ async def generate_outline(state: dict) -> dict:
         )
         node_run.llm_calls.append(llm_call)
 
+        outline_gate_enabled = runtime_feature_enabled(state, "outline_gate", default=True)
+
         # 创建 Artifact
         parent_artifact_id = state.get("outline_artifact_id")  # 如果是重新生成
         artifact = await store.create_artifact(
@@ -190,9 +196,26 @@ async def generate_outline(state: dict) -> dict:
                 "feedback": outline_feedback,
                 "rerun_instruction": rerun_instruction,
                 "section_count": len(outline.get_flat_sections()),
-                "awaiting_approval": True,
+                "awaiting_approval": outline_gate_enabled,
             },
         )
+
+        node_run.output_artifact_ids.append(artifact.id)
+        if not outline_gate_enabled:
+            await _update_gate_metadata(store, workflow_run_id, None)
+            node_run.complete(NodeRunStatus.COMPLETED)
+            await store.update_node_run(node_run)
+
+            return {
+                **state,
+                "outline": outline,
+                "outline_artifact_id": artifact.id,
+                "outline_node_run_id": node_run.id,
+                "awaiting_outline_approval": False,
+                "outline_approved": True,
+                "user_decision": None,
+                "outline_feedback": None,  # 清除反馈
+            }
 
         gate_opened_at = _now_iso()
         await _update_gate_metadata(
@@ -210,7 +233,6 @@ async def generate_outline(state: dict) -> dict:
         )
 
         # 更新节点运行记录（标记为中断，等待用户确认）
-        node_run.output_artifact_ids.append(artifact.id)
         node_run.complete(NodeRunStatus.INTERRUPTED)
         await store.update_node_run(node_run)
 

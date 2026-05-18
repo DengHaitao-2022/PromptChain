@@ -78,6 +78,20 @@ def _runtime_schema_statements(database_url: str) -> list[str]:
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_snapshot JSON DEFAULT '{}'::json",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata_json JSON DEFAULT '{}'::json",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS schema_version VARCHAR(20) DEFAULT 'legacy'",
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM memberships
+                GROUP BY user_id, workspace_id
+                HAVING COUNT(*) > 1
+            ) THEN
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_user_workspace
+                    ON memberships (user_id, workspace_id);
+            END IF;
+        END $$;
+        """,
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id) WHERE event_id IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_request_id ON audit_logs (request_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_trace_id ON audit_logs (trace_id)",
@@ -676,6 +690,8 @@ class PostgresArtifactStore:
                     select(WorkflowVersionORM).where(WorkflowVersionORM.id == workflow_version_id)
                 )
                 version = version_result.scalar_one_or_none()
+                if version is None:
+                    return None
 
             if workflow_definition_id:
                 definition_result = await session.execute(
@@ -684,10 +700,41 @@ class PostgresArtifactStore:
                     )
                 )
                 definition = definition_result.scalar_one_or_none()
+                if definition is None:
+                    return None
+
+            if definition is None and version is not None and version.workflow_id:
+                definition_result = await session.execute(
+                    select(WorkflowDefinitionORM).where(
+                        WorkflowDefinitionORM.id == version.workflow_id
+                    )
+                )
+                definition = definition_result.scalar_one_or_none()
+
+            if (
+                workflow_definition_id
+                and version is not None
+                and version.workflow_id != workflow_definition_id
+            ):
+                return None
+
+            if (
+                version is None
+                and not workflow_version_id
+                and definition is not None
+                and definition.published_version_id
+            ):
+                version_result = await session.execute(
+                    select(WorkflowVersionORM).where(
+                        WorkflowVersionORM.id == definition.published_version_id
+                    )
+                )
+                version = version_result.scalar_one_or_none()
 
             return {
-                "workflow_definition_id": workflow_definition_id,
-                "workflow_version_id": workflow_version_id,
+                "workflow_definition_id": workflow_definition_id
+                or getattr(version, "workflow_id", None),
+                "workflow_version_id": workflow_version_id or getattr(version, "id", None),
                 "definition_name": getattr(definition, "name", None),
                 "definition_description": getattr(definition, "description", None),
                 "version": getattr(version, "version", None),

@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
+from core.config import get_settings
 from core.time import utc_max_naive
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
@@ -21,6 +22,8 @@ from services.auth_service import (
     AuthService,
     create_access_token,
     create_refresh_token,
+    normalize_email,
+    user_email_matches,
     verify_access_token,
 )
 from services.email_service import EmailDeliveryError, EmailService
@@ -564,8 +567,9 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
 
         from models.auth_orm import UserORM
 
-        # 查找用户
-        result = await session.execute(select(UserORM).where(UserORM.email == body.email))
+        # 查找用户前统一归一化邮箱，避免大小写或首尾空格导致已有账号匹配失败。
+        email = normalize_email(body.email)
+        result = await session.execute(select(UserORM).where(user_email_matches(email)))
         user = result.scalar_one_or_none()
 
         # 无论用户是否存在都返回成功（安全考虑）
@@ -574,9 +578,12 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
             user_id = user.id  # 预先获取 user_id，避免在异常处理中触发异步查询
             try:
                 await email_service.send_password_reset_email(user.id, user.email)
-            except EmailDeliveryError:
+                logger.info("密码重置邮件已提交发送，user_id=%s email=%s", user.id, user.email)
+            except EmailDeliveryError as e:
                 await session.rollback()
                 logger.exception("密码重置邮件发送失败，user_id=%s", user_id)
+                if get_settings().DEBUG:
+                    raise HTTPException(status_code=502, detail=str(e)) from e
             else:
                 auth_context = await build_auth_context(user.id)
                 workspace = auth_context["workspace"]
@@ -592,6 +599,8 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
                         target_snapshot=auth_context["user"],
                     )
                     await session.commit()
+        else:
+            logger.info("密码重置请求未匹配到用户，email=%s", email)
 
         return MessageResponse(message="如果该邮箱已注册，您将收到密码重置邮件")
 

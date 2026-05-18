@@ -46,7 +46,12 @@ from .llm_usage import (
 )
 from .rerun_service import RerunService, get_rerun_service
 from .trace_service import TraceService, get_trace_service
-from .workflow_event_bus import WorkflowEventBus, WorkflowStreamEvent, get_workflow_event_bus
+from .workflow_event_bus import (
+    WorkflowEventBus,
+    WorkflowStreamEvent,
+    dispose_workflow_event_bus,
+    get_workflow_event_bus,
+)
 
 __all__ = [
     # artifact_store
@@ -92,5 +97,6 @@ __all__ = [
     # workflow_event_bus
     "WorkflowEventBus",
     "WorkflowStreamEvent",
+    "dispose_workflow_event_bus",
     "get_workflow_event_bus",
 ]

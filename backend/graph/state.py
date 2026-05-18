@@ -19,10 +19,12 @@ class GraphState(TypedDict, total=False):
     workspace_id: str | None
     user_id: str | None
     model_provider_id: str | None
+    model_provider_name: str | None
     model_name: str | None
     workflow_definition_id: str | None
     workflow_version_id: str | None
     workflow_context: dict[str, Any] | None
+    runtime_plan: dict[str, Any] | None
     is_paused: bool
     pause_reason: str | None
     rerun_from_node: str | None

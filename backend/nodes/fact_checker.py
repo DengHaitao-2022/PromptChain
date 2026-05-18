@@ -16,6 +16,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from core.time import utc_now_iso, utc_now_naive
+from graph.runtime_plan import runtime_feature_enabled
 from models import (
     ArtifactType,
     FactCheckReport,
@@ -261,6 +262,7 @@ async def extract_fact_claims(
     section_id: str,
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     model_name: str | None = None,
 ) -> tuple[list[FactClaim], dict[str, int]]:
     """
@@ -272,6 +274,7 @@ async def extract_fact_claims(
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
+        model_provider_name=model_provider_name,
     )
 
     result, usage = await invoke_with_llm_retry(
@@ -294,6 +297,7 @@ async def generate_verification_question(
     claim: FactClaim,
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     model_name: str | None = None,
 ) -> tuple[str, dict[str, int]]:
     """
@@ -303,6 +307,7 @@ async def generate_verification_question(
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
+        model_provider_name=model_provider_name,
         temperature=0.3,
     )
     prompt = ChatPromptTemplate.from_template(GENERATE_VERIFICATION_QUESTIONS_PROMPT)
@@ -325,6 +330,7 @@ async def execute_verification(
     question: str,
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     model_name: str | None = None,
 ) -> tuple[str, dict[str, int]]:
     """
@@ -336,6 +342,7 @@ async def execute_verification(
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
+        model_provider_name=model_provider_name,
         temperature=0.2,
     )  # 低温度以获得更确定的答案
     prompt = ChatPromptTemplate.from_template(EXECUTE_VERIFICATION_PROMPT)
@@ -358,6 +365,7 @@ async def evaluate_claim_accuracy(
     verification_answer: str,
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     model_name: str | None = None,
 ) -> tuple[VerificationResult, dict[str, int]]:
     """
@@ -369,6 +377,7 @@ async def evaluate_claim_accuracy(
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
+        model_provider_name=model_provider_name,
     )
 
     evaluation, usage = await invoke_with_llm_retry(
@@ -422,6 +431,7 @@ async def check_facts(state: dict) -> dict:
     workflow_run_id = state["workflow_run_id"]
     workspace_id = state.get("workspace_id")
     model_provider_id = state.get("model_provider_id")
+    model_provider_name = state.get("model_provider_name")
     model_name = state.get("model_name")
     store = get_artifact_store()
 
@@ -456,6 +466,7 @@ async def check_facts(state: dict) -> dict:
                 section_id,
                 workspace_id,
                 model_provider_id,
+                model_provider_name,
                 model_name,
             )
             end_time = utc_now_naive()
@@ -466,6 +477,7 @@ async def check_facts(state: dict) -> dict:
             model_info = await get_current_model_info_for_workspace(
                 workspace_id,
                 model_provider_id=model_provider_id,
+                model_provider_name=model_provider_name,
                 model=model_name,
             )
             llm_call = LLMCallRecord(
@@ -488,6 +500,7 @@ async def check_facts(state: dict) -> dict:
                     claim,
                     workspace_id,
                     model_provider_id,
+                    model_provider_name,
                     model_name,
                 )
 
@@ -496,6 +509,7 @@ async def check_facts(state: dict) -> dict:
                     question,
                     workspace_id,
                     model_provider_id,
+                    model_provider_name,
                     model_name,
                 )
 
@@ -506,6 +520,7 @@ async def check_facts(state: dict) -> dict:
                     answer,
                     workspace_id,
                     model_provider_id,
+                    model_provider_name,
                     model_name,
                 )
                 end_time = utc_now_naive()
@@ -516,6 +531,7 @@ async def check_facts(state: dict) -> dict:
                 model_info = await get_current_model_info_for_workspace(
                     workspace_id,
                     model_provider_id=model_provider_id,
+                    model_provider_name=model_provider_name,
                     model=model_name,
                 )
                 llm_call = LLMCallRecord(
@@ -545,6 +561,12 @@ async def check_facts(state: dict) -> dict:
         # 生成报告
         report = FactCheckReport(claims=all_claims, results=all_results)
         report.compute_stats()
+        fact_check_gate_enabled = runtime_feature_enabled(
+            state,
+            "fact_check_gate",
+            default=True,
+        )
+        awaiting_approval = report.has_high_risk_items() and fact_check_gate_enabled
 
         # 创建 Artifact
         artifact = await store.create_artifact(
@@ -554,14 +576,14 @@ async def check_facts(state: dict) -> dict:
             node_run_id=node_run.id,
             metadata={
                 "high_risk_count": report.high_risk_count,
-                "awaiting_approval": report.has_high_risk_items(),
+                "awaiting_approval": awaiting_approval,
                 "source_final_content_artifact_id": state.get("final_content_artifact_id"),
             },
         )
         node_run.output_artifact_ids.append(artifact.id)
 
-        # 如果有高风险项，标记为需要用户确认
-        if report.has_high_risk_items():
+        # 只有发布图启用了事实核查 Gate 时，高风险项才会暂停等待用户确认。
+        if awaiting_approval:
             gate_opened_at = _now_iso()
             await _update_gate_metadata(
                 store,

@@ -189,6 +189,8 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
         )
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("启动工作流失败")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc

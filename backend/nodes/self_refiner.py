@@ -214,6 +214,7 @@ async def generate_feedback(
         state.get("workspace_id"),
         model=state.get("model_name"),
         model_provider_id=state.get("model_provider_id"),
+        model_provider_name=state.get("model_provider_name"),
     )
     rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
 
@@ -249,6 +250,7 @@ async def refine_section(
         state.get("workspace_id"),
         model=state.get("model_name"),
         model_provider_id=state.get("model_provider_id"),
+        model_provider_name=state.get("model_provider_name"),
         temperature=0.5,
     )  # 降低温度以保持一致性
     prompt = ChatPromptTemplate.from_template(REFINE_PROMPT)
@@ -420,6 +422,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 model_info = await get_current_model_info_for_workspace(
                     state.get("workspace_id"),
                     model_provider_id=state.get("model_provider_id"),
+                    model_provider_name=state.get("model_provider_name"),
                     model=state.get("model_name"),
                 )
                 llm_call = LLMCallRecord(
@@ -477,6 +480,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 model_info = await get_current_model_info_for_workspace(
                     state.get("workspace_id"),
                     model_provider_id=state.get("model_provider_id"),
+                    model_provider_name=state.get("model_provider_name"),
                     model=state.get("model_name"),
                 )
                 llm_call = LLMCallRecord(

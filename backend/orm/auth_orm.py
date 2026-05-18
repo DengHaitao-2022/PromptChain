@@ -5,7 +5,7 @@
 """
 
 # 使用现有的 Base
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from core.time import utc_now_naive
@@ -64,6 +64,9 @@ class MembershipORM(Base):
     """成员关系 ORM 模型"""
 
     __tablename__ = "memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "workspace_id", name="uq_membership_user_workspace"),
+    )
 
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)

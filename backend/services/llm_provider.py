@@ -576,10 +576,22 @@ async def get_workspace_runtime_model_config(
     workspace_id: str | None = None,
     model_name: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
 ) -> RuntimeModelConfig:
     """读取当前工作空间运行默认模型配置，缺省时回退到环境变量。"""
     if not workspace_id:
-        return _build_environment_runtime_config(model_name=model_name)
+        if model_provider_id:
+            raise ValueError("选择模型供应商配置需要工作空间上下文")
+        return _build_environment_runtime_config(
+            provider_name=model_provider_name,
+            model_name=model_name,
+        )
+
+    if model_provider_name and not model_provider_id:
+        return _build_environment_runtime_config(
+            provider_name=model_provider_name,
+            model_name=model_name,
+        )
 
     from db.postgres_store import get_postgres_store
     from models.admin_orm import ModelProviderORM
@@ -593,12 +605,15 @@ async def get_workspace_runtime_model_config(
                 select(ModelProviderORM).where(
                     ModelProviderORM.id == model_provider_id,
                     ModelProviderORM.workspace_id == workspace_id,
-                    ModelProviderORM.enabled.is_(True),
                 )
             )
             selected_provider = selected_result.scalar_one_or_none()
-            if selected_provider and selected_provider.provider not in supported_providers:
-                selected_provider = None
+            if selected_provider is None:
+                raise ValueError("模型供应商配置不存在或不属于当前工作空间")
+            if not selected_provider.enabled:
+                raise ValueError("模型供应商配置已停用，无法用于本次运行")
+            if selected_provider.provider not in supported_providers:
+                raise ValueError(f"模型供应商类型暂不支持: {selected_provider.provider}")
 
         result = await session.execute(
             select(ModelProviderORM)
@@ -608,13 +623,17 @@ async def get_workspace_runtime_model_config(
             )
             .order_by(desc(ModelProviderORM.updated_at), desc(ModelProviderORM.created_at))
         )
+        enabled_providers = list(result.scalars().all())
         providers = [
-            provider
-            for provider in result.scalars().all()
-            if provider.provider in supported_providers
+            provider for provider in enabled_providers if provider.provider in supported_providers
         ]
 
     if selected_provider is None and not providers:
+        if enabled_providers:
+            unsupported_types = sorted({str(provider.provider) for provider in enabled_providers})
+            raise ValueError(
+                "当前工作空间启用的模型供应商暂不支持运行: " + ", ".join(unsupported_types)
+            )
         return _build_environment_runtime_config(model_name=model_name)
 
     selected_provider = selected_provider or next(
@@ -640,6 +659,7 @@ async def get_llm_for_workspace(
     workspace_id: str | None = None,
     model: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     **kwargs,
 ) -> BaseChatModel:
     """按工作空间动态配置获取 LLM；未配置时沿用环境变量。"""
@@ -647,6 +667,7 @@ async def get_llm_for_workspace(
         workspace_id,
         model,
         model_provider_id,
+        model_provider_name,
     )
     return _build_model_from_runtime_config(runtime_config, **kwargs)
 
@@ -656,6 +677,7 @@ async def get_structured_llm_for_workspace(
     workspace_id: str | None = None,
     model: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     *,
     method_override: str | None = None,
     **kwargs,
@@ -666,6 +688,7 @@ async def get_structured_llm_for_workspace(
         workspace_id,
         model,
         model_provider_id,
+        model_provider_name,
         method_override=method_override,
         **kwargs,
     )
@@ -677,6 +700,7 @@ async def get_structured_llm_runtime_for_workspace(
     workspace_id: str | None = None,
     model: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     *,
     method_override: str | None = None,
     **kwargs,
@@ -686,6 +710,7 @@ async def get_structured_llm_runtime_for_workspace(
         workspace_id,
         model,
         model_provider_id,
+        model_provider_name,
     )
     llm = _build_model_from_runtime_config(runtime_config, **kwargs)
     effective_method = _resolve_effective_structured_output_method(
@@ -711,6 +736,7 @@ async def build_structured_chain_for_workspace(
     workspace_id: str | None = None,
     model: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     *,
     method_override: str | None = None,
     **kwargs,
@@ -721,6 +747,7 @@ async def build_structured_chain_for_workspace(
         workspace_id,
         model,
         model_provider_id,
+        model_provider_name,
         method_override=method_override,
         **kwargs,
     )
@@ -736,6 +763,7 @@ async def get_current_model_info_for_workspace(
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
     model: str | None = None,
+    model_provider_name: str | None = None,
 ) -> dict[str, Any]:
     """获取当前工作空间实际运行模型读模型，供 trace 和设置页展示。"""
     try:
@@ -744,9 +772,12 @@ async def get_current_model_info_for_workspace(
                 workspace_id,
                 model,
                 model_provider_id,
+                model_provider_name,
             )
         )
-    except Exception:
+    except Exception as exc:
+        if model_provider_id or model_provider_name:
+            raise ValueError(f"无法读取指定模型供应商配置: {exc}") from exc
         return {
             **get_current_model_info(),
             "source": "environment",

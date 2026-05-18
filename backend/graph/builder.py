@@ -18,6 +18,8 @@ from graph.conditions import (
     should_clarify,
     should_proceed_after_fact_check,
     should_regenerate_outline,
+    should_run_fact_check,
+    should_run_self_refine,
 )
 from graph.state import GraphState
 from models import WorkflowRunStatus
@@ -119,9 +121,21 @@ def build_content_generation_graph():
         {"regenerate": "generate_outline", "generate_content": "generate_content", END: END},
     )
 
-    # 内容生成 → 自检修订 → 事实核查 → 条件分支
-    graph.add_edge("generate_content", "self_refine")
-    graph.add_edge("self_refine", "check_facts")
+    # 内容生成 → 按运行计划决定是否进入自检修订
+    graph.add_conditional_edges(
+        "generate_content",
+        should_run_self_refine,
+        {
+            "self_refine": "self_refine",
+            "check_facts": "check_facts",
+            "finalize": "finalize",
+        },
+    )
+    graph.add_conditional_edges(
+        "self_refine",
+        should_run_fact_check,
+        {"check_facts": "check_facts", "finalize": "finalize"},
+    )
 
     # 事实核查 -> 条件分支(高风险项需要用户确认)
     graph.add_conditional_edges(

@@ -4,6 +4,7 @@
 提供状态规范化、响应构建、Gate/Pause 状态处理等共享逻辑
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -11,7 +12,11 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 from core.time import to_utc_iso, to_utc_iso_or_none
+from graph.runtime_plan import canonical_runtime_plan
+from models.artifact import WorkflowRunStatus
 from models.auth_models import MemberRole
+
+logger = logging.getLogger(__name__)
 
 # ==================== 类型定义 ====================
 
@@ -87,6 +92,8 @@ class WorkflowResponse(BaseModel):
 
     workflow_run_id: str
     status: WorkflowStatus
+    final_artifact_id: str | None = None
+    quality_metrics: dict[str, Any] | None = None
     state: dict[str, Any]
 
 
@@ -97,6 +104,18 @@ class WorkflowRunListItem(BaseModel):
     workflow_name: str
     status: WorkflowStatus
     current_node: str | None = None
+    workflow_definition_id: str | None = None
+    workflow_version_id: str | None = None
+    final_artifact_id: str | None = None
+    runtime_model: dict[str, Any] | None = None
+    runtime_plan: dict[str, Any] | None = None
+    runtime_progress: dict[str, Any] | None = None
+    quality_metrics: dict[str, Any] | None = None
+    gate: dict[str, Any] | None = None
+    pause: dict[str, Any] | None = None
+    model_provider_id: str | None = None
+    model_name: str | None = None
+    error: str | None = None
     user_input: str
     started_at: str
     completed_at: str | None = None
@@ -115,6 +134,9 @@ _GATE_STATUS_TO_TYPE: dict[str, str] = {
     "needs_clarification": "clarification",
     "awaiting_outline_approval": "outline_approval",
     "awaiting_fact_check_approval": "fact_check",
+}
+_GATE_TYPE_ALIASES: dict[str, str] = {
+    "fact_check_approval": "fact_check",
 }
 _GATE_STATUSES = set(_GATE_STATUS_TO_TYPE)
 
@@ -145,10 +167,13 @@ def _build_workflow_response(
     workflow_run: Any | None = None,
 ) -> WorkflowResponse:
     """构建统一工作流响应"""
+    simplified_state = _simplify_state(state, workflow_run=workflow_run, status=status)
     return WorkflowResponse(
         workflow_run_id=workflow_run_id,
         status=status,
-        state=_simplify_state(state, workflow_run=workflow_run, status=status),
+        final_artifact_id=simplified_state.get("final_artifact_id"),
+        quality_metrics=simplified_state.get("quality_metrics"),
+        state=simplified_state,
     )
 
 
@@ -164,20 +189,177 @@ def _get_workflow_public_status(workflow_run: Any) -> WorkflowStatus:
 
 def _build_workflow_run_list_response(workflow_runs: list[Any]) -> WorkflowRunListResponse:
     """构建控制台运行记录列表响应。"""
-    runs = [
-        WorkflowRunListItem(
-            id=workflow_run.id,
-            workflow_name=getattr(workflow_run, "workflow_name", "content_generation"),
-            status=_get_workflow_public_status(workflow_run),
-            current_node=getattr(workflow_run, "current_node", None),
-            user_input=getattr(workflow_run, "user_input", ""),
-            started_at=to_utc_iso(workflow_run.started_at),
-            completed_at=to_utc_iso_or_none(getattr(workflow_run, "completed_at", None)),
-            total_duration_ms=getattr(workflow_run, "total_duration_ms", None),
+    runs: list[WorkflowRunListItem] = []
+    for workflow_run in workflow_runs:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        status = _get_workflow_public_status(workflow_run)
+        runtime_plan = _runtime_plan({}, workflow_run)
+        runs.append(
+            WorkflowRunListItem(
+                id=workflow_run.id,
+                workflow_name=getattr(workflow_run, "workflow_name", "content_generation"),
+                status=status,
+                current_node=getattr(workflow_run, "current_node", None),
+                workflow_definition_id=getattr(workflow_run, "workflow_definition_id", None),
+                workflow_version_id=getattr(workflow_run, "workflow_version_id", None),
+                final_artifact_id=getattr(workflow_run, "final_artifact_id", None),
+                runtime_model=metadata.get("runtime_model"),
+                runtime_plan=runtime_plan,
+                runtime_progress=_runtime_progress({}, workflow_run, status=status),
+                quality_metrics=_quality_metrics(workflow_run),
+                gate=_normalize_gate_state(status, {}, workflow_run),
+                pause=_normalize_pause_state(workflow_run),
+                model_provider_id=metadata.get("model_provider_id"),
+                model_name=metadata.get("model_name"),
+                error=metadata.get("error"),
+                user_input=getattr(workflow_run, "user_input", ""),
+                started_at=to_utc_iso(workflow_run.started_at),
+                completed_at=to_utc_iso_or_none(getattr(workflow_run, "completed_at", None)),
+                total_duration_ms=getattr(workflow_run, "total_duration_ms", None),
+            )
         )
-        for workflow_run in workflow_runs
-    ]
     return WorkflowRunListResponse(runs=runs)
+
+
+def _runtime_plan(state: dict, workflow_run: Any | None = None) -> dict[str, Any]:
+    """返回当前运行实例实际采用的受限运行计划。"""
+    plan = state.get("runtime_plan")
+    if isinstance(plan, dict):
+        return plan
+
+    if workflow_run is not None:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        metadata_plan = metadata.get("runtime_plan")
+        if isinstance(metadata_plan, dict):
+            return metadata_plan
+
+    return canonical_runtime_plan()
+
+
+def _normalize_definition_plan(workflow_context: Any) -> dict[str, Any] | None:
+    """从已发布工作流上下文提取前端可渲染的编排节点。"""
+    context = _coerce_mapping(workflow_context)
+    if not context:
+        return None
+
+    nodes = context.get("nodes")
+    if not isinstance(nodes, list):
+        nodes = []
+
+    normalized_nodes: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        data = _coerce_mapping(node.get("data"))
+        normalized_nodes.append(
+            {
+                "id": node.get("id"),
+                "name": node.get("id"),
+                "label": data.get("label") or node.get("id"),
+                "type": node.get("type"),
+            }
+        )
+
+    return {
+        "workflow_definition_id": context.get("workflow_definition_id"),
+        "workflow_version_id": context.get("workflow_version_id"),
+        "definition_name": context.get("definition_name"),
+        "definition_description": context.get("definition_description"),
+        "version": context.get("version"),
+        "nodes": normalized_nodes,
+        "execution_mode": "published_dsl_runtime",
+        "execution_note": "已发布编排定义会编译为当前引擎支持的受限运行计划；暂未支持的节点类型按五类运行时能力映射执行。",
+    }
+
+
+def _runtime_progress(
+    state: dict,
+    workflow_run: Any | None = None,
+    *,
+    status: WorkflowStatus | None = None,
+) -> dict[str, Any]:
+    """基于运行计划构建前端可直接消费的动态进度摘要。"""
+    plan = _runtime_plan(state, workflow_run)
+    steps = plan.get("steps")
+    normalized_steps: list[dict[str, Any]] = []
+    if isinstance(steps, list):
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            normalized_steps.append(
+                {
+                    "id": step.get("id"),
+                    "label": step.get("label") or step.get("name") or step.get("id"),
+                    "runtime_type": step.get("runtime_type"),
+                    "source_node_id": step.get("source_node_id"),
+                    "source_node_label": step.get("source_node_label"),
+                    "index": index,
+                }
+            )
+
+    current_node = state.get("current_node") or getattr(workflow_run, "current_node", None)
+    current_step_index = next(
+        (
+            step["index"]
+            for step in normalized_steps
+            if current_node is not None and step.get("id") == current_node
+        ),
+        None,
+    )
+    total_steps = len(normalized_steps)
+
+    if status == "completed":
+        completed_step_count = total_steps
+    elif isinstance(current_step_index, int):
+        completed_step_count = current_step_index
+    else:
+        completed_step_count = 0
+
+    percent = (
+        round((completed_step_count / total_steps) * 100)
+        if total_steps > 0
+        else (100 if status == "completed" else 0)
+    )
+
+    return {
+        "execution_mode": plan.get("execution_mode"),
+        "current_step_id": current_node,
+        "current_step_index": current_step_index,
+        "completed_step_count": completed_step_count,
+        "total_steps": total_steps,
+        "percent": max(0, min(100, percent)),
+        "features": plan.get("features") if isinstance(plan.get("features"), dict) else {},
+        "warnings": plan.get("warnings") if isinstance(plan.get("warnings"), list) else [],
+        "steps": normalized_steps,
+    }
+
+
+def _quality_metrics(workflow_run: Any | None) -> dict[str, Any] | None:
+    """读取运行质量指标；历史运行缺少聚合时返回最小统计兜底。"""
+    if workflow_run is None:
+        return None
+
+    metadata = _ensure_workflow_metadata(workflow_run)
+    metrics = metadata.get("quality_metrics")
+    if isinstance(metrics, dict):
+        return metrics
+
+    return {
+        "average_quality_score": None,
+        "quality_score_count": 0,
+        "revisions_requested": 0,
+        "fact_check": None,
+        "tokens": {
+            "total": getattr(workflow_run, "total_tokens", 0),
+            "llm_call_count": getattr(workflow_run, "total_llm_calls", 0),
+        },
+        "latency": {
+            "total_node_duration_ms": getattr(workflow_run, "total_duration_ms", 0),
+            "average_llm_latency_ms": None,
+        },
+        "final_artifact_id": getattr(workflow_run, "final_artifact_id", None),
+        "final_content_hash": None,
+    }
 
 
 # ==================== 运行时上下文 ====================
@@ -315,6 +497,15 @@ async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, di
 
     workflow = get_workflow()
     graph_state = await _get_graph_state(workflow, workflow_run_id)
+    if graph_state.get("state_read_error"):
+        # checkpoint 读取失败必须进入运行记录，避免列表页继续把异常伪装成 running。
+        metadata = _ensure_workflow_metadata(workflow_run)
+        metadata["error"] = graph_state.get("error")
+        metadata["state_read_error"] = graph_state.get("state_read_error")
+        metadata["last_public_status"] = "failed"
+        workflow_run.metadata = metadata
+        workflow_run.status = WorkflowRunStatus.FAILED
+        await store.update_workflow_run(workflow_run)
     status = _extract_workflow_status(workflow, workflow_run, graph_state)
     return store, workflow, workflow_run, graph_state, status
 
@@ -379,12 +570,33 @@ def _simplify_state(
     if current_node:
         simplified["current_node"] = current_node
 
+    simplified["runtime_plan"] = _runtime_plan(state, workflow_run)
+    simplified["runtime_progress"] = _runtime_progress(state, workflow_run, status=status)
+    if workflow_run is not None:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        runtime_model = metadata.get("runtime_model")
+        if isinstance(runtime_model, dict):
+            simplified["runtime_model"] = runtime_model
+        quality_metrics = _quality_metrics(workflow_run)
+        if quality_metrics:
+            simplified["quality_metrics"] = quality_metrics
+    definition_plan = _normalize_definition_plan(state.get("workflow_context"))
+    if definition_plan:
+        simplified["definition_plan"] = definition_plan
+
     error = state.get("error")
     if not error and workflow_run is not None:
         metadata = _ensure_workflow_metadata(workflow_run)
         error = metadata.get("error")
     if error:
         simplified["error"] = error
+
+    final_artifact_id = state.get("final_content_artifact_id") or getattr(
+        workflow_run, "final_artifact_id", None
+    )
+    if final_artifact_id:
+        simplified["final_content_artifact_id"] = final_artifact_id
+        simplified["final_artifact_id"] = final_artifact_id
 
     pause = _normalize_pause_state(workflow_run)
     if pause:
@@ -401,14 +613,21 @@ def _simplify_state(
 
 
 async def _get_graph_state(workflow: Any, workflow_run_id: str) -> dict:
-    """从图检查点读取最新状态，失败时返回空状态"""
+    """从图检查点读取最新状态，失败时返回显式错误状态。"""
     config = {"configurable": {"thread_id": workflow_run_id}}
     try:
         snapshot = await workflow.graph.aget_state(config)
         if snapshot and isinstance(snapshot.values, dict):
             return snapshot.values
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.exception("读取工作流 checkpoint 状态失败: workflow_run_id=%s", workflow_run_id)
+        return {
+            "error": "工作流状态读取失败，请检查运行时 checkpoint 存储。",
+            "state_read_error": {
+                "type": exc.__class__.__name__,
+                "source": "checkpoint",
+            },
+        }
     return {}
 
 
@@ -609,7 +828,8 @@ def _normalize_gate_state(
 
     metadata = _ensure_workflow_metadata(workflow_run) if workflow_run is not None else {}
     gate_metadata = metadata.get("gate") if isinstance(metadata.get("gate"), dict) else {}
-    gate_type = gate_metadata.get("gate_type") or _GATE_STATUS_TO_TYPE[status]
+    raw_gate_type = gate_metadata.get("gate_type") or _GATE_STATUS_TO_TYPE[status]
+    gate_type = _GATE_TYPE_ALIASES.get(str(raw_gate_type), str(raw_gate_type))
 
     if gate_type == "clarification":
         questions = _normalize_clarification_questions(state.get("clarification_questions", []))
@@ -660,6 +880,29 @@ def _normalize_trace_payload(
     )
     if current_node:
         workflow_payload["current_node"] = current_node
+
+    runtime_plan = _runtime_plan(graph_state, workflow_run)
+    workflow_payload["runtime_plan"] = runtime_plan
+    workflow_payload["runtime_progress"] = _runtime_progress(
+        graph_state,
+        workflow_run,
+        status=status,
+    )
+    metadata = _ensure_workflow_metadata(workflow_run)
+    runtime_model = metadata.get("runtime_model")
+    if isinstance(runtime_model, dict):
+        workflow_payload["runtime_model"] = runtime_model
+    quality_metrics = _quality_metrics(workflow_run)
+    if quality_metrics:
+        workflow_payload["quality_metrics"] = quality_metrics
+
+    final_artifact_id = graph_state.get("final_content_artifact_id") or getattr(
+        workflow_run,
+        "final_artifact_id",
+        None,
+    )
+    if final_artifact_id:
+        workflow_payload["final_artifact_id"] = final_artifact_id
 
     pause = _normalize_pause_state(workflow_run)
     if pause:

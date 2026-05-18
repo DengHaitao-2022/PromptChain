@@ -315,6 +315,7 @@ async def parse_intent(state: dict) -> dict:
     workflow_run_id = state["workflow_run_id"]
     workspace_id = state.get("workspace_id")
     model_provider_id = state.get("model_provider_id")
+    model_provider_name = state.get("model_provider_name")
     model_name = state.get("model_name")
     store = get_artifact_store()
 
@@ -336,6 +337,7 @@ async def parse_intent(state: dict) -> dict:
             workspace_id,
             model=model_name,
             model_provider_id=model_provider_id,
+            model_provider_name=model_provider_name,
         )
 
         # 调用 LLM
@@ -359,6 +361,7 @@ async def parse_intent(state: dict) -> dict:
         model_info = await get_current_model_info_for_workspace(
             workspace_id,
             model_provider_id=model_provider_id,
+            model_provider_name=model_provider_name,
             model=model_name,
         )
         llm_call = LLMCallRecord(
