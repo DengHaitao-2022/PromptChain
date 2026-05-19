@@ -44,6 +44,7 @@ from core.errors.codes import (
     get_error_definition,
     get_fallback_code_for_status,
     get_legacy_numeric_code,
+    is_registered_error_code,
 )
 from core.errors.context import (
     REQUEST_ID_HEADER,
@@ -126,6 +127,7 @@ __all__ = [
     "get_request_id",
     "install_error_infrastructure",
     "install_request_context",
+    "is_registered_error_code",
     "map_exception",
     "register_error_handlers",
     "release_request_id",

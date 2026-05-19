@@ -4,7 +4,7 @@
 
 from typing import Any
 
-from core.errors.codes import COMMON_BAD_REQUEST
+from core.errors.codes import COMMON_VALIDATION_ERROR, is_registered_error_code
 
 
 class PromptChainError(Exception):
@@ -19,6 +19,8 @@ class PromptChainError(Exception):
         cause: BaseException | None = None,
     ) -> None:
         super().__init__(message or code)
+        if not is_registered_error_code(code):
+            raise ValueError(f"未注册的 PromptChain 错误码: {code}")
         self.code = code
         self.message = message
         self.details = details or None
@@ -43,4 +45,4 @@ class ValidationFailedError(ApplicationError):
     """请求参数或输入校验失败。"""
 
     def __init__(self, message: str | None = None, details: dict[str, Any] | None = None) -> None:
-        super().__init__(code=COMMON_BAD_REQUEST, message=message, details=details)
+        super().__init__(code=COMMON_VALIDATION_ERROR, message=message, details=details)

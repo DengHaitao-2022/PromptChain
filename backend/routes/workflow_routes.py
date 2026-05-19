@@ -20,7 +20,9 @@ from core.errors.codes import (
     WORKFLOW_STATE_CONFLICT,
     WORKSPACE_CONTEXT_REQUIRED,
 )
+from core.errors.context import resolve_request_id
 from core.errors.exceptions import ApplicationError, DomainError, PromptChainError
+from core.errors.mapping import map_exception
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
 from routes.workflow_helpers import (
@@ -63,6 +65,26 @@ def _format_sse_event(event: str, data: dict, event_id: str | None = None) -> st
     for line in payload.splitlines() or [""]:
         lines.append(f"data: {line}")
     return "\n".join(lines) + "\n\n"
+
+
+def _format_sse_app_error_event(
+    exc: Exception,
+    *,
+    request: Request,
+    workflow_run_id: str,
+) -> str:
+    """复用统一错误映射输出 SSE 应用错误，避免使用 EventSource 保留的 error 事件名。"""
+
+    mapped = map_exception(
+        exc,
+        request_id=resolve_request_id(request),
+        path=str(request.url.path),
+        method=request.method,
+    )
+    payload = mapped.envelope.model_dump(mode="json")
+    payload["status"] = mapped.http_status
+    payload["workflow_run_id"] = workflow_run_id
+    return _format_sse_event("app_error", payload)
 
 
 async def _build_workflow_event_snapshot(workflow_run_id: str) -> dict:
@@ -526,24 +548,27 @@ async def stream_workflow_events(workflow_run_id: str, request: Request):
                     try:
                         snapshot = await _build_workflow_event_snapshot(workflow_run_id)
                     except PromptChainError as exc:
-                        yield _format_sse_event(
-                            "error",
-                            {"code": exc.code, "message": exc.message or exc.code},
+                        yield _format_sse_app_error_event(
+                            exc,
+                            request=request,
+                            workflow_run_id=workflow_run_id,
                         )
                         break
                     except HTTPException as exc:
-                        yield _format_sse_event(
-                            "error",
-                            {"detail": exc.detail, "status_code": exc.status_code},
+                        yield _format_sse_app_error_event(
+                            exc,
+                            request=request,
+                            workflow_run_id=workflow_run_id,
                         )
                         break
-                    except Exception:
+                    except Exception as exc:
                         logger.exception(
                             "工作流 SSE 快照生成失败: workflow_run_id=%s", workflow_run_id
                         )
-                        yield _format_sse_event(
-                            "error",
-                            {"detail": INTERNAL_SERVER_ERROR},
+                        yield _format_sse_app_error_event(
+                            exc,
+                            request=request,
+                            workflow_run_id=workflow_run_id,
                         )
                         break
 

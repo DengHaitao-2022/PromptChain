@@ -1,7 +1,9 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -10,7 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import app
 from core.errors.codes import (
     AUTH_UNAUTHENTICATED,
+    COMMON_INTERNAL_ERROR,
     COMMON_NOT_FOUND,
+    COMMON_VALIDATION_ERROR,
     INFRA_DATABASE_ERROR,
     INFRA_EMAIL_SERVICE_ERROR,
     WORKFLOW_NOT_FOUND,
@@ -18,13 +22,20 @@ from core.errors.codes import (
     WORKFLOW_VERSION_NOT_FOUND,
     WORKSPACE_ACCESS_DENIED,
     WORKSPACE_CONTEXT_REQUIRED,
+    WORKSPACE_MEMBER_CONFLICT,
 )
 from core.errors.context import REQUEST_ID_HEADER
-from core.errors.exceptions import DomainError, InfrastructureError
+from core.errors.exceptions import (
+    DomainError,
+    InfrastructureError,
+    PromptChainError,
+    ValidationFailedError,
+)
 from core.errors.handlers import install_error_infrastructure
 from core.errors.mapping import map_exception
 from core.errors.models import ErrorEnvelope
 from models.result import Result
+from routes.workflow_routes import _format_sse_app_error_event
 from services.permission_service import PermissionService
 
 
@@ -82,6 +93,46 @@ def test_map_exception_redacts_infrastructure_error_details():
     assert mapped.context.internal_cause == "password authentication failed"
 
 
+def test_promptchain_error_rejects_unregistered_code_at_construction():
+    with pytest.raises(ValueError, match="未注册的 PromptChain 错误码"):
+        PromptChainError(code="TYPO_UNREGISTERED_CODE", message="不应被接受")
+
+
+def test_map_exception_falls_back_when_promptchain_error_code_is_unregistered():
+    error = PromptChainError.__new__(PromptChainError)
+    error.code = "TYPO_UNREGISTERED_CODE"
+    error.message = "不应泄露给客户端"
+    error.details = {"secret": "do-not-expose"}
+    error.cause = None
+
+    mapped = map_exception(
+        error,
+        request_id="req-invalid-code-001",
+        path="/api/_tests",
+        method="GET",
+    )
+
+    assert mapped.http_status == 500
+    assert mapped.envelope.code == COMMON_INTERNAL_ERROR
+    assert mapped.envelope.message == "服务器开小差了，请稍后重试"
+    assert mapped.envelope.details is None
+    assert mapped.context.internal_cause == "未注册错误码: TYPO_UNREGISTERED_CODE"
+
+
+def test_validation_failed_error_maps_to_validation_error_status():
+    mapped = map_exception(
+        ValidationFailedError("字段校验失败", details={"field": "title"}),
+        request_id="req-validation-001",
+        path="/api/_tests",
+        method="POST",
+    )
+
+    assert mapped.http_status == 422
+    assert mapped.envelope.code == COMMON_VALIDATION_ERROR
+    assert mapped.envelope.message == "字段校验失败"
+    assert mapped.envelope.details == {"field": "title"}
+
+
 def test_result_keeps_legacy_shape_as_error_compatibility_layer():
     error = ErrorEnvelope(
         code=COMMON_NOT_FOUND,
@@ -94,6 +145,74 @@ def test_result_keeps_legacy_shape_as_error_compatibility_layer():
     assert result.code == 40400
     assert result.message == "资源不存在"
     assert result.data is None
+
+
+def test_result_legacy_mapping_keeps_workspace_client_errors_as_4xx():
+    error = ErrorEnvelope(
+        code=WORKSPACE_CONTEXT_REQUIRED,
+        message="请先选择工作空间",
+        request_id="req-legacy-workspace-001",
+    )
+    conflict_error = ErrorEnvelope(
+        code=WORKSPACE_MEMBER_CONFLICT,
+        message="成员已存在",
+        request_id="req-legacy-member-001",
+    )
+
+    assert Result.from_error_envelope(error).code == 40000
+    assert Result.from_error_envelope(conflict_error).code == 40000
+
+
+class _FakeRequestUrl:
+    path = "/api/workflow/run-1/events"
+
+
+class _FakeRequestState:
+    request_id = "req-sse-001"
+
+
+class _FakeRequest:
+    def __init__(self):
+        self.headers = {}
+        self.state = _FakeRequestState()
+        self.url = _FakeRequestUrl()
+        self.method = "GET"
+
+
+def _parse_sse_payload(event: str) -> dict:
+    data_lines = [
+        line.removeprefix("data: ") for line in event.splitlines() if line.startswith("data: ")
+    ]
+    return json.loads("\n".join(data_lines))
+
+
+def test_sse_app_error_event_uses_unified_redacted_envelope():
+    event = _format_sse_app_error_event(
+        InfrastructureError(
+            code=INFRA_EMAIL_SERVICE_ERROR,
+            message="smtp://user:secret@example.com failed",
+            details={
+                "service": "smtp",
+                "operation": "send",
+                "raw_error": "password=secret",
+            },
+            cause=RuntimeError("password=secret"),
+        ),
+        request=_FakeRequest(),
+        workflow_run_id="run-1",
+    )
+
+    payload = _parse_sse_payload(event)
+
+    assert event.startswith("event: app_error\n")
+    assert payload["success"] is False
+    assert payload["code"] == INFRA_EMAIL_SERVICE_ERROR
+    assert payload["message"] == "邮件服务暂时不可用，请稍后重试"
+    assert payload["request_id"] == "req-sse-001"
+    assert payload["details"] == {"service": "smtp", "operation": "send"}
+    assert payload["status"] == 503
+    assert payload["workflow_run_id"] == "run-1"
+    assert "secret" not in event
 
 
 def test_me_without_auth_returns_unified_auth_error_envelope():

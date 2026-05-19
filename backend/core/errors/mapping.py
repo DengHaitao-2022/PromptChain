@@ -20,6 +20,7 @@ from core.errors.codes import (
     ErrorCodeDefinition,
     get_error_definition,
     get_fallback_code_for_status,
+    is_registered_error_code,
 )
 from core.errors.context import sanitize_infrastructure_details, summarize_internal_cause
 from core.errors.exceptions import InfrastructureError, PromptChainError
@@ -142,7 +143,24 @@ def map_exception(
         )
 
     if isinstance(exc, PromptChainError):
-        definition = get_error_definition(exc.code)
+        if is_registered_error_code(exc.code):
+            definition = get_error_definition(exc.code)
+        else:
+            definition = get_error_definition(COMMON_INTERNAL_ERROR)
+            return MappedError(
+                http_status=definition.http_status,
+                envelope=_build_envelope(
+                    definition=definition,
+                    request_id=request_id,
+                ),
+                context=_build_context(
+                    request_id=request_id,
+                    path=path,
+                    method=method,
+                    code=definition.code,
+                    internal_cause=exc.cause or RuntimeError(f"未注册错误码: {exc.code}"),
+                ),
+            )
         details = exc.details
         message = exc.message or definition.default_message
 

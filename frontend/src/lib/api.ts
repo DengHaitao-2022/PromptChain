@@ -103,6 +103,46 @@ function normalizeDetails(value: unknown, code: string): ApiErrorDetails {
   return null;
 }
 
+function legacyResultStatus(code: number): number {
+  if (code >= 50000) {
+    return 500;
+  }
+  if (code >= 40900) {
+    return 409;
+  }
+  if (code >= 40400) {
+    return 404;
+  }
+  if (code >= 40300) {
+    return 403;
+  }
+  if (code >= 40100) {
+    return 401;
+  }
+  return 400;
+}
+
+function createApiErrorFromEnvelope(
+  payload: Record<string, unknown>,
+  fallbackStatus: number
+): PromptChainApiError | null {
+  const code = asString(payload.code);
+  if (!code) {
+    return null;
+  }
+
+  return new PromptChainApiError({
+    code,
+    message: asString(payload.message) ?? code,
+    requestId: asString(payload.request_id) ?? asString(payload.requestId),
+    details: normalizeDetails(payload.details, code),
+    status:
+      typeof payload.status === 'number' && Number.isFinite(payload.status)
+        ? payload.status
+        : fallbackStatus,
+  });
+}
+
 function getRequestId(response: Response, payload: unknown): string | null {
   if (isRecord(payload)) {
     const requestId = asString(payload.request_id) ?? asString(payload.requestId);
@@ -145,14 +185,24 @@ async function createApiError(response: Response): Promise<PromptChainApiError> 
   const payload = await readResponsePayload(response);
 
   if (isRecord(payload) && payload.success === false && typeof payload.code === 'string') {
-    const message = asString(payload.message) ?? `HTTP ${response.status}`;
-    return new PromptChainApiError({
-      code: payload.code,
-      message,
-      requestId: getRequestId(response, payload),
-      details: normalizeDetails(payload.details, payload.code),
-      status: response.status,
-    });
+    const requestId = getRequestId(response, payload);
+    return (
+      createApiErrorFromEnvelope(
+        {
+          ...payload,
+          request_id: requestId,
+          status: response.status,
+        },
+        response.status
+      ) ??
+      new PromptChainApiError({
+        code: 'COMMON_HTTP_ERROR',
+        message: `HTTP ${response.status}`,
+        requestId,
+        details: null,
+        status: response.status,
+      })
+    );
   }
 
   const legacyDetail = isRecord(payload) ? payload.detail : null;
@@ -323,6 +373,18 @@ export interface WorkflowStreamErrorEvent {
   detail: string;
   mode?: 'generate' | 'refine' | string;
   timestamp?: string;
+}
+
+export interface WorkflowAppErrorEvent {
+  success?: false;
+  code: string;
+  message: string;
+  request_id?: string | null;
+  requestId?: string | null;
+  details?: ApiErrorDetails;
+  data?: null;
+  status?: number;
+  workflow_run_id?: string;
 }
 
 export interface WorkflowEventHandlers {
@@ -583,12 +645,13 @@ async function requestResult<T>(
   const result = await request<ApiResult<T>>(endpoint, options);
 
   if (result.code !== 0) {
+    const code = `COMMON_RESULT_${result.code}`;
     throw new PromptChainApiError({
-      code: `COMMON_RESULT_${result.code}`,
+      code,
       message: result.message || '请求失败',
       requestId: null,
-      details: null,
-      status: 200,
+      details: normalizeDetails(result.data, code),
+      status: legacyResultStatus(result.code),
     });
   }
 
@@ -658,7 +721,7 @@ export const workflowApi = {
     }),
 
   // 获取运行记录列表
-    getRuns: () => request<{ runs: WorkflowRunSummary[] }>('/workflow/runs'),
+  getRuns: () => request<{ runs: WorkflowRunSummary[] }>('/workflow/runs'),
 
   // 获取工作流状态
   getStatus: (workflowRunId: string) =>
@@ -730,6 +793,26 @@ export const workflowApi = {
       if (payload) {
         handlers.onStreamError?.(payload);
       }
+    });
+
+    source.addEventListener('app_error', (event) => {
+      const payload = parsePayload<WorkflowAppErrorEvent>(event as MessageEvent<string>);
+      if (!payload || !isRecord(payload)) {
+        return;
+      }
+
+      const errorPayload: Record<string, unknown> = payload;
+      const apiError =
+        createApiErrorFromEnvelope(errorPayload, payload.status ?? 500) ??
+        new PromptChainApiError({
+          code: 'COMMON_HTTP_ERROR',
+          message: '工作流实时连接返回错误',
+          requestId: null,
+          details: null,
+          status: 500,
+        });
+      handlers.onError?.(apiError);
+      source.close();
     });
 
     source.addEventListener('error', () => {
