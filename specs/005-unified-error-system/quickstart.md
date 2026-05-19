@@ -11,6 +11,20 @@
 
 ## 2. 启动本地环境
 
+若本轮只验证后端错误契约，可以先跑不依赖真实模型的 fake smoke，确认基础链路不是被 provider key 阻断：
+
+```bash
+cd /Users/hi/Developer/03-personal/PromptChain/backend
+uv run pytest tests/test_llm_provider.py -q
+DEFAULT_LLM_PROVIDER=fake uv run python ../scripts/smoke/acceptance_smoke.py
+```
+
+记录规则：
+
+- `tests/test_llm_provider.py` 可进 CI，用于确认 fake provider 不依赖真实 OpenAI/Anthropic/Gemini key
+- `scripts/smoke/acceptance_smoke.py` 需要 PostgreSQL 和后端服务；若 PostgreSQL/Redis 不可用，应记录为 `blocked`
+- 真实 provider smoke 仍需人工或独立 live job 执行；未真实运行时必须记录 `manual_live_provider: not_run`
+
 ### 后端
 
 ```bash
