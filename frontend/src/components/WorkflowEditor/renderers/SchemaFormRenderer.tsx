@@ -32,25 +32,40 @@ function getInnerZodType(schema: z.ZodTypeAny): z.ZodTypeAny {
 }
 
 export default function SchemaFormRenderer({ schema, defaultValues, onChange }: SchemaFormRendererProps) {
-    const { control, watch, formState: { errors } } = useForm({
+    const { control, getValues, subscribe, formState: { errors } } = useForm({
         resolver: zodResolver(schema as ZodResolverSchema),
         defaultValues,
         mode: 'onChange' // 边填边校验，并在 UI 上及时反馈错误
     });
 
     // 监控表单所有值变化并触发外部 onChange
-    const formValues = watch();
     const prevValuesRef = useRef<string | undefined>(undefined);
+    const onChangeRef = useRef(onChange);
 
     useEffect(() => {
+        onChangeRef.current = onChange;
+    }, [onChange]);
+
+    useEffect(() => {
+        const notifyChange = (values: Record<string, unknown>) => {
+            const currentStr = JSON.stringify(values);
+            if (currentStr !== prevValuesRef.current) {
+                prevValuesRef.current = currentStr;
+                onChangeRef.current(values);
+            }
+        };
+
         // 如果当前有错误，可以选择不向上传递，或者由上层决定如何处理
         // 为了方便自动保存，还是把最新值传上去
-        const currentStr = JSON.stringify(formValues);
-        if (currentStr !== prevValuesRef.current) {
-            prevValuesRef.current = currentStr;
-            onChange(formValues);
-        }
-    }, [formValues, onChange]);
+        notifyChange(getValues());
+
+        return subscribe({
+            formState: { values: true },
+            callback: ({ values }) => {
+                notifyChange(values);
+            },
+        });
+    }, [getValues, subscribe]);
 
     // 从 Zod Object schema 中解析字段进行渲染
     const fields = useMemo(() => {

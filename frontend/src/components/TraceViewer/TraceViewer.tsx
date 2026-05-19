@@ -41,6 +41,18 @@ function asNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function isWorkflowGateState(value: unknown): value is WorkflowGateState {
+    if (!isRecord(value)) {
+        return false;
+    }
+
+    const gateType = value.gate_type;
+    return (
+        (gateType === 'clarification' || gateType === 'outline_approval' || gateType === 'fact_check') &&
+        Array.isArray(value.questions)
+    );
+}
+
 function formatTime(timestamp: unknown): string {
     if (typeof timestamp !== 'string' || !timestamp) {
         return '-';
@@ -156,9 +168,7 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
     const [expandedNodeId, setExpandedNodeId] = React.useState<string | null>(
         focusedNodeId ?? null
     );
-    const gate = isRecord(trace.workflow.gate)
-        ? (trace.workflow.gate as WorkflowGateState)
-        : null;
+    const gate = isWorkflowGateState(trace.workflow.gate) ? trace.workflow.gate : null;
 
     React.useEffect(() => {
         if (focusedNodeId) {

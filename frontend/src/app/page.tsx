@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
@@ -179,7 +180,15 @@ function HomeAccountAction() {
     return (
       <Link href="/console" className={styles.userProfileButton} aria-label={label} title={label}>
         {user.avatar_url ? (
-          <img src={user.avatar_url} alt="" className={styles.userAvatarImage} />
+          <Image
+            src={user.avatar_url}
+            alt=""
+            width={36}
+            height={36}
+            sizes="36px"
+            className={styles.userAvatarImage}
+            unoptimized
+          />
         ) : (
           <span className={styles.userAvatarInitial}>{getUserInitial(user)}</span>
         )}
