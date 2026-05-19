@@ -7,12 +7,12 @@
 PR 进入 `dev` 或 `main` 时会触发 `.github/workflows/pr-ci.yml`：
 
 - 基础设施：校验 workflow YAML 与 `docker-compose.prod.yml` 展开结果。
-- 后端：`uv sync --all-extras --dev --no-install-project`、`uv run pytest`；当 PR 修改 `backend/**/*.py` 时，额外执行阻塞型 `uvx ruff check .`。
+- 后端：当 PR 修改 `backend/**/*.py` 时，执行与根 `.pre-commit-config.yaml` 对齐的阻塞型 Ruff gate：`uvx ruff==0.14.10 check backend --config backend/ruff.toml` 和 `uvx ruff==0.14.10 format backend --check --config backend/ruff.toml`。
 - 前端：当 PR 修改 `frontend/src/**` 或前端构建配置时，执行阻塞型 `npm ci`、`npm run lint`、`npx tsc --noEmit`、`npm run build`。
 
 该 workflow 可在 GitHub 分支保护中配置为必需状态检查。CodeQL 仍由 `.github/workflows/codeql.yml` 独立运行。
 
-当前 `dev` 上仍存在既有 Ruff import 排序债、前端 ESLint 源码债和前端 TypeScript 类型债。为避免生产部署基线 PR 越权修改业务源码，源码质量检查暂按变更范围触发；完成源码质量基线清理后，可将 Ruff、ESLint、typecheck 和 build 升级为全量阻塞 gate。
+当前 `dev` 上仍存在既有后端 pytest 契约/运行态测试债、前端 ESLint 源码债和前端 TypeScript 类型债。为避免生产部署基线 PR 越权修改业务源码，源码质量检查暂按变更范围触发，pytest 暂不纳入本 PR 的阻塞 gate；完成源码质量与测试基线清理后，可将 pytest、Ruff、ESLint、typecheck 和 build 升级为全量阻塞 gate。
 
 ## 镜像
 
@@ -100,12 +100,14 @@ docker compose -f docker-compose.prod.yml ps
 cd backend
 uv sync --all-extras --dev --no-install-project
 JWT_SECRET_KEY=test-secret uv run pytest
-# CI 中会注入测试用 JWT_SECRET_KEY；本地也应使用非生产密钥。
+# CI 暂不把 pytest 作为本 PR 的阻塞 gate；本地仍建议使用非生产密钥运行。
 # 若本次修改 backend/**/*.py，再执行：
-uvx ruff check .
+cd ..
+uvx ruff==0.14.10 check backend --config backend/ruff.toml
+uvx ruff==0.14.10 format backend --check --config backend/ruff.toml
 
 # 前端质量检查；仅当前端源码或构建配置变更时执行
-cd ../frontend
+cd frontend
 npm ci
 npm run lint
 npx tsc --noEmit
