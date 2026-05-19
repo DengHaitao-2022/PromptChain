@@ -10,11 +10,17 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import and_, desc, func
 from sqlalchemy.future import select
 
+from core.errors.codes import (
+    ADMIN_RESOURCE_NOT_FOUND,
+    COMMON_BAD_REQUEST,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from core.time import app_day_start_as_utc_naive, utc_now_naive
 from db.postgres_store import get_postgres_store
 from models.admin_models import (
@@ -67,7 +73,7 @@ async def get_workspace_id_from_request(request: Request) -> str:
     payload = await get_current_user(request)
     workspace_id = payload.get("workspace_id")
     if not workspace_id:
-        raise HTTPException(status_code=400, detail="请先选择工作空间")
+        raise ApplicationError(code=WORKSPACE_CONTEXT_REQUIRED, message="请先选择工作空间")
     return workspace_id
 
 
@@ -317,7 +323,10 @@ async def update_user_status(request: Request, target_user_id: str, body: Update
     这里的“停用”只影响当前工作空间，不会修改全局用户账号状态。
     """
     if body.status not in {UserStatus.ACTIVE, UserStatus.SUSPENDED}:
-        raise HTTPException(status_code=400, detail="仅支持启用或暂停当前工作空间访问")
+        raise ApplicationError(
+            code=COMMON_BAD_REQUEST,
+            message="仅支持启用或暂停当前工作空间访问",
+        )
 
     payload = await get_current_user(request)
     user_id = payload["sub"]
@@ -339,19 +348,23 @@ async def update_user_status(request: Request, target_user_id: str, body: Update
         row = result.one_or_none()
 
         if not row:
-            raise HTTPException(status_code=404, detail="目标用户不在当前工作空间")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="目标用户不在当前工作空间")
 
         membership, user = row
 
         if target_user_id == user_id:
-            raise HTTPException(status_code=400, detail="不能修改自己的工作空间访问状态")
+            raise ApplicationError(
+                code=COMMON_BAD_REQUEST, message="不能修改自己的工作空间访问状态"
+            )
 
         current_role, is_suspended = resolve_membership_role(membership.role)
         if not current_role:
-            raise HTTPException(status_code=400, detail="成员角色状态无效")
+            raise ApplicationError(code=COMMON_BAD_REQUEST, message="成员角色状态无效")
 
         if current_role.value == "owner":
-            raise HTTPException(status_code=400, detail="不能修改拥有者的工作空间访问状态")
+            raise ApplicationError(
+                code=COMMON_BAD_REQUEST, message="不能修改拥有者的工作空间访问状态"
+            )
 
         if body.status == UserStatus.SUSPENDED and is_suspended:
             return {
@@ -549,7 +562,7 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
         provider = result.scalar_one_or_none()
 
         if not provider:
-            raise HTTPException(status_code=404, detail="模型供应商配置不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="模型供应商配置不存在")
 
         if body.name is not None:
             provider.name = body.name
@@ -646,7 +659,7 @@ async def test_model_provider_config(
         provider = result.scalar_one_or_none()
 
         if not provider:
-            raise HTTPException(status_code=404, detail="模型供应商配置不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="模型供应商配置不存在")
 
         return await test_model_provider(
             provider,
@@ -683,7 +696,7 @@ async def delete_model_provider(request: Request, provider_id: str):
         provider = result.scalar_one_or_none()
 
         if not provider:
-            raise HTTPException(status_code=404, detail="模型供应商配置不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="模型供应商配置不存在")
 
         await log_audit(
             session,
@@ -813,7 +826,7 @@ async def delete_secret(request: Request, secret_id: str):
         secret = result.scalar_one_or_none()
 
         if not secret:
-            raise HTTPException(status_code=404, detail="密钥不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="密钥不存在")
 
         await log_audit(
             session,
@@ -966,7 +979,7 @@ async def revoke_api_key(request: Request, key_id: str):
         api_key = result.scalar_one_or_none()
 
         if not api_key:
-            raise HTTPException(status_code=404, detail="API Key 不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="API Key 不存在")
 
         api_key.revoked_at = utc_now_naive()
 

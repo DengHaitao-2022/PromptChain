@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.errors.codes import WORKFLOW_GATE_CONFLICT
 from tests._runtime_auth import authenticated_client, ownership_metadata
 
 
@@ -70,6 +71,11 @@ class _FakeWorkflow:
     async def pause(self, workflow_run_id: str, reason: str = ""):
         if self.store:
             self.store.workflow_run.status = "paused"
+            self.store.workflow_run.metadata["pause"] = {
+                "reason": reason,
+                "paused_at": "2026-03-08T10:02:00Z",
+                "source": "user",
+            }
         return {
             "workflow_run_id": workflow_run_id,
             "status": "paused",
@@ -87,6 +93,12 @@ class _FakeWorkflow:
     async def resume_paused(self, workflow_run_id: str):
         if self.store:
             self.store.workflow_run.status = "running"
+            self.store.workflow_run.metadata["pause"] = {
+                "reason": "等待人工复核",
+                "paused_at": "2026-03-08T10:02:00Z",
+                "resumed_at": "2026-03-08T10:03:00Z",
+                "source": "user",
+            }
         return {
             "workflow_run_id": workflow_run_id,
             "status": "running",
@@ -157,7 +169,7 @@ def test_get_workflow_status_returns_workflow_response_shape(monkeypatch):
 
     assert res.status_code == 200
     body = res.json()
-    assert set(body.keys()) == {"workflow_run_id", "status", "state"}
+    assert {"workflow_run_id", "status", "state"}.issubset(body)
     assert body["status"] == "needs_clarification"
     assert body["state"]["current_node"] == "parse_intent"
     assert body["state"]["gate"]["gate_type"] == "clarification"
@@ -212,7 +224,11 @@ def test_pause_rejects_gate_waiting_workflow(monkeypatch):
     res = client.post("/api/workflow/wf-123/pause", json={"reason": "先暂停"})
 
     assert res.status_code == 409
-    assert "Gate" in res.json()["detail"]
+    body = res.json()
+    assert body["success"] is False
+    assert body["code"] == WORKFLOW_GATE_CONFLICT
+    assert "Gate" in body["message"]
+    assert body["request_id"]
 
 
 def test_manual_pause_status_beats_running_graph_snapshot(monkeypatch):

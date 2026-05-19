@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
+from core.errors import install_error_infrastructure
 
 
 def create_app() -> FastAPI:
@@ -31,6 +32,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    install_error_infrastructure(application)
 
     # 注册路由
     _register_routes(application)

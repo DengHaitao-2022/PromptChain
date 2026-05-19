@@ -14,6 +14,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 import routes.workflow_helpers as workflow_helpers
+from core.errors.codes import (
+    WORKFLOW_GATE_CONFLICT,
+    WORKFLOW_NOT_FOUND,
+    WORKFLOW_STATE_CONFLICT,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.exceptions import ApplicationError, DomainError, PromptChainError
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
 from routes.workflow_helpers import (
@@ -105,7 +112,10 @@ async def _audit_actor_context(request: Request, workflow_run) -> tuple[str, str
     metadata = workflow_helpers._ensure_workflow_metadata(workflow_run) if workflow_run else {}
     workspace_id = metadata.get("workspace_id") or user.get("workspace_id")
     if not user_id or not workspace_id:
-        raise HTTPException(status_code=400, detail="缺少审计所需的用户或工作空间上下文")
+        raise ApplicationError(
+            code=WORKSPACE_CONTEXT_REQUIRED,
+            message="缺少审计所需的用户或工作空间上下文",
+        )
     return user_id, workspace_id
 
 
@@ -189,6 +199,8 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
             state=result["state"],
             workflow_run=workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except ValueError as exc:
@@ -210,12 +222,15 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
         )
 
         if status in _GATE_STATUSES:
-            raise HTTPException(
-                status_code=409,
-                detail="当前工作流正在等待人工 Gate，请使用对应审批接口继续。",
+            raise DomainError(
+                code=WORKFLOW_GATE_CONFLICT,
+                message="当前工作流正在等待人工 Gate，请使用对应审批接口继续。",
             )
         if status in {"completed", "failed"}:
-            raise HTTPException(status_code=409, detail="当前工作流已结束，无法暂停。")
+            raise DomainError(
+                code=WORKFLOW_STATE_CONFLICT,
+                message="当前工作流已结束，无法暂停。",
+            )
         if status == "paused":
             return _build_workflow_response(
                 workflow_run_id=workflow_run_id,
@@ -246,6 +261,8 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except ValueError as e:
@@ -268,12 +285,15 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
         raw_status = _get_workflow_run_status(workflow_run)
 
         if status in _GATE_STATUSES:
-            raise HTTPException(
-                status_code=409,
-                detail="当前工作流处于 Gate 等待态，请使用澄清或审批接口继续。",
+            raise DomainError(
+                code=WORKFLOW_GATE_CONFLICT,
+                message="当前工作流处于 Gate 等待态，请使用澄清或审批接口继续。",
             )
         if status != "paused" and raw_status != "paused":
-            raise HTTPException(status_code=409, detail="当前工作流未处于手动暂停状态。")
+            raise DomainError(
+                code=WORKFLOW_STATE_CONFLICT,
+                message="当前工作流未处于手动暂停状态。",
+            )
 
         result = await workflow.resume_paused(workflow_run_id)
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
@@ -294,6 +314,8 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except ValueError as e:
@@ -352,6 +374,8 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -396,6 +420,8 @@ async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRe
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -443,6 +469,8 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -469,6 +497,8 @@ async def list_workflow_runs(request: Request):
             user_id=visible_user_id,
         )
         return _build_workflow_run_list_response(workflow_runs)
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -495,6 +525,12 @@ async def stream_workflow_events(workflow_run_id: str, request: Request):
                 if time.monotonic() >= next_snapshot_at:
                     try:
                         snapshot = await _build_workflow_event_snapshot(workflow_run_id)
+                    except PromptChainError as exc:
+                        yield _format_sse_event(
+                            "error",
+                            {"code": exc.code, "message": exc.message or exc.code},
+                        )
+                        break
                     except HTTPException as exc:
                         yield _format_sse_event(
                             "error",
@@ -592,6 +628,8 @@ async def get_rerun_options(workflow_run_id: str, request: Request):
         rerun_service = get_rerun_service()
         options = await rerun_service.get_rerun_options(workflow_run_id)
         return {"options": options}
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -679,6 +717,8 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
             "status": result["status"],
             "state": simplified_state,
         }
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except ValueError as e:
@@ -698,6 +738,8 @@ async def get_rerun_history(workflow_run_id: str, request: Request):
         rerun_service = get_rerun_service()
         history = await rerun_service.get_rerun_history(workflow_run_id)
         return {"history": history}
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -717,7 +759,10 @@ async def export_workflow_docx(workflow_run_id: str, request: Request):
         _, _, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
 
         if status != "completed":
-            raise HTTPException(status_code=409, detail="仅已完成的工作流支持导出 DOCX。")
+            raise DomainError(
+                code=WORKFLOW_STATE_CONFLICT,
+                message="仅已完成的工作流支持导出 DOCX。",
+            )
 
         trace = await get_trace_service().get_workflow_trace(workflow_run_id)
         payload = build_workflow_export_payload(
@@ -726,7 +771,10 @@ async def export_workflow_docx(workflow_run_id: str, request: Request):
             workflow_name=getattr(workflow_run, "workflow_name", None),
         )
         if not payload.sections:
-            raise HTTPException(status_code=404, detail="当前工作流没有可导出的最终产物。")
+            raise DomainError(
+                code=WORKFLOW_NOT_FOUND,
+                message="当前工作流没有可导出的最终产物。",
+            )
 
         buffer = build_docx(payload)
         filename = f"PromptChain-{workflow_run_id[:8]}-最终产物.docx"
@@ -742,6 +790,8 @@ async def export_workflow_docx(workflow_run_id: str, request: Request):
                 )
             },
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except ImportError as exc:
