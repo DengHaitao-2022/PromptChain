@@ -54,7 +54,7 @@ class IntentCard(BaseModel):
 
     # 风格约束
     tone: Tone = Field(default=Tone.CASUAL, description="语气风格")
-    length: int = Field(default=1500, ge=100, le=10000, description="目标字数")
+    length: int = Field(default=1500, ge=100, le=100000, description="目标字数")
 
     # 内容约束
     must_include: list[str] = Field(default_factory=list, description="必须包含的元素/案例")

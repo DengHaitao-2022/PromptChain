@@ -204,7 +204,7 @@ def _normalize_intent_card_payload(payload: dict) -> dict:
     data["tone"] = _coerce_tone(raw_tone)
 
     length = _coerce_length(raw_length, 1500)
-    data["length"] = min(10000, max(100, length))
+    data["length"] = min(100000, max(100, length))
 
     uncertainties = data.get("uncertainties") or []
     if not isinstance(uncertainties, list):
@@ -232,9 +232,9 @@ def _normalize_intent_card_payload(payload: dict) -> dict:
     if raw_tone and str(raw_tone).strip() not in valid_tone_values:
         preserved_constraints.append(f"原始风格要求：{raw_tone}")
 
-    if length > 10000:
+    if length > 100000:
         preserved_constraints.append(
-            f"用户期望篇幅：{length} 字；当前单次生成上限为 10000 字，后续应按章节/分批扩展。"
+            f"用户期望篇幅：{length} 字；当前单次生成上限为 100000 字，后续应按章节/分批扩展。"
         )
 
     if preserved_constraints:
