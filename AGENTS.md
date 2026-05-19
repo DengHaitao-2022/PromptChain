@@ -98,7 +98,7 @@ API 客户端集中在：
 当前内容工作流链路默认走 **PostgreSQL-backed runtime store**。只有显式设置 `RUNTIME_STORE_BACKEND=memory` 时才回退到内存实现。
 
 这意味着：
-- `dev@c396a48` 的默认基线已经具备运行态持久化
+- `dev@8218f54` 的默认基线已经具备运行态持久化
 - 内存 store 现在只是开发回退，不再是主线事实
 - `backend/orm/*` 已进入当前仓库历史，可作为 ORM 目录事实源；本地未跟踪内容仍不应反向覆盖仓库现实
 
@@ -110,7 +110,7 @@ API 客户端集中在：
 - HttpOnly Cookie：`access_token` + `refresh_token`
 - Access Token 默认 15 分钟，Refresh Token 7 天
 - 注册后需邮箱验证激活账号
-- `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 的页面闭环已在 `dev@c396a48`
+- `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 的页面闭环已在 `dev@8218f54`
 
 关键文件：
 - `backend/routes/auth_routes.py`
@@ -228,7 +228,7 @@ specify init --here --ai codex --force
 
 ---
 
-## 6. 当前实现状态评估（以 `dev@c396a48` 为准）
+## 6. 当前实现状态评估（以 `dev@8218f54` 为准）
 
 1. 运行态主链路已在主线
 - `WorkflowResponse`、pause/resume、clarify、outline approval、fact-check approval、rerun、rerun-history 都已在 `backend/routes/workflow_routes.py` 落地。
@@ -240,7 +240,8 @@ specify init --here --ai codex --force
 
 3. 内容生成首页与详情页闭环已在主线
 - 首页 `frontend/src/app/page.tsx` 已支持已发布工作流与版本选择，并可直接启动任务。
-- 详情页 `frontend/src/app/workflow/[id]/page.tsx` 已接通 Gate、pause/resume、trace、意图卡、提纲、终稿与事实核查审批。
+- 首页已通过 `frontend/src/lib/api.ts` 的 `workflowApi` 读取工作流、版本、模型供应商并启动任务，不再把首页直接 `fetch` 视为主线残口。
+- 详情页 `frontend/src/app/workflow/[id]/page.tsx` 已接通 Gate、pause/resume、trace、意图卡、提纲、终稿、事实核查审批、节点重跑、流式内容跟随与 DOCX 导出。
 
 4. 工作流编辑/发布闭环已在主线
 - `backend/routes/workflow_definition_routes.py`、`backend/routes/workflow_version_routes.py` 与 `frontend/src/app/console/workflows/*` 已支持 CRUD、validate、publish、compare、restore 和已发布状态展示。
@@ -248,11 +249,15 @@ specify init --here --ai codex --force
 5. RBAC 与成员管理已在主线
 - `viewer / editor / admin / owner` 权限矩阵、控制台布局守卫、成员管理页、工作空间级运行态归属保护均已并入 `dev`。
 
-6. 当前剩余主线仅为四组任务
-- `T036/T037`：`frontend/src/app/console/runs/page.tsx` 仍是占位实现，US4 的总览页监控/回放入口尚未收口。
-- `T005/T011`：`frontend/src/lib/api.ts` 仍未完全成为首页/运行态的唯一客户端入口；首页列表/版本/启动仍有直接 `fetch` 逻辑。
-- `T045/T046`：中文文案与错误路径仍需最后一轮收口。
-- `T017/T024/T031/T042`：US1/US2/US3/US5 还缺可复用的验收闭环；其中 `T042` 是 auth/access 验收，不代表 auth-flow 尚未实现。
+6. 运行记录与回放入口已进入主线
+- `frontend/src/app/console/runs/page.tsx` 已通过 `workflowApi.getRuns()` 读取真实运行记录，并提供详情跳转入口。
+- 详情页已提供 trace、artifact history、rerun options、rerun history 与 DOCX 导出入口。
+
+7. 当前剩余主线以验收和平台化收口为主
+- `T037`：`console/runs`、trace、artifact history、rerun 与 DOCX 导出仍需要在当前 `dev@8218f54` 上重新执行 live smoke。
+- `T017/T024/T031/T042`：US1/US2/US3/US5 还缺可复用的最终验收归档；其中 `T042` 是 auth/access 验收，不代表 auth-flow 尚未实现。
+- `005-unified-error-system` 的后端统一错误体系与 `frontend/src/lib/api.ts` 错误归一化已在 PR #5，CodeQL 通过且 mergeable，但尚未合入 `dev`；不得写成主线已完成。
+- 生产 CI/CD 与部署基线已在 PR #4，但 PR CI 的后端质量检查和前端质量检查仍失败，当前只可视为候选分支。
 
 ---
 
@@ -283,7 +288,7 @@ specify init --here --ai codex --force
 - 不默认自动运行/编译
 
 ### 7.4 当前协作事实源
-- 主线事实固定以当前 `dev` 分支 head 为准；本轮文档同步基线为 `c396a48`。
+- 主线事实固定以当前 `dev` 分支 head 为准；本轮文档同步基线为 `8218f54`。
 - 多 agent 协作只认以下 canonical 文件：
   - `specs/002-content-gen-mvp1/subagent-events.jsonl`
   - `specs/002-content-gen-mvp1/subagent-locks.json`
@@ -298,17 +303,17 @@ specify init --here --ai codex --force
 
 当你要继续开发时，建议按以下顺序推进：
 
-1. 先补 `T036/T037`
-- 优先完成 `frontend/src/app/console/runs/page.tsx` 真数据接线，以及 US4 的总览页监控/回放入口。
+1. 先做 `dev@8218f54` 的 MVP1 最终 smoke
+- 优先复核首页启动、Gate、pause/resume、trace/artifact history、rerun、DOCX 导出和 auth/access。
 
-2. 再补 `T005/T011`
-- 以 `frontend/src/lib/api.ts` 为目标契约，收拢首页当前的直接 `fetch`，避免双轨客户端继续漂移。
+2. 再推进 PR #5 的 merge gate
+- `code/feat-unified-error-system-current` 仍是 open PR；合入前继续按 PR + CI/CD gate 处理，不在本地直接写成主线事实。
 
-3. 再补 `T045/T046`
-- 集中处理运行台、编辑器、成员页的中文文案与错误路径收口，而不是重复开发已经在主线的功能。
+3. 再处理 PR #4 的 CI 失败
+- `code/feat-production-ci-deploy-foundation` 当前后端质量检查和前端质量检查失败；修复前不应作为生产部署基线归档。
 
-4. 最后补 `T017/T024/T031/T042`
-- 把 US1/US2/US3/US5 的 quickstart 验收闭环沉淀成可复用结果；其中 `T042` 只做 auth/access 验收，不再重复实现认证页面。
+4. 最后继续 MVP2 后续队列
+- `005-unified-error-system` 合入后，再派发 legacy-alignment / frontend-consumer 的剩余错误体系收口。
 
 ---
 
