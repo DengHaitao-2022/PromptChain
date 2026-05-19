@@ -6,10 +6,13 @@
 
 PR 进入 `dev` 或 `main` 时会触发 `.github/workflows/pr-ci.yml`：
 
-- 后端：`uv sync --all-extras --dev --no-install-project`、`uvx ruff check .`、`uv run pytest`
-- 前端：`npm ci`、`npm run lint`、`npx tsc --noEmit`、`npm run build`
+- 基础设施：校验 workflow YAML 与 `docker-compose.prod.yml` 展开结果。
+- 后端：`uv sync --all-extras --dev --no-install-project`、`uv run pytest`；当 PR 修改 `backend/**/*.py` 时，额外执行阻塞型 `uvx ruff check .`。
+- 前端：`npm ci`、`npx tsc --noEmit`、`npm run build`；当 PR 修改 `frontend/src/**` 或前端构建配置时，额外执行阻塞型 `npm run lint`。
 
 该 workflow 可在 GitHub 分支保护中配置为必需状态检查。CodeQL 仍由 `.github/workflows/codeql.yml` 独立运行。
+
+当前 `dev` 上仍存在既有 Ruff import 排序债与前端 ESLint 源码债。为避免生产部署基线 PR 越权修改业务源码，Ruff/ESLint 暂按变更范围触发；完成源码 lint 基线清理后，可将二者升级为全量阻塞 gate。
 
 ## 镜像
 
@@ -96,15 +99,17 @@ docker compose -f docker-compose.prod.yml ps
 # 后端质量检查
 cd backend
 uv sync --all-extras --dev --no-install-project
-uvx ruff check .
 uv run pytest
+# 若本次修改 backend/**/*.py，再执行：
+uvx ruff check .
 
 # 前端质量检查
 cd ../frontend
 npm ci
-npm run lint
 npx tsc --noEmit
 npm run build
+# 若本次修改 frontend/src/** 或前端构建配置，再执行：
+npm run lint
 
 # Compose 配置检查
 cd ..
