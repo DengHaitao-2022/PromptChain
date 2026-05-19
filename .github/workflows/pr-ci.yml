@@ -115,6 +115,8 @@ jobs:
         run: echo "本次 PR 未修改 backend/**/*.py，跳过既有后端源码 Ruff gate。"
 
       - name: Pytest
+        env:
+          JWT_SECRET_KEY: test-secret
         run: uv run pytest
 
   frontend:
@@ -138,6 +140,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: 安装前端依赖
+        if: needs.changes.outputs.frontend-source == 'true'
         run: npm ci
 
       - name: ESLint 检查
@@ -149,9 +152,15 @@ jobs:
         run: echo "本次 PR 未修改 frontend/src 或前端构建配置，跳过既有前端源码 ESLint gate。"
 
       - name: TypeScript 类型检查
+        if: needs.changes.outputs.frontend-source == 'true'
         run: npx tsc --noEmit
 
       - name: Next.js 构建
+        if: needs.changes.outputs.frontend-source == 'true'
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: npm run build
+
+      - name: 跳过前端类型检查和构建说明
+        if: needs.changes.outputs.frontend-source != 'true'
+        run: echo "本次 PR 未修改 frontend/src 或前端构建配置，跳过既有前端源码 typecheck/build gate。"
