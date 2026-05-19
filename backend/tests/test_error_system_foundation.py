@@ -13,6 +13,9 @@ from core.errors.codes import (
     COMMON_NOT_FOUND,
     INFRA_DATABASE_ERROR,
     INFRA_EMAIL_SERVICE_ERROR,
+    WORKFLOW_NOT_FOUND,
+    WORKFLOW_VALIDATION_FAILED,
+    WORKFLOW_VERSION_NOT_FOUND,
     WORKSPACE_ACCESS_DENIED,
     WORKSPACE_CONTEXT_REQUIRED,
 )
@@ -342,3 +345,152 @@ def test_admin_workspace_context_missing_uses_unified_error(monkeypatch):
     assert response.status_code == 400
     assert response.json()["code"] == WORKSPACE_CONTEXT_REQUIRED
     assert response.json()["request_id"] == "req-admin-workspace-001"
+
+
+def test_workflow_definition_not_found_uses_unified_error(monkeypatch):
+    session = object()
+    monkeypatch.setattr(
+        "routes.workflow_definition_routes.get_postgres_store",
+        lambda: _StoreStub(session),
+    )
+
+    async def _current_user(request):
+        return {"sub": "user-1", "workspace_id": "ws-1"}
+
+    async def _allow_permission(self, user_id, workspace_id, resource, action):
+        from models.auth_models import MemberRole
+
+        return MemberRole.EDITOR
+
+    async def _missing_workflow(self, **kwargs):
+        return None
+
+    monkeypatch.setattr("routes.workflow_definition_routes.get_current_user", _current_user)
+    monkeypatch.setattr(
+        "routes.workflow_definition_routes.PermissionService.require_permission",
+        _allow_permission,
+    )
+    monkeypatch.setattr(
+        "routes.workflow_definition_routes.WorkflowDefinitionService.get_by_id",
+        _missing_workflow,
+    )
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/workflows/wf-missing",
+        headers={REQUEST_ID_HEADER: "req-workflow-definition-001"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "success": False,
+        "code": WORKFLOW_NOT_FOUND,
+        "message": "工作流不存在",
+        "request_id": "req-workflow-definition-001",
+        "details": None,
+        "data": None,
+    }
+
+
+def test_workflow_publish_validation_failure_uses_unified_error(monkeypatch):
+    session = object()
+    monkeypatch.setattr(
+        "routes.workflow_definition_routes.get_postgres_store",
+        lambda: _StoreStub(session),
+    )
+
+    async def _current_user(request):
+        return {"sub": "user-1", "workspace_id": "ws-1"}
+
+    async def _allow_permission(self, user_id, workspace_id, resource, action):
+        from models.auth_models import MemberRole
+
+        return MemberRole.EDITOR
+
+    class _Workflow:
+        id = "wf-1"
+
+    class _Validation:
+        is_valid = False
+
+        def model_dump(self):
+            return {"is_valid": False, "errors": ["工作流必须至少包含一个节点"]}
+
+    async def _publish(self, **kwargs):
+        return _Workflow(), _Validation(), None
+
+    monkeypatch.setattr("routes.workflow_definition_routes.get_current_user", _current_user)
+    monkeypatch.setattr(
+        "routes.workflow_definition_routes.PermissionService.require_permission",
+        _allow_permission,
+    )
+    monkeypatch.setattr(
+        "routes.workflow_definition_routes.WorkflowDefinitionService.publish",
+        _publish,
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/workflows/wf-1/publish",
+        headers={REQUEST_ID_HEADER: "req-workflow-publish-001"},
+        json={"change_log": "尝试发布"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "success": False,
+        "code": WORKFLOW_VALIDATION_FAILED,
+        "message": "工作流未通过发布校验",
+        "request_id": "req-workflow-publish-001",
+        "details": {"validation": {"is_valid": False, "errors": ["工作流必须至少包含一个节点"]}},
+        "data": None,
+    }
+
+
+def test_workflow_version_not_found_uses_unified_error(monkeypatch):
+    session = object()
+    monkeypatch.setattr(
+        "routes.workflow_version_routes.get_postgres_store",
+        lambda: _StoreStub(session),
+    )
+
+    async def _current_user(request):
+        return {"sub": "user-1", "workspace_id": "ws-1"}
+
+    async def _allow_permission(self, user_id, workspace_id, resource, action):
+        from models.auth_models import MemberRole
+
+        return MemberRole.EDITOR
+
+    class _Workflow:
+        id = "wf-1"
+        published_version_id = None
+
+    async def _missing_version(self, workflow_id, workspace_id, version_id):
+        return _Workflow(), None
+
+    monkeypatch.setattr("routes.workflow_version_routes.get_current_user", _current_user)
+    monkeypatch.setattr(
+        "routes.workflow_version_routes.PermissionService.require_permission",
+        _allow_permission,
+    )
+    monkeypatch.setattr(
+        "routes.workflow_version_routes.WorkflowDefinitionService.get_version_by_id",
+        _missing_version,
+    )
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/workflows/wf-1/versions/ver-missing",
+        headers={REQUEST_ID_HEADER: "req-workflow-version-001"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "success": False,
+        "code": WORKFLOW_VERSION_NOT_FOUND,
+        "message": "版本不存在",
+        "request_id": "req-workflow-version-001",
+        "details": None,
+        "data": None,
+    }

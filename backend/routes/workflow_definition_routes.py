@@ -6,9 +6,16 @@
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from core.errors.codes import (
+    AUTH_UNAUTHENTICATED,
+    WORKFLOW_NOT_FOUND,
+    WORKFLOW_VALIDATION_FAILED,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
 from models.auth_models import MemberRole
@@ -35,7 +42,7 @@ class PublishWorkflowRequest(BaseModel):
 def _get_user_id(user: dict[str, Any]) -> str:
     user_id = user.get("sub") or user.get("id")
     if not user_id:
-        raise HTTPException(status_code=401, detail="未识别用户身份")
+        raise ApplicationError(code=AUTH_UNAUTHENTICATED, message="未识别用户身份")
     return user_id
 
 
@@ -44,8 +51,20 @@ async def _get_workspace_from_request(request: Request, user: dict[str, Any]) ->
     if not workspace_id:
         workspace_id = user.get("default_workspace_id") or user.get("workspace_id")
     if not workspace_id:
-        raise HTTPException(status_code=400, detail="未指定工作空间")
+        raise ApplicationError(code=WORKSPACE_CONTEXT_REQUIRED, message="未指定工作空间")
     return workspace_id
+
+
+def _raise_workflow_not_found() -> None:
+    raise DomainError(code=WORKFLOW_NOT_FOUND, message="工作流不存在")
+
+
+def _raise_workflow_validation_failed(validation: Any) -> None:
+    raise ApplicationError(
+        code=WORKFLOW_VALIDATION_FAILED,
+        message="工作流未通过发布校验",
+        details={"validation": validation.model_dump()},
+    )
 
 
 async def _require_workflow_role(
@@ -162,7 +181,7 @@ async def get_workflow(
             use_published_snapshot=role == MemberRole.VIEWER,
         )
         if not workflow:
-            return Result.not_found(message="工作流不存在")
+            _raise_workflow_not_found()
 
         return Result.success(data=workflow.model_dump())
 
@@ -179,7 +198,7 @@ async def get_workflow_definition(
         service = WorkflowDefinitionService(session)
         workflow = await service.get_by_id(workflow_id=workflow_id, workspace_id=workspace_id)
         if not workflow:
-            return Result.not_found(message="工作流不存在")
+            _raise_workflow_not_found()
 
         return Result.success(data=workflow.model_dump())
 
@@ -204,7 +223,7 @@ async def update_workflow(
             data=data,
         )
         if not workflow:
-            return Result.not_found(message="工作流不存在")
+            _raise_workflow_not_found()
 
         await AuditLogService(session).record(
             workspace_id=workspace_id,
@@ -253,7 +272,7 @@ async def delete_workflow(
         workflow_snapshot = workflow.model_dump() if workflow else {}
         success = await service.delete(workflow_id=workflow_id, workspace_id=workspace_id)
         if not success:
-            return Result.not_found(message="工作流不存在")
+            _raise_workflow_not_found()
 
         await AuditLogService(session).record(
             workspace_id=workspace_id,
@@ -282,7 +301,7 @@ async def validate_workflow(
         service = WorkflowDefinitionService(session)
         workflow = await service.get_by_id(workflow_id=workflow_id, workspace_id=workspace_id)
         if not workflow:
-            return Result.not_found(message="工作流不存在")
+            _raise_workflow_not_found()
 
         result = service.validate(workflow, mode=mode)
         return Result.success(data=result.model_dump())
@@ -309,13 +328,9 @@ async def publish_workflow(
         )
 
         if workflow is None:
-            return Result.not_found(message="工作流不存在")
+            _raise_workflow_not_found()
         if not validation.is_valid or snapshot is None:
-            return Result.error(
-                code=40000,
-                message="工作流未通过发布校验",
-                data={"validation": validation.model_dump()},
-            )
+            _raise_workflow_validation_failed(validation)
 
         await AuditLogService(session).record(
             workspace_id=workspace_id,
@@ -354,7 +369,7 @@ async def compile_workflow(
         service = WorkflowDefinitionService(session)
         workflow = await service.get_by_id(workflow_id=workflow_id, workspace_id=workspace_id)
         if not workflow:
-            return Result.not_found(message="工作流不存在")
+            _raise_workflow_not_found()
 
         result = service.compile(workflow)
         return Result.success(data=result.model_dump())
