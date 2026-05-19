@@ -18,7 +18,7 @@ PR 进入 `dev` 或 `main` 时会触发 `.github/workflows/pr-ci.yml`：
 
 ### 后端
 
-`backend/Dockerfile` 使用 Python 3.14 slim 基础镜像，安装项目依赖后通过 `uvicorn app:app` 启动 FastAPI：
+`backend/Dockerfile` 使用 Python 3.14 slim 基础镜像，复制 `backend/uv.lock` 后通过 `uv sync --frozen --no-dev --no-install-project` 安装依赖，避免镜像构建时重新解析上游依赖；容器启动时通过 `exec uvicorn app:app` 让应用进程接收终止信号：
 
 ```bash
 docker build -f backend/Dockerfile -t promptchain-backend:local .
@@ -63,7 +63,7 @@ curl -fsS http://localhost:3000/
 
 ```bash
 cp backend/.env.example .env
-# 编辑 .env，至少设置 POSTGRES_PASSWORD、CORS_ORIGINS、APP_BASE_URL、NEXT_PUBLIC_API_URL 和一个 LLM Provider Key。
+# 编辑 .env，至少设置 POSTGRES_PASSWORD、JWT_SECRET_KEY、CORS_ORIGINS、APP_BASE_URL、NEXT_PUBLIC_API_URL 和一个 LLM Provider Key。
 docker compose -f docker-compose.prod.yml up --build -d
 docker compose -f docker-compose.prod.yml ps
 ```
@@ -80,6 +80,7 @@ docker compose -f docker-compose.prod.yml ps
 | `POSTGRES_USER` | PostgreSQL 用户 | `postgres` |
 | `POSTGRES_PASSWORD` | PostgreSQL 密码，生产必须显式设置 | `change-me` |
 | `POSTGRES_DB` | PostgreSQL 数据库名 | `promptchain` |
+| `JWT_SECRET_KEY` | JWT 签名密钥，生产必须使用长随机值 | `change-me-use-a-long-random-secret` |
 | `DATABASE_URL` | 后端数据库连接串 | `postgresql+asyncpg://postgres:change-me@postgres:5432/promptchain` |
 | `REDIS_URL` | 后端 Redis 连接串 | `redis://redis:6379/0` |
 | `WORKFLOW_EVENT_BUS_BACKEND` | 工作流事件总线后端 | `redis` |
@@ -133,5 +134,6 @@ docker compose -f docker-compose.prod.yml down
 - 未配置生产环境数据库迁移流水线。
 - 未配置 Kubernetes、Ingress、证书自动签发或弹性伸缩。
 - 未配置端到端浏览器测试。
+- 完整四服务容器烟测已执行到镜像构建阶段，后端镜像可通过 `uv sync --frozen` 完成冻结安装；当前仍被既有前端 TypeScript 错误阻塞，尚未进入前端 healthcheck 阶段。已补充执行 `postgres` / `redis` / `backend` 服务级烟测，后端 `/` 健康检查通过。
 - 未覆盖真实 SMTP 与真实 LLM Provider 的生产连通性验证。
 - 未覆盖多实例部署下的 WebSocket 粘性会话和反向代理策略。

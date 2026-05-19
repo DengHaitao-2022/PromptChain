@@ -80,6 +80,7 @@ jobs:
       - name: 校验生产 Compose 配置
         env:
           POSTGRES_PASSWORD: local-check
+          JWT_SECRET_KEY: local-check-jwt-secret
         run: docker compose -f docker-compose.prod.yml config
 
   backend:

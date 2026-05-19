@@ -17,8 +17,8 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir uv
 
-COPY backend/pyproject.toml backend/README.md ./
-RUN uv sync --no-dev --no-install-project
+COPY backend/pyproject.toml backend/uv.lock backend/README.md ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend/app.py backend/main.py ./
 COPY backend/core ./core
@@ -35,4 +35,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:${API_PORT}/ || exit 1
 
-CMD ["sh", "-c", "uvicorn app:app --host ${API_HOST} --port ${API_PORT}"]
+CMD ["sh", "-c", "exec uvicorn app:app --host ${API_HOST} --port ${API_PORT}"]

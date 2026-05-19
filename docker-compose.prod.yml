@@ -39,6 +39,7 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 8000
       DEBUG: "false"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-promptchain}
       REDIS_URL: redis://redis:6379/0
       WORKFLOW_EVENT_BUS_BACKEND: ${WORKFLOW_EVENT_BUS_BACKEND:-redis}
