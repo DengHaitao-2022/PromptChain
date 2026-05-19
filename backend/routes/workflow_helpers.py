@@ -598,7 +598,7 @@ def _simplify_state(
         simplified["final_content_artifact_id"] = final_artifact_id
         simplified["final_artifact_id"] = final_artifact_id
 
-    pause = _normalize_pause_state(workflow_run)
+    pause = _normalize_pause_state(workflow_run, state=state)
     if pause:
         simplified["pause"] = pause
 
@@ -751,8 +751,19 @@ def _coerce_mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _normalize_pause_state(workflow_run: Any | None) -> dict[str, Any] | None:
-    """从 WorkflowRun 元数据构建规范化的 pause 状态"""
+def _normalize_pause_state(
+    workflow_run: Any | None, *, state: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """从图状态和 WorkflowRun 元数据构建规范化的 pause 状态。"""
+    state_pause = state.get("pause") if isinstance(state, dict) else None
+    if isinstance(state_pause, dict):
+        return {
+            "reason": state_pause.get("reason"),
+            "paused_at": _coerce_iso(state_pause.get("paused_at")),
+            "resumed_at": _coerce_iso(state_pause.get("resumed_at")),
+            "source": state_pause.get("source") or "user",
+        }
+
     if workflow_run is None:
         return None
 

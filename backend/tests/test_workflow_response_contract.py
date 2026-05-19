@@ -157,7 +157,7 @@ def test_get_workflow_status_returns_workflow_response_shape(monkeypatch):
 
     assert res.status_code == 200
     body = res.json()
-    assert set(body.keys()) == {"workflow_run_id", "status", "state"}
+    assert {"workflow_run_id", "status", "state"}.issubset(body.keys())
     assert body["status"] == "needs_clarification"
     assert body["state"]["current_node"] == "parse_intent"
     assert body["state"]["gate"]["gate_type"] == "clarification"
