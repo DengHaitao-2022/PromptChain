@@ -60,7 +60,10 @@ class Base(DeclarativeBase):
 
 
 def _runtime_schema_statements(database_url: str) -> list[str]:
-    """返回运行态表的幂等升级语句。"""
+    """返回 legacy 运行态表的幂等升级语句。
+
+    这些语句已归属 Alembic baseline；这里只作为开发兼容路径保留。
+    """
     if not database_url.startswith("postgresql"):
         return []
 
@@ -98,6 +101,14 @@ def _runtime_schema_statements(database_url: str) -> list[str]:
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_outcome ON audit_logs (outcome)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_target ON audit_logs (target_type, target_id)",
     ]
+
+
+def _legacy_schema_init_enabled() -> bool:
+    """是否允许应用启动时执行 legacy create_all/ALTER。
+
+    生产环境应设置 DATABASE_AUTO_SCHEMA_INIT=false，并通过 Alembic 管理 schema 版本。
+    """
+    return os.getenv("DATABASE_AUTO_SCHEMA_INIT", "true").lower() in {"1", "true", "yes", "on"}
 
 
 # ==================== ORM 模型定义 ====================
@@ -362,9 +373,15 @@ class PostgresArtifactStore:
             self._initialized = True
 
     async def init_db(self):
-        """初始化数据库表"""
+        """初始化数据库表。
+
+        Alembic 是生产 schema 变更的唯一入口；这里仅保留开发兼容初始化。
+        """
         for module_name in ("models.auth_orm", "models.admin_orm", "models.workflow_orm"):
             importlib.import_module(module_name)
+
+        if not _legacy_schema_init_enabled():
+            return
 
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
