@@ -35,6 +35,7 @@ dependencies = [
     # 工具库
     "httpx>=0.26.0",
     "deepdiff>=6.7.0",
+    "python-docx>=1.2.0",
     "python-multipart>=0.0.6",
     "pytest>=9.0.2",
     "langchain-ollama>=1.0.1",

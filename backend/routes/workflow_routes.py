@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import time
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -38,6 +39,7 @@ from routes.workflow_helpers import (
 )
 from services.audit_log_service import AuditLogService
 from services.workflow_event_bus import get_workflow_event_bus
+from services.workflow_export_service import build_docx, build_workflow_export_payload
 
 # 由 app.py 统一补齐 /api 前缀，这里只保留资源级前缀，避免重复拼接
 router = APIRouter(prefix="/workflow", tags=["workflow"])
@@ -701,3 +703,52 @@ async def get_rerun_history(workflow_run_id: str, request: Request):
     except Exception as exc:
         logger.exception("获取重跑历史失败: workflow_run_id=%s", workflow_run_id)
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+
+
+@router.get("/{workflow_run_id}/exports/docx")
+async def export_workflow_docx(workflow_run_id: str, request: Request):
+    """导出已完成工作流的最终产物 DOCX。"""
+    from services import get_trace_service
+
+    try:
+        await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow", action="read"
+        )
+        _, _, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+
+        if status != "completed":
+            raise HTTPException(status_code=409, detail="仅已完成的工作流支持导出 DOCX。")
+
+        trace = await get_trace_service().get_workflow_trace(workflow_run_id)
+        payload = build_workflow_export_payload(
+            graph_state,
+            trace,
+            workflow_name=getattr(workflow_run, "workflow_name", None),
+        )
+        if not payload.sections:
+            raise HTTPException(status_code=404, detail="当前工作流没有可导出的最终产物。")
+
+        buffer = build_docx(payload)
+        filename = f"PromptChain-{workflow_run_id[:8]}-最终产物.docx"
+        encoded_filename = quote(filename)
+
+        return StreamingResponse(
+            buffer,
+            media_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="PromptChain-{workflow_run_id[:8]}.docx"; '
+                    f"filename*=UTF-8''{encoded_filename}"
+                )
+            },
+        )
+    except HTTPException:
+        raise
+    except ImportError as exc:
+        logger.exception("DOCX 导出依赖缺失: workflow_run_id=%s", workflow_run_id)
+        raise HTTPException(
+            status_code=500, detail="DOCX 导出依赖缺失，请先同步后端依赖。"
+        ) from exc
+    except Exception as exc:
+        logger.exception("导出 DOCX 失败: workflow_run_id=%s", workflow_run_id)
+        raise HTTPException(status_code=500, detail="导出 DOCX 失败。") from exc

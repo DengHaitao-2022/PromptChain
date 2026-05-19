@@ -376,6 +376,27 @@ async function request<T>(
   return response.json();
 }
 
+async function requestBlob(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<Blob> {
+  const url = apiUrl(endpoint);
+
+  const response = await authenticatedFetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new Error(error.detail || `HTTP ${response.status}`);
+  }
+
+  return response.blob();
+}
+
 // 统一 Result 包装类型
 type ApiResult<T> = {
   code: number;
@@ -614,6 +635,9 @@ export const workflowApi = {
         reason,
       }),
     }),
+
+  exportDocx: (workflowRunId: string) =>
+    requestBlob(`/workflow/${workflowRunId}/exports/docx`),
 };
 
 // Trace API

@@ -540,6 +540,13 @@
     flex-wrap: wrap;
 }
 
+.exportStatus {
+    margin: calc(var(--spacing-sm) * -1) 0 0;
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
 .viewToggle {
     display: inline-flex;
     align-items: center;
@@ -573,6 +580,158 @@
 .toggleIcon {
     width: 16px;
     height: 16px;
+}
+
+.documentReaderShell {
+    display: grid;
+    grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+    gap: var(--spacing-lg);
+    align-items: start;
+}
+
+.documentTocAside {
+    position: sticky;
+    top: 96px;
+    max-height: calc(100vh - 120px);
+    overflow: auto;
+}
+
+.documentTocCard {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 18px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+        var(--workflow-control-bg);
+}
+
+.documentTocEyebrow {
+    margin: 0 0 8px;
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.documentTocLink {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 12px;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    transition:
+        background-color var(--transition-fast),
+        color var(--transition-fast);
+}
+
+.documentTocLink:hover,
+.documentTocLink:focus-visible {
+    color: var(--color-text-primary);
+    background: var(--workflow-control-hover-bg);
+    outline: none;
+}
+
+.documentTocLink small {
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+.documentReader {
+    min-width: 0;
+    padding: clamp(20px, 4vw, 48px);
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 24px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 260px),
+        var(--workflow-surface-bg-muted);
+}
+
+.documentReaderHeader {
+    max-width: 880px;
+    margin: 0 auto var(--spacing-xl);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--workflow-border-subtle);
+}
+
+.documentReaderEyebrow {
+    margin: 0 0 8px;
+    color: var(--color-brand-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.documentReaderHeader h1 {
+    margin: 0 0 10px;
+    color: var(--color-text-primary);
+    font-size: clamp(1.6rem, 3vw, 2.35rem);
+    line-height: 1.25;
+}
+
+.documentReaderHeader p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+}
+
+.documentAbstractBlock,
+.documentSection {
+    max-width: 880px;
+    margin: 0 auto;
+}
+
+.documentAbstractBlock {
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-brand-border);
+    border-radius: 18px;
+    background: var(--workflow-brand-soft);
+    margin-bottom: var(--spacing-xl);
+}
+
+.documentAbstractBlock h2 {
+    margin: 0 0 var(--spacing-md);
+    color: var(--color-text-primary);
+    font-size: 1.15rem;
+}
+
+.documentSection {
+    scroll-margin-top: 110px;
+    padding-bottom: var(--spacing-xl);
+}
+
+.documentSection + .documentSection {
+    padding-top: var(--spacing-xl);
+    border-top: 1px dashed var(--workflow-border-subtle);
+}
+
+.documentSectionHeader {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.documentSectionHeader h2 {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-size: clamp(1.25rem, 2vw, 1.65rem);
+    line-height: 1.35;
+}
+
+.documentSectionHeader span {
+    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+    white-space: nowrap;
 }
 
 .previewGrid {
@@ -1086,6 +1245,29 @@
     .rerunGrid {
         grid-template-columns: 1fr;
     }
+
+    .documentReaderShell {
+        grid-template-columns: 1fr;
+    }
+
+    .documentTocAside {
+        position: static;
+        max-height: none;
+        overflow: visible;
+    }
+
+    .documentTocCard {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .documentTocEyebrow {
+        width: 100%;
+    }
+
+    .documentTocLink {
+        flex: 0 1 auto;
+    }
 }
 
 @media (max-width: 768px) {
@@ -1115,6 +1297,17 @@
 
     .runningIntro {
         grid-template-columns: 1fr;
+    }
+
+    .documentReader {
+        padding: var(--spacing-md);
+        border-radius: 18px;
+    }
+
+    .documentSectionHeader {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
     }
 
     .statusHints {

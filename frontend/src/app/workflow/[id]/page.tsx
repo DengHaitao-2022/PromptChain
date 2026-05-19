@@ -544,6 +544,37 @@ function buildContentSections(
     }));
 }
 
+function buildFinalMarkdown(
+    title: string,
+    abstract: string | undefined,
+    entries: ContentSection[]
+): string {
+    const blocks: string[] = [`# ${title}`];
+
+    if (abstract?.trim()) {
+        blocks.push(`## 摘要\n\n${abstract.trim()}`);
+    }
+
+    entries.forEach((entry, index) => {
+        const content = entry.content.trim();
+        if (!content) {
+            return;
+        }
+        blocks.push(`## ${index + 1}. ${entry.title}\n\n${content}`);
+    });
+
+    return `${blocks.join('\n\n').trim()}\n`;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function shouldUseLiveUpdates(workflow: WorkflowResponse): boolean {
     return (
         workflow.status === 'running' ||
@@ -653,7 +684,9 @@ export default function WorkflowDetailPage() {
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
     const [actionLoading, setActionLoading] = React.useState(false);
-    const [completedView, setCompletedView] = React.useState<'preview' | 'raw'>('preview');
+    const [completedView, setCompletedView] = React.useState<'reader' | 'cards' | 'raw'>('reader');
+    const [exportStatus, setExportStatus] = React.useState<string | null>(null);
+    const [exportLoading, setExportLoading] = React.useState<'docx' | null>(null);
     const [rerunOptions, setRerunOptions] = React.useState<RerunOption[]>([]);
     const [rerunHistory, setRerunHistory] = React.useState<RerunHistoryItem[]>([]);
     const [rerunLoading, setRerunLoading] = React.useState(false);
@@ -692,6 +725,18 @@ export default function WorkflowDetailPage() {
     React.useEffect(() => {
         autoFollowRef.current = autoFollowStreaming;
     }, [autoFollowStreaming]);
+
+    React.useEffect(() => {
+        setCompletedView('reader');
+        setExportStatus(null);
+    }, [workflowId]);
+
+    React.useEffect(() => {
+        if (workflow?.status !== 'completed') {
+            setCompletedView('reader');
+            setExportStatus(null);
+        }
+    }, [workflow?.status]);
 
     const stopPolling = React.useCallback(() => {
         if (pollIntervalRef.current) {
@@ -925,12 +970,6 @@ export default function WorkflowDetailPage() {
         setRerunError(null);
         setRerunStatus(null);
     }, [workflowId]);
-
-    React.useEffect(() => {
-        if (workflow?.status !== 'completed') {
-            setCompletedView('preview');
-        }
-    }, [workflow?.status]);
 
     React.useEffect(() => {
         if (workflow?.status === 'completed' || workflow?.status === 'failed') {
@@ -1275,6 +1314,16 @@ export default function WorkflowDetailPage() {
         () => mergeStreamingContentSections(contentSections, streamingSections, workflow?.state.outline as Outline | undefined),
         [contentSections, streamingSections, workflow?.state.outline]
     );
+    const finalDocumentTitle = workflow?.state.outline?.title || '生成内容';
+    const finalDocumentAbstract = workflow?.state.outline?.abstract || '';
+    const finalMarkdown = React.useMemo(
+        () => buildFinalMarkdown(finalDocumentTitle, finalDocumentAbstract, contentSections),
+        [contentSections, finalDocumentAbstract, finalDocumentTitle]
+    );
+    const finalWordCount = React.useMemo(
+        () => contentSections.reduce((sum, entry) => sum + (entry.wordCount || 0), 0),
+        [contentSections]
+    );
     const activeStreamingSectionId = React.useMemo(
         () =>
             Object.entries(streamingSections).find(([, section]) => section.isStreaming)?.[0] ?? null,
@@ -1449,14 +1498,9 @@ export default function WorkflowDetailPage() {
         }
 
         if (status === 'completed') {
-            const totalWords = contentSections.reduce(
-                (sum, entry) => sum + (entry.wordCount ?? 0),
-                0
-            );
-
             return [
                 { label: '交付块数', value: formatCount(contentSections.length), tone: 'success' },
-                { label: '累计字数', value: formatCount(totalWords || undefined), tone: 'brand' },
+                { label: '累计字数', value: formatCount(finalWordCount || undefined), tone: 'brand' },
             ];
         }
 
@@ -1746,6 +1790,56 @@ export default function WorkflowDetailPage() {
         );
     };
 
+    const handleCopyFinalMarkdown = React.useCallback(async () => {
+        if (!finalMarkdown.trim()) {
+            setExportStatus('当前没有可复制的 Markdown 内容。');
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(finalMarkdown);
+            setExportStatus('已复制 Markdown 到剪贴板。');
+        } catch (copyError) {
+            setExportStatus(
+                copyError instanceof Error ? copyError.message : '复制 Markdown 失败。'
+            );
+        }
+    }, [finalMarkdown]);
+
+    const handleDownloadMarkdown = React.useCallback(() => {
+        if (!finalMarkdown.trim()) {
+            setExportStatus('当前没有可下载的 Markdown 内容。');
+            return;
+        }
+
+        downloadBlob(
+            new Blob([finalMarkdown], { type: 'text/markdown;charset=utf-8' }),
+            `PromptChain-${workflowId.slice(0, 8)}-最终产物.md`
+        );
+        setExportStatus('Markdown 已开始下载。');
+    }, [finalMarkdown, workflowId]);
+
+    const handleExportDocx = React.useCallback(async () => {
+        if (!workflowId) {
+            return;
+        }
+
+        setExportLoading('docx');
+        setExportStatus('正在生成 DOCX...');
+
+        try {
+            const blob = await workflowApi.exportDocx(workflowId);
+            downloadBlob(blob, `PromptChain-${workflowId.slice(0, 8)}-最终产物.docx`);
+            setExportStatus('DOCX 已开始下载。');
+        } catch (exportError) {
+            setExportStatus(
+                exportError instanceof Error ? exportError.message : '导出 DOCX 失败。'
+            );
+        } finally {
+            setExportLoading(null);
+        }
+    }, [workflowId]);
+
     const renderCompletedStage = () => {
         const finalArtifact = getLatestArtifactByType(
             trace,
@@ -1772,12 +1866,22 @@ export default function WorkflowDetailPage() {
                         <button
                             type="button"
                             className={`${styles.viewToggle} ${
-                                completedView === 'preview' ? styles.viewToggleActive : ''
+                                completedView === 'reader' ? styles.viewToggleActive : ''
                             }`}
-                            onClick={() => setCompletedView('preview')}
+                            onClick={() => setCompletedView('reader')}
                         >
                             <FileText className={styles.toggleIcon} aria-hidden="true" />
-                            预览结果
+                            阅读版
+                        </button>
+                        <button
+                            type="button"
+                            className={`${styles.viewToggle} ${
+                                completedView === 'cards' ? styles.viewToggleActive : ''
+                            }`}
+                            onClick={() => setCompletedView('cards')}
+                        >
+                            <Sparkles className={styles.toggleIcon} aria-hidden="true" />
+                            卡片预览
                         </button>
                         <button
                             type="button"
@@ -1792,14 +1896,103 @@ export default function WorkflowDetailPage() {
                         <button
                             type="button"
                             className="btn btn-secondary"
+                            onClick={() => void handleCopyFinalMarkdown()}
+                            disabled={finalEntries.length === 0}
+                        >
+                            复制 Markdown
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => handleDownloadMarkdown()}
+                            disabled={finalEntries.length === 0}
+                        >
+                            下载 Markdown
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => void handleExportDocx()}
+                            disabled={finalEntries.length === 0 || exportLoading === 'docx'}
+                        >
+                            {exportLoading === 'docx' ? '导出中...' : '导出 DOCX'}
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
                             onClick={() => router.push('/')}
                         >
                             返回首页
                         </button>
                     </div>
                 </div>
+                {exportStatus ? <p className={styles.exportStatus}>{exportStatus}</p> : null}
 
-                {completedView === 'preview' ? (
+                {completedView === 'reader' ? (
+                    <div className={styles.documentReaderShell}>
+                        <aside className={styles.documentTocAside} aria-label="最终产物目录">
+                            <div className={styles.documentTocCard}>
+                                <p className={styles.documentTocEyebrow}>目录</p>
+                                {finalDocumentAbstract.trim() ? (
+                                    <a href="#final-abstract" className={styles.documentTocLink}>
+                                        <span>摘要</span>
+                                    </a>
+                                ) : null}
+                                {finalEntries.map((entry, index) => (
+                                    <a
+                                        key={entry.id}
+                                        href={`#final-section-${entry.id}`}
+                                        className={styles.documentTocLink}
+                                    >
+                                        <span>{index + 1}. {entry.title}</span>
+                                        {entry.wordCount > 0 ? <small>{entry.wordCount} 字</small> : null}
+                                    </a>
+                                ))}
+                            </div>
+                        </aside>
+
+                        <article className={styles.documentReader}>
+                            <header className={styles.documentReaderHeader}>
+                                <p className={styles.documentReaderEyebrow}>最终交付文档</p>
+                                <h1>{finalDocumentTitle}</h1>
+                                <p>共 {finalEntries.length} 个内容块 · {finalWordCount} 字</p>
+                            </header>
+
+                            {finalDocumentAbstract.trim() ? (
+                                <section id="final-abstract" className={styles.documentAbstractBlock}>
+                                    <h2>摘要</h2>
+                                    <MarkdownRenderer content={finalDocumentAbstract} />
+                                </section>
+                            ) : null}
+
+                            {finalEntries.length > 0 ? (
+                                finalEntries.map((entry, index) => (
+                                    <section
+                                        key={entry.id}
+                                        id={`final-section-${entry.id}`}
+                                        className={styles.documentSection}
+                                    >
+                                        <div className={styles.documentSectionHeader}>
+                                            <h2>{index + 1}. {entry.title}</h2>
+                                            {entry.wordCount > 0 ? <span>{entry.wordCount} 字</span> : null}
+                                        </div>
+                                        <MarkdownRenderer content={entry.content} />
+                                    </section>
+                                ))
+                            ) : (
+                                <div className={styles.emptyState}>
+                                    <FileText className={styles.emptyStateIcon} aria-hidden="true" />
+                                    <div>
+                                        <h3>当前没有可展示的最终产物</h3>
+                                        <p>工作流已完成，但尚未找到可阅读的 final_content 内容。</p>
+                                    </div>
+                                </div>
+                            )}
+                        </article>
+                    </div>
+                ) : null}
+
+                {completedView === 'cards' ? (
                     <div className={styles.previewGrid}>
                         {finalEntries.length > 0 ? (
                             finalEntries.map((entry) => (
@@ -1835,11 +2028,13 @@ export default function WorkflowDetailPage() {
                             </div>
                         )}
                     </div>
-                ) : (
+                ) : null}
+
+                {completedView === 'raw' ? (
                     <div className={styles.rawSurface}>
                         <pre>{JSON.stringify(rawFinalContent ?? {}, null, 2)}</pre>
                     </div>
-                )}
+                ) : null}
             </div>
         );
     };
@@ -2089,7 +2284,7 @@ export default function WorkflowDetailPage() {
                                         />
                                     </div>
                                 )}
-                                {displayContentSections.length > 0 && (
+                                {displayContentSections.length > 0 && workflow?.status !== 'completed' && (
                                     <div ref={contentSectionRef} className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <div className={styles.contentSectionHeader}>
                                             <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>生成内容</h3>
