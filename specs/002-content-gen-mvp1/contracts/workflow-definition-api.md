@@ -1,10 +1,11 @@
 # Workflow Definition & Publication API Contract
 
-## 0. Current Baseline (`dev@c396a48`)
+## 0. Current Baseline (`dev@8218f54`)
 
 - 工作流定义 CRUD、validate、compile、publish、versions、compare、restore 已全部在主线。
 - `GET /api/workflows` 与 `GET /api/workflows/{workflow_id}` 对 `viewer` 角色默认返回已发布快照；编辑器读取草稿语义则走 `/definition`。
-- 当前剩余主线不再包含 publish/version API 开发；这里只剩与 `T031`、`T045/T046` 相关的验收与 polish。
+- 已发布可视化定义会被 `backend/graph/runtime_plan.py` 编译为当前内容生成引擎可执行的受限运行计划。
+- 当前剩余主线不再包含 publish/version API 开发；这里只剩 `T031` 的 live smoke 与最终验收归档。
 
 ## 1. Response Envelope
 

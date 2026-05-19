@@ -1,7 +1,7 @@
 # PromptChain API 文档总览（v1）
 
 - 规范版本：`1.0.0`
-- 更新时间：`2026-03-06`
+- 更新时间：`2026-05-20`
 - 唯一事实源（SSOT）：`docs/api/openapi.v1.yaml`
 
 ## 文档索引
@@ -21,6 +21,7 @@
 ## 工作流状态机（对外）
 
 - `running`
+- `paused`
 - `needs_clarification`
 - `awaiting_outline_approval`
 - `awaiting_fact_check_approval`
@@ -29,10 +30,27 @@
 
 ## 统一错误响应
 
+当前 `dev@8218f54` 主线仍保留 FastAPI `HTTPException` 与局部 `Result` 兼容风格。MVP2 统一错误体系正在 PR #5 中推进，尚未合入主线。
+
+当前主线常见错误形态：
+
 ```json
 {
   "detail": "error message",
   "code": "optional_error_code"
+}
+```
+
+PR #5 候选统一错误 envelope：
+
+```json
+{
+  "success": false,
+  "code": "WORKFLOW_NOT_FOUND",
+  "message": "资源不存在",
+  "data": null,
+  "request_id": "req_...",
+  "details": {}
 }
 ```
 

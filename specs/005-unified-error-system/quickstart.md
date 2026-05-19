@@ -2,6 +2,20 @@
 
 本文档描述 `005-unified-error-system` 的最小验收路径。目标不是跑完整业务主链，而是验证核心 API 域已经开始使用统一错误契约，并且前端/调用方可以基于稳定错误标识做处理。
 
+## 0. 当前状态（PR #5 候选，尚未合入 `dev`）
+
+- 当前 `dev@8218f54` 尚未包含统一错误体系；主线仍保留 FastAPI `HTTPException`、局部 `Result` 和旧 `detail` 风格。
+- PR #5 `code/feat-unified-error-system-current -> dev` 已创建，标题为“feat: 统一错误体系与前端错误归一化”。
+- PR #5 当前 open、mergeable，CodeQL checks 通过，但尚未合入 `dev`。
+- 本 quickstart 在 PR #5 合入前只用于候选分支验收；不得把下面的统一错误 envelope 预期写成当前主线 API 事实。
+
+候选分支已知验证边界：
+
+- 已运行后端目标测试，结果为 `40 passed`。
+- 已运行目标后端文件 ruff check。
+- 前端 lint/build 未运行，因为 `frontend/node_modules` 缺失。
+- 未启动服务，未执行 live smoke。
+
 ## 1. 环境前提
 
 - 后端服务可访问

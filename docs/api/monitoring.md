@@ -26,6 +26,50 @@
 
 - 用途：获取产物版本链
 
+## 运行记录与导出
+
+### 1) `GET /api/workflow/runs`
+
+- 用途：获取当前用户在当前工作空间可见的运行记录列表
+- 权限：需要 `workflow_run.read`
+- 可见范围：
+  - 普通用户仅可查看本人运行记录
+  - `admin` / `owner` 可查看同工作空间运行记录
+
+### 2) `GET /api/workflow/{workflow_run_id}/rerun-options`
+
+- 用途：获取可从哪些节点发起重跑
+- 说明：可重跑节点受当前运行计划和节点状态共同限制
+
+### 3) `POST /api/workflow/{workflow_run_id}/rerun`
+
+- 用途：创建从指定节点开始的新运行
+- 说明：不会覆盖原运行，而是创建新的 `WorkflowRun` 并保留原运行历史
+
+### 4) `GET /api/workflow/{workflow_run_id}/rerun-history`
+
+- 用途：查看原运行与派生重跑运行的链路
+
+### 5) `GET /api/workflow/{workflow_run_id}/exports/docx`
+
+- 用途：导出已完成工作流的最终产物 DOCX
+- 限制：仅 `completed` 状态支持导出
+
+## SSE 快照流
+
+### `GET /api/workflow/{workflow_run_id}/events`
+
+- 用途：工作流详情页的实时状态与增量内容通道
+- 事件：
+  - `snapshot`
+  - `token`
+  - `section_started`
+  - `section_completed`
+  - `stream_error`
+  - `heartbeat`
+  - `done`
+- 说明：SSE 用于增强实时体验；REST 状态接口与 Trace 仍是最终对账入口。
+
 ## WebSocket 推送
 
 ### 1) `/ws/workflow/{workflow_run_id}`

@@ -47,6 +47,12 @@
       "description": "推送用户审批通知事件"
     }
   ],
+  "x-sse-endpoints": [
+    {
+      "path": "/api/workflow/{workflow_run_id}/events",
+      "description": "工作流详情页状态快照与增量内容事件流"
+    }
+  ],
   "paths": {
     "/": {
       "get": {
@@ -414,6 +420,114 @@
         }
       }
     },
+    "/api/workflow/runs": {
+      "get": {
+        "tags": [
+          "Workflow"
+        ],
+        "summary": "获取当前用户可见的运行记录列表",
+        "operationId": "listWorkflowRuns",
+        "security": [
+          {
+            "cookieAuth": [
+
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible workflow runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRunListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/workflow/{workflow_run_id}/events": {
+      "get": {
+        "tags": [
+          "Workflow"
+        ],
+        "summary": "工作流详情页 SSE 事件流",
+        "operationId": "streamWorkflowEvents",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkflowRunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/workflow/{workflow_run_id}/exports/docx": {
+      "get": {
+        "tags": [
+          "Workflow"
+        ],
+        "summary": "导出已完成工作流的最终产物 DOCX",
+        "operationId": "exportWorkflowDocx",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkflowRunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DOCX binary",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/trace/{workflow_run_id}": {
       "get": {
         "tags": [
@@ -550,7 +664,9 @@
         "operationId": "listWorkflowDefinitions",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -598,7 +714,9 @@
         "operationId": "createWorkflowDefinition",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "requestBody": {
@@ -640,7 +758,9 @@
         "operationId": "getWorkflowDefinitionById",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -672,7 +792,9 @@
         "operationId": "updateWorkflowDefinition",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -714,7 +836,9 @@
         "operationId": "deleteWorkflowDefinition",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -748,7 +872,9 @@
         "operationId": "getWorkflowDefinitionAlias",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -777,7 +903,9 @@
         "operationId": "updateWorkflowDefinitionAlias",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -818,7 +946,9 @@
         "operationId": "validateWorkflowDefinition",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -852,7 +982,9 @@
         "operationId": "compileWorkflowDefinition",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -886,7 +1018,9 @@
         "operationId": "listWorkflowVersions",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -920,7 +1054,9 @@
         "operationId": "getWorkflowVersion",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -957,7 +1093,9 @@
         "operationId": "compareWorkflowVersions",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -1007,7 +1145,9 @@
         "operationId": "restoreWorkflowVersion",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -1270,7 +1410,9 @@
         "operationId": "getMe",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "responses": {
@@ -1302,7 +1444,9 @@
         "operationId": "listWorkspaces",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "responses": {
@@ -1329,7 +1473,9 @@
         "operationId": "createWorkspace",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "requestBody": {
@@ -1368,7 +1514,9 @@
         "operationId": "getWorkspace",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -1406,7 +1554,9 @@
         "operationId": "updateWorkspace",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -1456,7 +1606,9 @@
         "operationId": "listWorkspaceMembers",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -1493,7 +1645,9 @@
         "operationId": "inviteWorkspaceMember",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -1543,7 +1697,9 @@
         "operationId": "acceptWorkspaceInvite",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -1585,7 +1741,9 @@
         "operationId": "updateMembershipRole",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -1636,7 +1794,9 @@
         "operationId": "removeMembership",
         "security": [
           {
-            "cookieAuth": []
+            "cookieAuth": [
+
+            ]
           }
         ],
         "parameters": [
@@ -2056,14 +2216,18 @@
             "items": {
               "$ref": "#/components/schemas/WorkflowNode"
             },
-            "default": []
+            "default": [
+
+            ]
           },
           "edges": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/WorkflowEdge"
             },
-            "default": []
+            "default": [
+
+            ]
           }
         }
       },
@@ -2098,6 +2262,7 @@
         "type": "string",
         "enum": [
           "running",
+          "paused",
           "needs_clarification",
           "awaiting_outline_approval",
           "awaiting_fact_check_approval",
@@ -2188,6 +2353,22 @@
         "properties": {
           "user_input": {
             "type": "string"
+          },
+          "workflow_definition_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "workflow_version_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "model_provider_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "model_name": {
+            "type": "string",
+            "nullable": true
           }
         }
       },
@@ -2258,7 +2439,8 @@
             "additionalProperties": {
               "type": "string"
             },
-            "default": {}
+            "default": {
+            }
           }
         }
       },
@@ -2335,6 +2517,61 @@
             "items": {
               "type": "object",
               "additionalProperties": true
+            }
+          }
+        }
+      },
+      "WorkflowRunSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "workflow_name",
+          "status",
+          "user_input",
+          "started_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "workflow_name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          },
+          "current_node": {
+            "type": "string",
+            "nullable": true
+          },
+          "user_input": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "total_duration_ms": {
+            "type": "integer",
+            "nullable": true
+          }
+        }
+      },
+      "WorkflowRunListResponse": {
+        "type": "object",
+        "required": [
+          "runs"
+        ],
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRunSummary"
             }
           }
         }

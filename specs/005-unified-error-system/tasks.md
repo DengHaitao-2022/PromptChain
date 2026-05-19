@@ -13,6 +13,26 @@
 - **[Story]**: Which user story this belongs to (`US1`, `US2`, `US3`)
 - 所有任务都包含精确文件路径
 
+## Current PR Candidate Snapshot (`PR #5`, not merged into `dev`)
+
+说明：
+- 本节记录当前候选分支事实；下方原任务清单保留为 Spec Kit 规划痕迹。
+- `dev@8218f54` 尚未包含统一错误体系，不能把本节内容当成主线已完成事实。
+- PR #5：`code/feat-unified-error-system-current -> dev`，标题为“feat: 统一错误体系与前端错误归一化”。
+- PR #5 当前状态：open、mergeable，CodeQL checks 通过；未记录 reviewDecision，未合入 `dev`。
+
+| 状态 | Task IDs | 当前说明 |
+|---|---|---|
+| PR #5 候选已实现 | `T001` - `T019`, `T024`, `T025` | 后端统一错误基础设施、核心域迁移、邮件基础设施失败映射、前端 `frontend/src/lib/api.ts` 错误归一化已在候选分支中完成并通过后端目标测试与 CodeQL |
+| PR #5 候选部分覆盖 | `T020` - `T023` | 候选分支包含 workflow definition/version 相关 legacy alignment 进展，但合入前仍需以 PR diff 和 review 结论为准 |
+| 待主线归档 | `T026`, `T027` | quickstart / plan / contracts 最终状态应在 PR #5 合入后再回写为主线事实 |
+| 明确未完成 | 后续 frontend-consumer | `frontend/src/lib/auth.ts`、部分设置页、WorkflowEditor hook 等仍可能保留旧 `detail` 错误解析路径，需要 PR #5 合入后继续派工 |
+
+验证边界：
+- 已知 PR #5 创建前本地验证：`git diff --check dev...HEAD` 通过；目标后端文件 ruff check 通过；`JWT_SECRET_KEY=test-secret uv run pytest tests/test_error_system_foundation.py tests/test_runtime_route_access_control.py tests/test_workflow_response_contract.py -q` 结果为 `40 passed`。
+- 前端 lint/build 未运行：`frontend/node_modules` 缺失时无法解析 eslint 包。
+- 未启动服务，未执行 live smoke。
+
 ## Phase 1: Setup (Shared Infrastructure)
 
 **Purpose**: 建立 `005` 的实现骨架与统一错误模块落点。

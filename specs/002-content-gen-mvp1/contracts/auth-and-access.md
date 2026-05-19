@@ -1,12 +1,13 @@
 # Auth & Access Contract
 
-## 0. Current Baseline (`dev@c396a48`)
+## 0. Current Baseline (`dev@8218f54`)
 
 - `viewer` 现在已经具备 `workflow.read` + `workflow.execute`，可运行已发布工作流并处理自己的 Gate。
 - 运行态、trace、artifact 访问现在同时校验 `workspace_id` 与 `user_id` 归属；`admin` / `owner` 才能跨用户查看同工作空间数据。
 - 当前工作空间级“暂停访问”通过 membership role 编码实现，是 workspace-scoped 行为，不再直接依赖全局 `User.status`。
 - `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 的 auth-flow 页面和接口闭环已在 `dev`。
-- 鉴权域当前剩余主线只剩 `T042` 验收闭环与 `T046` 错误路径 polish，不再是 auth-flow 缺失。
+- 鉴权域当前剩余主线只剩 `T042` 验收闭环，不再是 auth-flow 缺失。
+- 统一错误体系正在 PR #5 中推进；合入前，当前主线错误响应仍按 FastAPI `HTTPException` 与局部 `Result` 兼容风格对待。
 
 ## 1. Session Transport
 
