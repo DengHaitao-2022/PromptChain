@@ -729,6 +729,9 @@ export default function WorkflowDetailPage() {
     React.useEffect(() => {
         setCompletedView('reader');
         setExportStatus(null);
+        setAutoFollowStreaming(true);
+        lastAutoFocusKeyRef.current = null;
+        lastStreamingSectionRef.current = null;
     }, [workflowId]);
 
     React.useEffect(() => {
@@ -1374,8 +1377,13 @@ export default function WorkflowDetailPage() {
                 return;
             }
 
+            const bottom = contentBottomRef.current;
+            if (!bottom) {
+                return;
+            }
+
             setAutoFollowStreaming(
-                isNearElementBottom(contentBottomRef.current, 240)
+                isNearElementBottom(bottom, 240)
             );
         };
 
@@ -1387,36 +1395,45 @@ export default function WorkflowDetailPage() {
         if (!isContentStreaming) return;
         if (!autoFollowRef.current) return;
 
-        markProgrammaticScroll(120);
+        window.requestAnimationFrame(() => {
+            const bottom = contentBottomRef.current;
+            if (!bottom) return;
 
-        contentBottomRef.current?.scrollIntoView({
-            behavior: 'auto',
-            block: 'end',
+            markProgrammaticScroll(180);
+            bottom.scrollIntoView({
+                behavior: 'auto',
+                block: 'end',
+            });
         });
     }, [isContentStreaming, activeStreamingSectionId, activeStreamingContentLength, markProgrammaticScroll]);
 
     React.useEffect(() => {
         if (!activeStreamingSectionId) return;
+        if (!isContentStreaming) return;
 
         if (lastStreamingSectionRef.current !== activeStreamingSectionId) {
             lastStreamingSectionRef.current = activeStreamingSectionId;
             setAutoFollowStreaming(true);
 
             window.requestAnimationFrame(() => {
-                markProgrammaticScroll(800);
-                contentSectionRef.current?.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'start',
+                const bottom = contentBottomRef.current;
+                if (!bottom) return;
+
+                markProgrammaticScroll(300);
+                bottom.scrollIntoView({
+                    behavior: 'auto',
+                    block: 'end',
                 });
             });
         }
-    }, [activeStreamingSectionId, markProgrammaticScroll]);
+    }, [activeStreamingSectionId, isContentStreaming, markProgrammaticScroll]);
 
     React.useEffect(() => {
         if (!workflow || loading) return;
 
         const target = getWorkflowFocusTarget(workflow, isContentStreaming);
         if (!target) return;
+        if (target === 'content') return;
 
         const key = `${workflowId}:${workflow.status}:${target}:${activeStreamingSectionId ?? ''}`;
 

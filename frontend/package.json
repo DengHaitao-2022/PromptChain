@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "yjs": "HOST=localhost PORT=8080 y-websocket",
+    "yjs": "HOST=localhost PORT=18080 y-websocket",
     "dev:prod": "concurrently \"npm run yjs\" \"npm run dev\"",
     "build": "next build",
     "start": "next start",
