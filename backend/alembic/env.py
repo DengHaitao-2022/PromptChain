@@ -31,10 +31,10 @@ target_metadata = Base.metadata
 
 def _database_url() -> str:
     """读取迁移连接串，保持与应用 DATABASE_URL 一致。"""
-    return os.getenv(
-        "DATABASE_URL",
-        config.get_main_option("sqlalchemy.url"),
-    )
+    database_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    if not database_url:
+        raise RuntimeError("缺少数据库连接串：请设置 DATABASE_URL 或 alembic.ini 的 sqlalchemy.url")
+    return database_url
 
 
 def run_migrations_offline() -> None:

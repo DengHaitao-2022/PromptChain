@@ -70,6 +70,7 @@ uv run alembic stamp 20260520_0001
 
 - `Base.metadata.create_all`
 - `_runtime_schema_statements()` 中的历史幂等 ALTER / INDEX
+- `WorkflowDefinitionService.ensure_schema()` 中的历史幂等 ALTER / UPDATE
 
 这是为了不破坏本地开发启动路径。生产环境应设置：
 
@@ -77,14 +78,14 @@ uv run alembic stamp 20260520_0001
 DATABASE_AUTO_SCHEMA_INIT=false
 ```
 
-设置后应用不会在 `PostgresArtifactStore.init_db()` 中执行 `create_all` 或 runtime schema ALTER。生产库必须由 Alembic 管理 schema 版本。
+设置后应用不会在 `PostgresArtifactStore.init_db()` 中执行 `create_all` 或 runtime schema ALTER，也不会在 `WorkflowDefinitionService.ensure_schema()` 中执行工作流定义表的 runtime ALTER / UPDATE。生产库必须由 Alembic 管理 schema 版本。
 
 ## 手写 ALTER 归属与移除计划
 
 现有手写迁移归属如下：
 
 - `backend/db/postgres_store.py::_runtime_schema_statements()`：已归属 `20260520_0001` baseline，后续只保留开发兼容。
-- `backend/services/workflow_definition_service.py::_POSTGRES_SCHEMA_STATEMENTS`：发布字段与版本快照字段已归属 `20260520_0001` baseline；该文件本轮未在允许修改范围内，后续应在确认所有环境完成 Alembic stamp/upgrade 后移除 runtime ALTER。
+- `backend/services/workflow_definition_service.py::_POSTGRES_SCHEMA_STATEMENTS`：发布字段与版本快照字段已归属 `20260520_0001` baseline；当前已受 `DATABASE_AUTO_SCHEMA_INIT=false` 约束，后续应在确认所有环境完成 Alembic stamp/upgrade 后移除 runtime ALTER。
 - `backend/db/migrations/002_audit_log_traceability.sql`：已归属 `20260520_0001` baseline，保留为历史参考。
 - `backend/db/migrations/003_membership_unique_workspace.sql`：已归属 `20260520_0001` baseline，保留为历史参考。
 

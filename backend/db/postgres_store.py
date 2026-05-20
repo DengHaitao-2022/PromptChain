@@ -77,25 +77,38 @@ def _runtime_schema_statements(database_url: str) -> list[str]:
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_category VARCHAR(50)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_type VARCHAR(50)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS outcome VARCHAR(20)",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_snapshot JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_snapshot JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata_json JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS schema_version VARCHAR(20) DEFAULT 'legacy'",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_snapshot JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_snapshot JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata_json JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS schema_version VARCHAR(20)",
         """
         DO $$
         BEGIN
             IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'uq_membership_user_workspace'
+            ) AND EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE tablename = 'memberships'
+                  AND indexname = 'uq_membership_user_workspace'
+            ) THEN
+                ALTER TABLE memberships
+                    ADD CONSTRAINT uq_membership_user_workspace UNIQUE USING INDEX uq_membership_user_workspace;
+            ELSIF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'uq_membership_user_workspace'
+            ) AND NOT EXISTS (
                 SELECT 1
                 FROM memberships
                 GROUP BY user_id, workspace_id
                 HAVING COUNT(*) > 1
             ) THEN
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_user_workspace
-                    ON memberships (user_id, workspace_id);
+                ALTER TABLE memberships
+                    ADD CONSTRAINT uq_membership_user_workspace UNIQUE (user_id, workspace_id);
             END IF;
         END $$;
         """,
-        "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id) WHERE event_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_request_id ON audit_logs (request_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_trace_id ON audit_logs (trace_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_outcome ON audit_logs (outcome)",
