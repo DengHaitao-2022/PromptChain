@@ -61,6 +61,7 @@ function applyAuthState(
   setState: Dispatch<SetStateAction<AuthState>>,
   authState: AuthState | null,
 ) {
+  // 身份刷新会影响整棵控制台树，放进 transition 里减少导航时的阻塞感。
   startTransition(() => {
     setState(authState ?? EMPTY_AUTH_STATE);
   });
@@ -73,6 +74,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   });
 
   const refreshUser = useCallback(async () => {
+    // `/api/me` 是前端登录态的事实源，登录、切换工作空间后都回到这里同步。
     const authState = await getCurrentUser();
     applyAuthState(setState, authState);
   }, []);
@@ -135,6 +137,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const value: AuthContextType = {
     ...state,
+    // 认证成功但没有可访问工作空间时，控制台只展示安全的空状态。
     hasWorkspaceAccess: Boolean(state.workspace && state.role),
     login,
     logout,

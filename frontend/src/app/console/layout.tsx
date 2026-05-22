@@ -32,6 +32,7 @@ type NavItem = {
   href: string;
   icon: LucideIcon;
   exact?: boolean;
+  // 带 resource/action 的导航项会跟随当前角色权限自动显隐。
   resource?: 'workflow' | 'workflow_run' | 'member' | 'model_provider' | 'secret' | 'audit_log';
   action?: 'read';
 };
@@ -94,6 +95,7 @@ function isVisible(
   item: NavItem,
   hasPermission: (resource: NonNullable<NavItem['resource']>, action: 'read') => boolean,
 ) {
+  // 未声明权限的入口默认可见，例如控制台首页和设置总览。
   if (!item.resource || !item.action) {
     return true;
   }
@@ -118,6 +120,7 @@ function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) 
           ...visibleManagedSettingsItems,
         ]
       : [];
+  // 当前位于设置页时默认展开分组，避免用户丢失所在位置。
   const [settingsOpen, setSettingsOpen] = useState(pathname.startsWith('/console/settings'));
 
   useEffect(() => {
@@ -126,7 +129,7 @@ function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) 
     }
   }, [pathname]);
 
-  // Automatically close sidebar when navigation occurs on mobile
+  // 移动端导航完成后自动收起侧栏，减少页面跳转后的遮挡。
   useEffect(() => {
     onClose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -253,6 +256,7 @@ function TopBar({ onMenuClick }: { onMenuClick: () => void }) {
       return;
     }
 
+    // 切换工作空间会刷新服务端 Cookie 中的 workspace 上下文。
     setSwitching(true);
     try {
       await switchWorkspace(workspaceId);
@@ -336,6 +340,7 @@ function ConsoleContent({ children }: { children: ReactNode }) {
       return;
     }
 
+    // 守卫顺序必须从认证到工作空间再到页面权限，避免暴露无权页面内容。
     if (!isAuthenticated) {
       router.replace('/login');
       return;
@@ -393,6 +398,7 @@ function ConsoleContent({ children }: { children: ReactNode }) {
 
 export default function ConsoleLayout({ children }: { children: ReactNode }) {
   return (
+    // 控制台独立挂载认证上下文，公开页面无需承担登录态初始化成本。
     <AuthProvider>
       <ConsoleContent>{children}</ConsoleContent>
     </AuthProvider>
