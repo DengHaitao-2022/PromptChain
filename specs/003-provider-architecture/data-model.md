@@ -4,6 +4,8 @@
 
 本特性不引入数据库实体，也不修改持久化模型。这里的数据模型仅描述 provider 层内部需要保持稳定的配置对象、注册项、读取结果和错误状态，作为实现与测试的共同语义基础。
 
+> 当前主线说明（2026-05-23）：003 特性最初锁定 Google provider 最小接入；当前 `dev@699bf53` 主线的 provider registry 已继续扩展到 `openai / anthropic / google / github / ollama`，并通过 `GITHUB_MODEL_TOKEN` 支持 GitHub Models。
+
 ## 1. Provider Settings
 
 ### ProviderSettings
@@ -13,11 +15,12 @@
 
 | Field | Meaning | Rules |
 |---|---|---|
-| `default_provider` | 当前默认 provider | 允许值为 `openai` / `anthropic` / `ollama` / `google` |
+| `default_provider` | 当前默认 provider | 允许值为 `openai` / `anthropic` / `ollama` / `google` / `github` |
 | `default_model_name` | 当前默认模型覆盖值 | 可为空；若为空则回退到 provider 自身默认模型 |
 | `openai_api_key` | OpenAI 凭证 | 仅 `openai` 需要 |
 | `anthropic_api_key` | Anthropic 凭证 | 仅 `anthropic` 需要 |
 | `gemini_api_key` | Google Gemini 凭证 | 仅 `google` 需要 |
+| `github_model_token` | GitHub Models 凭证 | 仅 `github` 需要 |
 | `ollama_base_url` | Ollama 服务地址 | 仅 `ollama` 需要 |
 
 **Validation rules**
@@ -39,7 +42,7 @@
 | `provider_class` | provider 实现类 | 必须实现统一 `LLMProvider` 接口 |
 | `credential_field` | 对应凭证字段名 | 无凭证 provider 可为空 |
 | `default_model_name` | provider 级默认模型 | 当全局默认模型未设置时使用 |
-| `supports_structured_output` | 是否支持统一结构化输出路径 | 本轮四个 provider 都应为 `true` |
+| `supports_structured_output` | 是否支持统一结构化输出路径 | 003 原始四个 provider 与当前主线新增的 `github` 都应保持统一路径 |
 
 **Canonical provider set**
 
@@ -47,6 +50,7 @@
 - `anthropic`
 - `ollama`
 - `google`
+- `github`
 
 ## 3. Model Access
 

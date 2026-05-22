@@ -122,9 +122,9 @@ backend/
 
 ## 当前实现边界
 
-- 当前主线基线为 `dev@8218f54`。
+- 当前主线基线为 `dev@699bf53`。
 - 内容运行态默认走 PostgreSQL-backed store；`RUNTIME_STORE_BACKEND=memory` 仅用于开发回退。
 - 内容工作流 API 已覆盖启动、澄清、提纲审批、事实核查审批、手动暂停/恢复、运行列表、SSE 快照流、节点重跑、重跑历史和 DOCX 导出。
 - 工作流定义/版本 API 已覆盖 CRUD、校验、编译预览、发布、版本对比与恢复。
 - 统一错误体系仍在 PR #5，尚未进入 `dev`；当前主线仍以 FastAPI `HTTPException` / `Result` 兼容风格为主。
-- 生产 CI/CD 与部署基线仍在 PR #4，且 PR CI 仍有失败项，不能作为已完成生产部署说明使用。
+- 生产 CI/CD 与部署基线仍在 PR #4；当前 PR 检查已通过，但合入前仍只能视为候选部署基线。

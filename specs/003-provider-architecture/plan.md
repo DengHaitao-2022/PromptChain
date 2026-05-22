@@ -3,6 +3,8 @@
 **Branch**: `003-provider-architecture` | **Date**: `2026-03-13` | **Spec**: [`spec.md`](./spec.md)
 **Input**: Feature specification from `/specs/003-provider-architecture/spec.md`
 
+> 当前主线说明（2026-05-23）：本计划原始目标是以最小方式补齐 Google provider。当前 `dev@699bf53` 已继续扩展到 `openai / anthropic / google / github / ollama` 五类 provider，其中 GitHub Models 使用 `GITHUB_MODEL_TOKEN`。
+
 ## Summary
 
 本计划聚焦一次后端最小增量升级：在不改变 `get_llm()`、`get_structured_llm()`、`get_current_model_info()` 三个统一入口的前提下，为 PromptChain 当前的 LangChain provider 抽象补齐 `google` 支持，并在 `backend/core/config.py` 中正式接入 `GEMINI_API_KEY`。实现路径保持在现有 `FastAPI + LangGraph + SQLAlchemy` 架构内，通过 `backend/services/llm_provider.py` 的静态 provider registry、一个最小 `GoogleProvider`、显式配置字段、文档更新和单元回归测试完成闭环，不扩展为插件系统、热加载、模型别名或密钥轮换能力。
@@ -87,7 +89,7 @@ specs/
 
 1. 在 `backend/pyproject.toml` 增加 `langchain-google-genai`，不调整现有框架或服务边界。
 2. 在 `backend/core/config.py` 中显式加入 `GEMINI_API_KEY` 配置项，保持 `DEFAULT_LLM_PROVIDER` 与 `DEFAULT_MODEL_NAME` 语义不变。
-3. 在 `backend/.env.example` 与 README / `quickstart.md` 中把支持列表更新为 `openai / anthropic / ollama / google`，删除“代码尚未支持 google provider”的过期提示。
+3. 在 `backend/.env.example` 与 README / `quickstart.md` 中把支持列表更新为 Google-capable provider baseline，删除“代码尚未支持 google provider”的过期提示。当前主线支持 `openai / anthropic / google / github / ollama`。
 
 ### Slice 2: provider registry 与 GoogleProvider
 
@@ -107,7 +109,7 @@ specs/
 ### Automated Test Points
 
 - 新增 `backend/tests/test_llm_provider.py`，覆盖以下最小断言：
-  - registry 支持列表包含 `openai / anthropic / ollama / google`
+  - registry 支持列表至少包含 Google-capable baseline；当前主线完整列表为 `openai / anthropic / google / github / ollama`
   - `get_llm(provider="google")` 能构造 `ChatGoogleGenerativeAI` 路径，且显式传递 `google_api_key`
   - `get_structured_llm()` 在 google provider 下仍调用 `with_structured_output(...)`
   - `get_current_model_info()` 在默认 provider / 默认模型覆盖 / provider 初始化失败时保持既有回退语义
