@@ -32,7 +32,7 @@ interface DashboardData {
   today_failed_runs: number;
   today_avg_duration_ms: number;
   total_runs: number;
-  total_members: number;
+  total_members?: number | null;
   recent_runs: Array<{
     id: string;
     workflow_name: string;
@@ -75,6 +75,15 @@ function getStatusToneClass(status: string) {
   }
 }
 
+async function parseDashboardError(response: Response, fallback: string) {
+  try {
+    const error = (await response.json()) as { detail?: string; message?: string };
+    return error.detail || error.message || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function DashboardPage() {
   const { workspace, hasPermission } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -96,7 +105,7 @@ export default function DashboardPage() {
         const response = await authenticatedFetch(apiUrl('/admin/dashboard'));
 
         if (!response.ok) {
-          throw new Error('加载数据失败');
+          throw new Error(await parseDashboardError(response, '加载数据失败'));
         }
 
         const result = await response.json();
@@ -123,6 +132,8 @@ export default function DashboardPage() {
 
   const failureRate =
     data && data.today_runs > 0 ? `${((data.today_failed_runs / data.today_runs) * 100).toFixed(1)}%` : '0%';
+  const canReadMembers = hasPermission('member', 'read');
+  const shouldShowMemberCount = canReadMembers && data?.total_members != null;
 
   const statItems: StatItem[] = [
     {
@@ -190,10 +201,12 @@ export default function DashboardPage() {
           <strong className={styles.heroPanelValue}>{data?.total_runs || 0}</strong>
           <p className={styles.heroPanelText}>累计运行次数</p>
           <div className={styles.heroPanelMeta}>
-            <div>
-              <span>成员数</span>
-              <strong>{data?.total_members || 0}</strong>
-            </div>
+            {shouldShowMemberCount && (
+              <div>
+                <span>成员数</span>
+                <strong>{data?.total_members ?? 0}</strong>
+              </div>
+            )}
             <div>
               <span>今日成功</span>
               <strong>{data?.today_success_runs || 0}</strong>

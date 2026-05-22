@@ -377,7 +377,7 @@ def test_runs_list_returns_current_user_visible_runs(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert [run["id"] for run in body["runs"]] == ["wf-124", "wf-123"]
-    assert set(body["runs"][0].keys()) == {
+    assert {
         "id",
         "workflow_name",
         "status",
@@ -386,7 +386,15 @@ def test_runs_list_returns_current_user_visible_runs(monkeypatch):
         "started_at",
         "completed_at",
         "total_duration_ms",
-    }
+    }.issubset(body["runs"][0].keys())
+    assert {
+        "workflow_definition_id",
+        "workflow_version_id",
+        "runtime_plan",
+        "runtime_progress",
+        "gate",
+        "pause",
+    }.issubset(body["runs"][0].keys())
 
 
 def test_runs_list_admin_scope_still_excludes_foreign_workspace(monkeypatch):
