@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.config import get_settings
 from services.llm_provider import LLMProviderFactory
 
+EXPECTED_SUPPORTED_PROVIDERS = {"openai", "anthropic", "ollama", "google", "github"}
+
 
 def _reset_provider_cache(monkeypatch):
     get_settings.cache_clear()
@@ -20,6 +22,12 @@ def _reset_provider_cache(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GITHUB_MODEL_TOKEN", raising=False)
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+
+
+def test_supported_provider_registry_matches_current_runtime_contract(monkeypatch):
+    _reset_provider_cache(monkeypatch)
+
+    assert set(LLMProviderFactory.get_supported_provider_names()) == EXPECTED_SUPPORTED_PROVIDERS
 
 
 def test_github_provider_is_registered(monkeypatch):

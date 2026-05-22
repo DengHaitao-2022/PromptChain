@@ -39,10 +39,13 @@ uvicorn app:app --reload --port 8000
 uv add package-name
 
 # 添加开发依赖
-uv add --dev pytest
+uv add --dev pytest pytest-asyncio
 
 # 运行Python脚本
 uv run python script.py
+
+# 运行后端测试（包含异步测试插件）
+uv run --extra dev pytest -q
 
 # 更新依赖
 uv sync
