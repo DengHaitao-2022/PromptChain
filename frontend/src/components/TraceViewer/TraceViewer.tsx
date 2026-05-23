@@ -345,19 +345,37 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
             <div className={styles.timelineSection}>
                 <h4 className={styles.sectionTitle}>执行时间线</h4>
                 <div className={styles.timeline}>
-                    {trace.timeline.map((event, index) => (
-                        <div key={`${event.event}-${event.timestamp}-${index}`} className={styles.timelineItem}>
-                            <div className={styles.timelineTime}>{formatTime(event.timestamp)}</div>
-                            <div className={styles.timelineDot} />
-                            <div className={styles.timelineContent}>
-                                <span className={styles.timelineIcon}>{getEventIcon(event.event)}</span>
-                                <span className={styles.timelineText}>{getEventDescription(event)}</span>
+                    {trace.timeline.map((event, index) => {
+                        const timelineArtifact = typeof event.artifact_id === 'string'
+                            ? trace.artifacts[event.artifact_id]
+                            : undefined;
+
+                        return (
+                            <div key={`${event.event}-${event.timestamp}-${index}`} className={styles.timelineItem}>
+                                <div className={styles.timelineTime}>{formatTime(event.timestamp)}</div>
+                                <div className={styles.timelineDot} />
+                                <div className={styles.timelineContent}>
+                                    <div className={styles.timelineEventHeader}>
+                                        <span className={styles.timelineIcon}>{getEventIcon(event.event)}</span>
+                                        <span className={styles.timelineText}>{getEventDescription(event)}</span>
+                                    </div>
+                                    {/* 时间线产物直接复用 trace 快照，避免为展开预览额外请求接口。 */}
+                                    {timelineArtifact ? (
+                                        <TimelineArtifactPreview artifact={timelineArtifact} />
+                                    ) : null}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
         </div>
+    );
+}
+
+function TimelineArtifactPreview({ artifact }: { artifact: Record<string, unknown> }) {
+    return (
+        <ArtifactCard artifact={artifact} className={styles.timelineArtifactCard} />
     );
 }
 
@@ -379,19 +397,33 @@ function ArtifactList({
                 {artifacts.map((artifact, index) => {
                     const artifactId = asString(artifact.id, `artifact-${index}`);
                     return (
-                        <details key={artifactId} className={styles.artifactCard}>
-                            <summary>
-                                <span>{asString(artifact.type, 'artifact')}</span>
-                                <code>{artifactId.slice(0, 8)}...</code>
-                                {typeof artifact.version === 'number' && (
-                                    <small>v{artifact.version}</small>
-                                )}
-                            </summary>
-                            <pre>{getArtifactText(artifact.content)}</pre>
-                        </details>
+                        <ArtifactCard key={artifactId} artifact={artifact} className={styles.artifactCard} />
                     );
                 })}
             </div>
         </div>
+    );
+}
+
+function ArtifactCard({
+    artifact,
+    className,
+}: {
+    artifact: Record<string, unknown>;
+    className: string;
+}) {
+    const artifactId = asString(artifact.id, 'artifact');
+
+    return (
+        <details className={className}>
+            <summary>
+                <span>{asString(artifact.type, 'artifact')}</span>
+                <code>{artifactId.slice(0, 8)}...</code>
+                {typeof artifact.version === 'number' && (
+                    <small>v{artifact.version}</small>
+                )}
+            </summary>
+            <pre>{getArtifactText(artifact.content)}</pre>
+        </details>
     );
 }
