@@ -253,33 +253,58 @@
     line-height: 1.6;
 }
 
-.artifactCard summary {
+.artifactCard summary,
+.timelineArtifactCard summary {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
     padding: var(--spacing-sm);
     color: var(--color-text-primary);
     cursor: pointer;
+    transition: background-color var(--transition-fast);
 }
 
-.artifactCard code {
+.artifactCard summary:hover,
+.timelineArtifactCard summary:hover {
+    background: color-mix(in srgb, var(--color-brand-primary) 7%, transparent);
+}
+
+.artifactCard summary:focus-visible,
+.timelineArtifactCard summary:focus-visible {
+    background: color-mix(in srgb, var(--color-brand-primary) 7%, transparent);
+    outline: 2px solid var(--color-border-hover);
+    outline-offset: -2px;
+}
+
+.artifactCard code,
+.timelineArtifactCard code {
+    min-width: 0;
     color: var(--color-text-secondary);
     font-family: var(--font-mono);
     font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.artifactCard small {
+.artifactCard small,
+.timelineArtifactCard small {
     margin-left: auto;
     color: var(--color-text-muted);
 }
 
-.artifactCard pre {
+.artifactBody {
     max-height: 420px;
     overflow: auto;
-    margin: 0;
     padding: var(--spacing-sm);
     border-top: 1px solid var(--color-border);
     color: var(--color-text-secondary);
+    background: var(--color-bg-elevated);
+}
+
+.artifactBody > pre {
+    margin: 0;
+    padding: 0;
     font-size: 0.78rem;
     line-height: 1.65;
     white-space: pre-wrap;
@@ -324,6 +349,7 @@
     align-items: center;
     gap: var(--spacing-md);
     padding: var(--spacing-sm) 0;
+    min-width: 0;
 }
 
 .timelineTime {
@@ -349,20 +375,23 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
+    flex: 1 1 auto;
     gap: var(--spacing-sm);
-    padding: var(--spacing-xs) var(--spacing-sm);
-    background: var(--color-bg-primary);
-    border-radius: var(--radius-sm);
+    padding: 0;
+    background: transparent;
     margin-left: var(--spacing-md);
     min-width: 0;
-    max-width: 100%;
 }
 
 .timelineEventHeader {
     display: inline-flex;
     align-items: center;
     gap: var(--spacing-sm);
+    max-width: 100%;
     min-width: 0;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-primary);
 }
 
 .timelineIcon {
@@ -377,44 +406,16 @@
 }
 
 .timelineArtifactCard {
-    width: min(680px, 100%);
+    width: min(100%, 920px);
+    overflow: hidden;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     background: var(--color-bg-secondary);
+    box-shadow: var(--shadow-sm);
 }
 
-.timelineArtifactCard summary {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-sm);
-    color: var(--color-text-primary);
-    cursor: pointer;
-}
-
-.timelineArtifactCard code {
-    min-width: 0;
-    color: var(--color-text-secondary);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-}
-
-.timelineArtifactCard small {
-    margin-left: auto;
-    color: var(--color-text-muted);
-}
-
-.timelineArtifactCard pre {
-    max-height: 420px;
-    overflow: auto;
-    margin: 0;
-    padding: var(--spacing-sm);
-    border-top: 1px solid var(--color-border);
-    color: var(--color-text-secondary);
-    font-size: 0.78rem;
-    line-height: 1.65;
-    white-space: pre-wrap;
-    word-break: break-word;
+.timelineArtifactCard .artifactBody {
+    padding: var(--spacing-md);
 }
 
 @keyframes detailsEnter {
@@ -452,5 +453,9 @@
 
     .timelineContent {
         margin-left: 0;
+    }
+
+    .timelineArtifactCard {
+        width: 100%;
     }
 }
