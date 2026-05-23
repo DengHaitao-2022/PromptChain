@@ -24,6 +24,18 @@ import styles from '../settings.module.css';
 
 const MANAGEABLE_ROLES: Exclude<Role, 'owner'>[] = ['viewer', 'editor', 'admin'];
 
+function getManageableRoleDraft(
+  member: WorkspaceMember,
+  roleDrafts: Record<string, Exclude<Role, 'owner'>>,
+): Exclude<Role, 'owner'> | null {
+  // 拥有者不是可调角色，返回 null 避免禁用下拉误回退为“查看者”。
+  if (member.role === 'owner') {
+    return null;
+  }
+
+  return roleDrafts[member.id] ?? member.role;
+}
+
 function getWorkspaceAccessLabel(status: WorkspaceMember['workspace_access']) {
   if (status === 'suspended') {
     return '访问已暂停';
@@ -375,7 +387,7 @@ export default function MembersPage() {
             {sortedMembers.map((member) => {
               const isOwner = member.role === 'owner';
               const isCurrentUser = member.user_id === user?.id;
-              const roleDraft = roleDrafts[member.id] || 'viewer';
+              const roleDraft = getManageableRoleDraft(member, roleDrafts);
               const isRoleSaving = pendingMembershipId === member.id;
               const isStatusSaving = pendingUserId === member.user_id;
 
@@ -415,54 +427,60 @@ export default function MembersPage() {
 
                   {canManageMembers ? (
                     <div className={styles.actionPanel}>
-                      <div className={styles.actionsRow}>
-                        <select
-                          value={roleDraft}
-                          onChange={(event) =>
-                            setRoleDrafts((current) => ({
-                              ...current,
-                              [member.id]: event.target.value as Exclude<Role, 'owner'>,
-                            }))
-                          }
-                          className={styles.select}
-                          disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving}
-                        >
-                          {MANAGEABLE_ROLES.map((role) => (
-                            <option key={role} value={role}>
-                              {getRoleLabel(role)}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          className={`${styles.button} ${styles.buttonSmall}`}
-                          disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving || roleDraft === member.role}
-                          onClick={() => void handleRoleUpdate(member)}
-                          type="button"
-                        >
-                          {isRoleSaving ? '保存中...' : '保存角色'}
-                        </button>
-                      </div>
+                      {roleDraft === null ? (
+                        <p className={styles.helperText}>拥有者不可在此处调整角色或访问状态。</p>
+                      ) : (
+                        <>
+                          <div className={styles.actionsRow}>
+                            <select
+                              value={roleDraft}
+                              onChange={(event) =>
+                                setRoleDrafts((current) => ({
+                                  ...current,
+                                  [member.id]: event.target.value as Exclude<Role, 'owner'>,
+                                }))
+                              }
+                              className={styles.select}
+                              disabled={isCurrentUser || isRoleSaving || isStatusSaving}
+                            >
+                              {MANAGEABLE_ROLES.map((role) => (
+                                <option key={role} value={role}>
+                                  {getRoleLabel(role)}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              className={`${styles.button} ${styles.buttonSmall}`}
+                              disabled={isCurrentUser || isRoleSaving || isStatusSaving || roleDraft === member.role}
+                              onClick={() => void handleRoleUpdate(member)}
+                              type="button"
+                            >
+                              {isRoleSaving ? '保存中...' : '保存角色'}
+                            </button>
+                          </div>
 
-                      <div className={styles.actionsRow}>
-                        <button
-                          className={`${styles.button} ${styles.buttonSmall} ${
-                            member.workspace_access === 'suspended' ? '' : styles.buttonDanger
-                          }`}
-                          disabled={isOwner || isCurrentUser || isStatusSaving}
-                          onClick={() => void handleToggleWorkspaceAccess(member)}
-                          type="button"
-                        >
-                          {isStatusSaving ? '处理中...' : member.workspace_access === 'suspended' ? '恢复访问' : '暂停访问'}
-                        </button>
-                        <button
-                          className={`${styles.button} ${styles.buttonSmall} ${styles.buttonGhost}`}
-                          disabled={isOwner || isCurrentUser || isRoleSaving || isStatusSaving}
-                          onClick={() => void handleRemoveMember(member)}
-                          type="button"
-                        >
-                          移除成员
-                        </button>
-                      </div>
+                          <div className={styles.actionsRow}>
+                            <button
+                              className={`${styles.button} ${styles.buttonSmall} ${
+                                member.workspace_access === 'suspended' ? '' : styles.buttonDanger
+                              }`}
+                              disabled={isCurrentUser || isStatusSaving}
+                              onClick={() => void handleToggleWorkspaceAccess(member)}
+                              type="button"
+                            >
+                              {isStatusSaving ? '处理中...' : member.workspace_access === 'suspended' ? '恢复访问' : '暂停访问'}
+                            </button>
+                            <button
+                              className={`${styles.button} ${styles.buttonSmall} ${styles.buttonGhost}`}
+                              disabled={isCurrentUser || isRoleSaving || isStatusSaving}
+                              onClick={() => void handleRemoveMember(member)}
+                              type="button"
+                            >
+                              移除成员
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ) : null}
                 </article>
