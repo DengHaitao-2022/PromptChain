@@ -21,6 +21,7 @@
   <a href="#核心能力">核心能力</a> ·
   <a href="#工作流总览">工作流总览</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#生产部署基线">生产部署基线</a> ·
   <a href="#系统架构">系统架构</a> ·
   <a href="#当前边界与后续方向">当前边界与后续方向</a>
 </p>
@@ -152,6 +153,18 @@ npm run dev
 - 前端：`http://localhost:3000`
 - 后端：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`
+
+## 生产部署基线
+
+仓库提供最小生产工程基线，覆盖 PR CI、后端/前端 Docker 镜像和单机 Docker Compose 示例：
+
+- PR CI：`.github/workflows/pr-ci.yml`
+- 后端镜像：`backend/Dockerfile`
+- 前端镜像：`frontend/Dockerfile`
+- 生产 Compose 示例：`docker-compose.prod.yml`
+- 部署说明：`docs/deployment.md`
+
+该基线不引入 Kubernetes 或云厂商平台流水线。PR 进入 `dev` 或 `main` 时，CI 会执行后端 `ruff + pytest`，以及前端 `lint + typecheck + build`，可在 GitHub 分支保护中作为必需状态检查。
 
 ## 典型使用路径
 
