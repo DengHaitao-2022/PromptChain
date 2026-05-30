@@ -992,6 +992,52 @@
   line-height: 1.6;
 }
 
+.knowledgeOptions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--page-field-border);
+  border-radius: 14px;
+  background: var(--page-panel-bg-soft);
+}
+
+.knowledgeOptionsLabel {
+  color: var(--page-muted);
+  font-size: 0.68rem;
+  font-family: var(--page-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.knowledgeOptions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  color: var(--page-muted-strong);
+  font-size: 0.82rem;
+}
+
+.knowledgeOptions input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--page-accent);
+}
+
+.runUploadPicker input[type='file'] {
+  width: 132px;
+  max-width: 38vw;
+  color: var(--page-muted);
+  font-size: 0.76rem;
+}
+
+.runUploadSummary {
+  color: var(--page-accent-strong);
+  font-size: 0.78rem;
+}
+
 .inputHints {
   display: flex;
   flex-direction: column;

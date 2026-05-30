@@ -209,7 +209,7 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
         focusedNodeId ?? null
     );
     const gate = isRecord(trace.workflow.gate)
-        ? (trace.workflow.gate as WorkflowGateState)
+        ? (trace.workflow.gate as unknown as WorkflowGateState)
         : null;
 
     React.useEffect(() => {

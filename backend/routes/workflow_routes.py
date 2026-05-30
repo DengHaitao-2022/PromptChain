@@ -5,17 +5,19 @@
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import time
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 import routes.workflow_helpers as workflow_helpers
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
+from models.knowledge import RetrievalConfig
 from routes.workflow_helpers import (
     _GATE_STATUSES,
     ApproveFactCheckRequest,
@@ -45,6 +47,8 @@ from services.workflow_export_service import build_docx, build_workflow_export_p
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 logger = logging.getLogger(__name__)
 INTERNAL_SERVER_ERROR = "Internal server error"
+MAX_RUN_UPLOAD_FILES = 5
+MAX_RUN_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 def _format_sse_event(event: str, data: dict, event_id: str | None = None) -> str:
@@ -134,6 +138,111 @@ async def _record_workflow_audit(
         await session.commit()
 
 
+async def _start_workflow_run(
+    request: Request,
+    body: StartWorkflowRequest,
+    *,
+    run_upload_documents: list[dict] | None = None,
+) -> WorkflowResponse:
+    """启动工作流的共享实现，JSON 与带上传文件入口保持一致。"""
+    from graph import get_workflow
+
+    user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
+        request, "workflow", "execute"
+    )
+    workflow = get_workflow()
+    start_kwargs = {
+        "workflow_definition_id": body.workflow_definition_id,
+        "workflow_version_id": body.workflow_version_id,
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "model_provider_id": body.model_provider_id,
+        "model_name": body.model_name,
+        "retrieval_config": body.retrieval_config,
+        "run_upload_documents": run_upload_documents,
+    }
+    supported_parameters = set(inspect.signature(workflow.start).parameters)
+    compatible_kwargs = {
+        key: value for key, value in start_kwargs.items() if key in supported_parameters
+    }
+    result = await workflow.start(body.user_input, **compatible_kwargs)
+    workflow_run = await _get_workflow_run_if_exists(result["workflow_run_id"])
+    workflow_run = (
+        await workflow_helpers.annotate_workflow_run_ownership(
+            result["workflow_run_id"],
+            user_id,
+            workspace_id,
+        )
+        or workflow_run
+    )
+    status = _normalize_status(result["status"])
+    await _record_workflow_audit(
+        request,
+        actor_user_id=user_id,
+        workspace_id=workspace_id,
+        action=AuditAction.WORKFLOW_RUN,
+        workflow_run_id=result["workflow_run_id"],
+        detail={
+            "workflow_definition_id": body.workflow_definition_id,
+            "workflow_version_id": body.workflow_version_id,
+            "retrieval_enabled": (
+                body.retrieval_config.enabled if body.retrieval_config else False
+            ),
+            "run_upload_document_count": len(run_upload_documents or []),
+            "input_length": len(body.user_input),
+            "status": status,
+        },
+        workflow_run=workflow_run,
+    )
+    return _build_workflow_response(
+        workflow_run_id=result["workflow_run_id"],
+        status=status,
+        state=result["state"],
+        workflow_run=workflow_run,
+    )
+
+
+def _parse_retrieval_config_json(raw_config: str | None) -> RetrievalConfig | None:
+    """解析 multipart 表单中的检索配置。"""
+    if not raw_config:
+        return None
+    try:
+        parsed = json.loads(raw_config)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="retrieval_config 不是合法 JSON") from exc
+    try:
+        return RetrievalConfig.model_validate(parsed)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="retrieval_config 字段不合法") from exc
+
+
+async def _read_run_upload_documents(files: list[UploadFile] | None) -> list[dict]:
+    """读取本次运行上传文件，并在进入图执行前完成大小与数量校验。"""
+    uploads = files or []
+    if len(uploads) > MAX_RUN_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413, detail=f"本次运行最多上传 {MAX_RUN_UPLOAD_FILES} 个文件"
+        )
+
+    documents: list[dict] = []
+    total_bytes = 0
+    for upload in uploads:
+        content = await upload.read()
+        if not content:
+            continue
+        total_bytes += len(content)
+        if total_bytes > MAX_RUN_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="本次运行上传资料总大小超过 20MB")
+        documents.append(
+            {
+                "file_name": upload.filename or "untitled.txt",
+                "content": content,
+                "metadata": {"source": "run_upload"},
+            }
+        )
+    return documents
+
+
 @router.post("/start", response_model=WorkflowResponse)
 async def start_workflow(request: Request, body: StartWorkflowRequest):
     """
@@ -143,58 +252,50 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
     - needs_clarification: 需要澄清信息
     - awaiting_outline_approval: 等待提纲审批
     """
-    from graph import get_workflow
-
     try:
-        user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
-            request, "workflow", "execute"
-        )
-        workflow = get_workflow()
-        result = await workflow.start(
-            body.user_input,
-            workflow_definition_id=body.workflow_definition_id,
-            workflow_version_id=body.workflow_version_id,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            model_provider_id=body.model_provider_id,
-            model_name=body.model_name,
-        )
-        workflow_run = await _get_workflow_run_if_exists(result["workflow_run_id"])
-        workflow_run = (
-            await workflow_helpers.annotate_workflow_run_ownership(
-                result["workflow_run_id"],
-                user_id,
-                workspace_id,
-            )
-            or workflow_run
-        )
-        status = _normalize_status(result["status"])
-        await _record_workflow_audit(
-            request,
-            actor_user_id=user_id,
-            workspace_id=workspace_id,
-            action=AuditAction.WORKFLOW_RUN,
-            workflow_run_id=result["workflow_run_id"],
-            detail={
-                "workflow_definition_id": body.workflow_definition_id,
-                "workflow_version_id": body.workflow_version_id,
-                "input_length": len(body.user_input),
-                "status": status,
-            },
-            workflow_run=workflow_run,
-        )
-        return _build_workflow_response(
-            workflow_run_id=result["workflow_run_id"],
-            status=status,
-            state=result["state"],
-            workflow_run=workflow_run,
-        )
+        return await _start_workflow_run(request, body)
     except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("启动工作流失败")
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+
+
+@router.post("/start-with-uploads", response_model=WorkflowResponse)
+async def start_workflow_with_uploads(
+    request: Request,
+    user_input: str = Form(...),
+    workflow_definition_id: str | None = Form(None),
+    workflow_version_id: str | None = Form(None),
+    model_provider_id: str | None = Form(None),
+    model_name: str | None = Form(None),
+    retrieval_config: str | None = Form(None),
+    files: list[UploadFile] | None = File(None),
+) -> WorkflowResponse:
+    """启动工作流并先索引本次运行上传资料。"""
+    try:
+        documents = await _read_run_upload_documents(files)
+        config = _parse_retrieval_config_json(retrieval_config)
+        if documents:
+            base_config = config or RetrievalConfig()
+            config = base_config.model_copy(update={"enabled": True, "use_run_upload": True})
+        body = StartWorkflowRequest(
+            user_input=user_input,
+            workflow_definition_id=workflow_definition_id,
+            workflow_version_id=workflow_version_id,
+            model_provider_id=model_provider_id,
+            model_name=model_name,
+            retrieval_config=config,
+        )
+        return await _start_workflow_run(request, body, run_upload_documents=documents)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("启动带运行资料的工作流失败")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 

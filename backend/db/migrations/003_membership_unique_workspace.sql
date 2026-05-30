@@ -3,7 +3,17 @@
 
 BEGIN;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_user_workspace
-    ON memberships (user_id, workspace_id);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM memberships
+        GROUP BY user_id, workspace_id
+        HAVING COUNT(*) > 1
+    ) THEN
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_user_workspace
+            ON memberships (user_id, workspace_id);
+    END IF;
+END $$;
 
 COMMIT;

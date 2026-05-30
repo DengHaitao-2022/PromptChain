@@ -15,6 +15,7 @@ from core.time import to_utc_iso, to_utc_iso_or_none
 from graph.runtime_plan import canonical_runtime_plan
 from models.artifact import WorkflowRunStatus
 from models.auth_models import MemberRole
+from models.knowledge import RetrievalConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class StartWorkflowRequest(BaseModel):
     workflow_version_id: str | None = None
     model_provider_id: str | None = None
     model_name: str | None = None
+    retrieval_config: RetrievalConfig | None = None
 
 
 class ApproveOutlineRequest(BaseModel):
@@ -555,6 +557,11 @@ def _simplify_state(
                     }
                     for section_id, content in value.items()
                 }
+            else:
+                simplified[key] = value
+        elif key == "evidence_pack" or key == "retrieval_config":
+            if hasattr(value, "model_dump"):
+                simplified[key] = value.model_dump(mode="json")
             else:
                 simplified[key] = value
         elif key in ["clarification_questions"]:

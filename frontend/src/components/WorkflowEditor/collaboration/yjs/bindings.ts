@@ -52,11 +52,13 @@ export function useYjsBindings(
         snapshotKey: initialSnapshotKey,
     });
 
-    initialSourceRef.current = {
-        nodes: initialNodes ?? [],
-        edges: initialEdges ?? [],
-        snapshotKey: initialSnapshotKey,
-    };
+    useEffect(() => {
+        initialSourceRef.current = {
+            nodes: initialNodes ?? [],
+            edges: initialEdges ?? [],
+            snapshotKey: initialSnapshotKey,
+        };
+    }, [initialNodes, initialEdges, initialSnapshotKey]);
 
     useEffect(() => {
         const docId = workflowId || draftRoomRef.current;
