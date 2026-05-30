@@ -25,7 +25,8 @@ export type Resource =
   | 'api_key'
   | 'member'
   | 'workspace'
-  | 'audit_log';
+  | 'audit_log'
+  | 'knowledge_base';
 
 export interface User {
   id: string;
@@ -109,12 +110,14 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     workflow_run: ['read', 'create'],
     template: ['read'],
     workspace: ['read'],
+    knowledge_base: ['read'],
   },
   editor: {
     workflow: ['read', 'create', 'update', 'execute'],
     workflow_run: ['read', 'create'],
     template: ['read', 'create', 'update'],
     workspace: ['read'],
+    knowledge_base: ['read', 'create', 'update'],
   },
   admin: {
     workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
@@ -126,6 +129,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     member: ['read', 'create', 'update', 'delete', 'manage'],
     workspace: ['read', 'update', 'manage'],
     audit_log: ['read', 'export'],
+    knowledge_base: ['read', 'create', 'update', 'delete', 'manage'],
   },
   owner: {
     workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
@@ -137,6 +141,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     member: ['read', 'create', 'update', 'delete', 'manage'],
     workspace: ['read', 'update', 'delete', 'manage'],
     audit_log: ['read', 'export'],
+    knowledge_base: ['read', 'create', 'update', 'delete', 'manage'],
   },
 };
 
@@ -147,6 +152,7 @@ const CONSOLE_ROUTE_GUARDS: ConsoleRouteGuard[] = [
   { prefix: '/console/settings/models', resource: 'model_provider', action: 'read' },
   { prefix: '/console/settings/keys', resource: 'secret', action: 'read' },
   { prefix: '/console/settings/audit', resource: 'audit_log', action: 'read' },
+  { prefix: '/console/knowledge', resource: 'knowledge_base', action: 'read' },
   { prefix: '/console/runs', resource: 'workflow_run', action: 'read' },
   { prefix: '/console/workflows', resource: 'workflow', action: 'read' },
   { prefix: '/console/settings' },

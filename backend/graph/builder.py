@@ -31,6 +31,7 @@ from nodes import (
     generate_all_sections,
     generate_outline,
     parse_intent,
+    retrieve_knowledge,
     self_refine_loop,
 )
 from services import get_artifact_store, get_postgres_checkpoint_saver
@@ -72,6 +73,9 @@ def build_content_generation_graph():
     graph.add_node("parse_intent", parse_intent)
     graph.add_node("clarify_intent", clarify_intent)
 
+    # 知识检索
+    graph.add_node("retrieve_knowledge", retrieve_knowledge)
+
     # 提纲生成
     graph.add_node("generate_outline", generate_outline)
     graph.add_node("approve_outline", approve_outline)
@@ -96,11 +100,14 @@ def build_content_generation_graph():
 
     # 意图解析 → 条件分支
     graph.add_conditional_edges(
-        "parse_intent", should_clarify, {"clarify": "clarify_intent", "outline": "generate_outline"}
+        "parse_intent",
+        should_clarify,
+        {"clarify": "clarify_intent", "outline": "retrieve_knowledge"},
     )
 
     # 澄清后 → 提纲
-    graph.add_edge("clarify_intent", "generate_outline")
+    graph.add_edge("clarify_intent", "retrieve_knowledge")
+    graph.add_edge("retrieve_knowledge", "generate_outline")
 
     # 提纲生成 -> 条件分支(等待审批或继续)
     graph.add_conditional_edges(
@@ -171,6 +178,7 @@ def build_content_generation_graph():
             "generate_content",
             "self_refine",
             "check_facts",
+            "retrieve_knowledge",
             "approve_fact_check",
             "finalize",
         ],

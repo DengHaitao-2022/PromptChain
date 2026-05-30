@@ -46,6 +46,9 @@ SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据�
 ## 已完成章节（上下文）
 {previous_sections}
 
+## 可用证据
+{evidence_context}
+
 ## 重跑修订要求
 {rerun_instruction}
 
@@ -55,6 +58,8 @@ SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据�
 3. 控制字数在目标字数 ±10% 范围内
 4. 内容要有深度，避免泛泛而谈
 5. 使用适当的段落结构
+6. 如果存在可用证据，必须优先基于证据展开，并在段落中自然标注来源名称
+7. 证据不足的内容请明确使用“尚无资料证明”之类表述，不要编造引用
 
 请开始撰写{section_title}章节的内容："""
 
@@ -79,6 +84,49 @@ def _compile_generated_content(outline: Outline, sections: dict[str, str]) -> st
             continue
         compiled_sections.append(f"## {section.title}\n{content}")
     return "\n\n".join(compiled_sections)
+
+
+def _format_evidence_context(state: dict, section: OutlineSection, *, max_chunks: int = 8) -> str:
+    """为章节生成准备证据上下文。"""
+    evidence_pack = state.get("evidence_pack")
+    if not evidence_pack:
+        return "未启用知识库或未检索到可用证据。"
+
+    chunks = getattr(evidence_pack, "chunks", None)
+    if chunks is None and isinstance(evidence_pack, dict):
+        chunks = evidence_pack.get("chunks")
+    if not chunks:
+        unverified = getattr(evidence_pack, "unverified_points", None)
+        if unverified is None and isinstance(evidence_pack, dict):
+            unverified = evidence_pack.get("unverified_points")
+        if unverified:
+            return f"未检索到足够证据；需标记未验证点：{', '.join(map(str, unverified))}"
+        return "未启用知识库或未检索到可用证据。"
+
+    section_terms = {section.title.lower(), *[part.lower() for part in section.summary.split()]}
+    formatted: list[str] = []
+    for index, chunk in enumerate(chunks[:max_chunks], start=1):
+        document_name = getattr(chunk, "document_name", None)
+        content = getattr(chunk, "content", None)
+        score = getattr(chunk, "score", None)
+        heading_path = getattr(chunk, "heading_path", None)
+        if isinstance(chunk, dict):
+            document_name = chunk.get("document_name")
+            content = chunk.get("content")
+            score = chunk.get("score")
+            heading_path = chunk.get("heading_path")
+        if not content:
+            continue
+        heading = " / ".join(heading_path or []) if isinstance(heading_path, list) else ""
+        relevance_note = (
+            "章节相关"
+            if any(term and term in content.lower() for term in section_terms)
+            else "全局证据"
+        )
+        formatted.append(
+            f"[{index}] {relevance_note}；来源：{document_name or '未知文档'}；标题路径：{heading or '无'}；分数：{score}\n{content}"
+        )
+    return "\n\n".join(formatted) if formatted else "未启用知识库或未检索到可用证据。"
 
 
 def _extract_chunk_text(chunk: Any) -> str:
@@ -154,6 +202,7 @@ async def generate_section(
                 "section_summary": section.summary,
                 "target_words": section.target_words,
                 "previous_sections": previous_content or "（这是第一个章节）",
+                "evidence_context": _format_evidence_context(state, section),
                 "rerun_instruction": rerun_instruction,
             }
         )
@@ -195,6 +244,7 @@ async def generate_section_streaming(
         "section_summary": section.summary,
         "target_words": section.target_words,
         "previous_sections": previous_content or "（这是第一个章节）",
+        "evidence_context": _format_evidence_context(state, section),
         "rerun_instruction": rerun_instruction,
     }
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -295,6 +345,7 @@ async def generate_all_sections(state: dict) -> dict:
             for artifact_id in [
                 state.get("intent_card_artifact_id"),
                 state.get("outline_artifact_id"),
+                state.get("evidence_artifact_id"),
             ]
             if artifact_id
         ],
@@ -346,6 +397,7 @@ async def generate_all_sections(state: dict) -> dict:
                     "section_index": index,
                     "generation_phase": "draft",
                     "outline_artifact_id": state.get("outline_artifact_id"),
+                    "evidence_artifact_id": state.get("evidence_artifact_id"),
                     "previous_section_ids": [
                         previous_section.id for previous_section in flat_sections[:index]
                     ],

@@ -83,10 +83,14 @@ EXECUTE_VERIFICATION_PROMPT = """请回答以下问题。
 ## 问题
 {question}
 
+## Evidence Artifact
+{evidence_context}
+
 ## 要求
-1. 仅基于你的知识库回答
+1. 如果 Evidence Artifact 提供了相关内容，必须优先基于证据回答
 2. 如果不确定，请明确表示
 3. 提供尽可能准确的答案
+4. 如果证据不足，请直接说明“当前证据不足”
 
 请直接回答问题。"""
 
@@ -203,6 +207,38 @@ def _build_failed_correction_message(failed_corrections: dict[str, dict[str, str
     for claim_id, correction in failed_corrections.items():
         parts.append(f"{claim_id}:{correction['reason']}")
     return ", ".join(parts)
+
+
+def _format_evidence_context(state: dict, *, max_chunks: int = 10) -> str:
+    """为事实核查准备证据上下文。"""
+    evidence_pack = state.get("evidence_pack")
+    if not evidence_pack:
+        return "未启用知识库或未检索到可用证据。"
+
+    chunks = getattr(evidence_pack, "chunks", None)
+    if chunks is None and isinstance(evidence_pack, dict):
+        chunks = evidence_pack.get("chunks")
+    if not chunks:
+        unverified = getattr(evidence_pack, "unverified_points", None)
+        if unverified is None and isinstance(evidence_pack, dict):
+            unverified = evidence_pack.get("unverified_points")
+        if unverified:
+            return f"未检索到足够证据；需标记未验证点：{', '.join(map(str, unverified))}"
+        return "未启用知识库或未检索到可用证据。"
+
+    lines: list[str] = []
+    for index, chunk in enumerate(chunks[:max_chunks], start=1):
+        document_name = getattr(chunk, "document_name", None)
+        content = getattr(chunk, "content", None)
+        score = getattr(chunk, "score", None)
+        if isinstance(chunk, dict):
+            document_name = chunk.get("document_name")
+            content = chunk.get("content")
+            score = chunk.get("score")
+        if not content:
+            continue
+        lines.append(f"[{index}] 来源：{document_name or '未知文档'}；分数：{score}\n{content}")
+    return "\n\n".join(lines) if lines else "未启用知识库或未检索到可用证据。"
 
 
 def _mark_result_resolved(result: VerificationResult) -> None:
@@ -332,6 +368,7 @@ async def execute_verification(
     model_provider_id: str | None = None,
     model_provider_name: str | None = None,
     model_name: str | None = None,
+    evidence_context: str | None = None,
 ) -> tuple[str, dict[str, int]]:
     """
     步骤3：独立回答验证问题（Factored模式）
@@ -348,7 +385,14 @@ async def execute_verification(
     prompt = ChatPromptTemplate.from_template(EXECUTE_VERIFICATION_PROMPT)
     chain = prompt | llm
 
-    result = await invoke_with_llm_retry(lambda: chain.ainvoke({"question": question}))
+    result = await invoke_with_llm_retry(
+        lambda: chain.ainvoke(
+            {
+                "question": question,
+                "evidence_context": evidence_context or "未启用知识库或未检索到可用证据。",
+            }
+        )
+    )
 
     answer = result.content.strip()
     usage = ensure_usage_metadata(
@@ -446,6 +490,7 @@ async def check_facts(state: dict) -> dict:
             artifact_id
             for artifact_id in [
                 state.get("final_content_artifact_id"),
+                state.get("evidence_artifact_id"),
                 *list(state.get("section_artifact_ids", {}).values()),
             ]
             if artifact_id
@@ -456,6 +501,7 @@ async def check_facts(state: dict) -> dict:
     try:
         all_claims: list[FactClaim] = []
         all_results: list[VerificationResult] = []
+        evidence_context = _format_evidence_context(state)
 
         # 遍历每个章节提取并验证事实声明
         for section_id, content in content_dict.items():
@@ -511,6 +557,7 @@ async def check_facts(state: dict) -> dict:
                     model_provider_id,
                     model_provider_name,
                     model_name,
+                    evidence_context,
                 )
 
                 # 步骤4：评估准确性
@@ -578,6 +625,9 @@ async def check_facts(state: dict) -> dict:
                 "high_risk_count": report.high_risk_count,
                 "awaiting_approval": awaiting_approval,
                 "source_final_content_artifact_id": state.get("final_content_artifact_id"),
+                "evidence_artifact_id": state.get("evidence_artifact_id"),
+                "knowledge_conflicts": state.get("knowledge_conflicts", []),
+                "unverified_points": state.get("unverified_points", []),
             },
         )
         node_run.output_artifact_ids.append(artifact.id)
