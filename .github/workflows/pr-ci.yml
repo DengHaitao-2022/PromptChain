@@ -81,6 +81,7 @@ jobs:
         env:
           POSTGRES_PASSWORD: local-check
           JWT_SECRET_KEY: local-check-jwt-secret
+          SECRETS_ENCRYPTION_KEY: local-check-secrets-encryption-key
         run: docker compose -f docker-compose.prod.yml config
 
   backend:
