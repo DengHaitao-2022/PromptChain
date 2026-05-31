@@ -32,6 +32,7 @@ from models.knowledge import (
     KnowledgeScope,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    KnowledgeUsageStats,
     RetrievalEvaluationRequest,
     RetrievalEvaluationResponse,
     RetrievalEvaluationResult,
@@ -359,6 +360,25 @@ class EmbeddingProvider:
         return [round(value / norm, 8) for value in vector]
 
 
+class RerankerProvider:
+    """Reranker provider 抽象，MVP 默认使用确定性启发式重排。"""
+
+    provider_name = "heuristic"
+
+    def rerank(self, query: str, candidates: list[_Candidate]) -> list[_Candidate]:
+        query_terms = set(_tokenize(query))
+        for candidate in candidates:
+            heading_terms = set(_tokenize(" ".join(candidate.chunk.heading_path or [])))
+            title_terms = set(_tokenize(candidate.document.file_name))
+            authority_boost = 0.04 if candidate.kb.scope == KnowledgeScope.WORKSPACE.value else 0.0
+            heading_boost = 0.03 if query_terms & heading_terms else 0.0
+            title_boost = 0.03 if query_terms & title_terms else 0.0
+            rerank_score = min(1.0, candidate.score + authority_boost + heading_boost + title_boost)
+            candidate.rerank_score = round(rerank_score, 4)
+            candidate.score = candidate.rerank_score
+        return candidates
+
+
 @dataclass
 class _Candidate:
     chunk: KnowledgeChunkORM
@@ -379,6 +399,7 @@ class KnowledgeService:
         self.parser = DocumentParser()
         self.chunker = Chunker()
         self.embedding_provider = EmbeddingProvider()
+        self.reranker_provider = RerankerProvider()
 
     def _ensure_kb_operation_allowed(
         self,
@@ -924,7 +945,7 @@ class KnowledgeService:
             for row in rows
         ]
         if request.enable_rerank:
-            candidates = self._rerank(query, candidates)
+            candidates = self.reranker_provider.rerank(query, candidates)
         candidates = [candidate for candidate in candidates if candidate.score >= request.min_score]
         candidates = sorted(candidates, key=lambda item: item.score, reverse=True)[: request.top_k]
         evidence_chunks = [
@@ -1036,6 +1057,61 @@ class KnowledgeService:
                 empty_expected_count=empty_expected_count,
             ),
             results=results,
+        )
+
+    async def get_usage_stats(
+        self,
+        *,
+        workspace_id: str,
+        user_id: str,
+        role: Any | None = None,
+    ) -> KnowledgeUsageStats:
+        """基于检索日志统计当前用户可见范围内的知识库使用情况。"""
+        filters = [KnowledgeRetrievalLogORM.workspace_id == workspace_id]
+        if role is None or not check_permission(
+            _normalize_role_value(role),
+            "knowledge_base",
+            "manage",
+        ):
+            filters.append(KnowledgeRetrievalLogORM.user_id == user_id)
+
+        result = await self.session.execute(select(KnowledgeRetrievalLogORM).where(and_(*filters)))
+        logs = list(result.scalars().all())
+        total_searches = len(logs)
+        total_chunks = 0
+        conflict_search_count = 0
+        unverified_search_count = 0
+        scope_counts: Counter[str] = Counter()
+        mode_counts: Counter[str] = Counter()
+        last_search_at = None
+
+        for log in logs:
+            retrieved_chunk_ids = log.retrieved_chunk_ids or []
+            if isinstance(retrieved_chunk_ids, list):
+                total_chunks += len(retrieved_chunk_ids)
+            if log.created_at and (last_search_at is None or log.created_at > last_search_at):
+                last_search_at = log.created_at
+
+            for scope in log.retrieval_scope or []:
+                scope_counts[str(scope)] += 1
+            mode_counts[str(log.retrieval_mode)] += 1
+
+            metadata = log.metadata_json or {}
+            if metadata.get("conflicts"):
+                conflict_search_count += 1
+            if metadata.get("unverified_points"):
+                unverified_search_count += 1
+
+        return KnowledgeUsageStats(
+            workspace_id=workspace_id,
+            total_searches=total_searches,
+            total_chunks_returned=total_chunks,
+            average_chunks_per_search=round(total_chunks / max(1, total_searches), 2),
+            conflict_search_count=conflict_search_count,
+            unverified_search_count=unverified_search_count,
+            last_search_at=last_search_at,
+            scope_counts=dict(scope_counts),
+            mode_counts=dict(mode_counts),
         )
 
     def _rewrite_queries(self, query: str, request: KnowledgeSearchRequest) -> list[str]:
@@ -1178,19 +1254,6 @@ class KnowledgeService:
             vector_score=round(vector_score, 4),
             keyword_score=round(keyword_score, 4),
         )
-
-    def _rerank(self, query: str, candidates: list[_Candidate]) -> list[_Candidate]:
-        query_terms = set(_tokenize(query))
-        for candidate in candidates:
-            heading_terms = set(_tokenize(" ".join(candidate.chunk.heading_path or [])))
-            title_terms = set(_tokenize(candidate.document.file_name))
-            authority_boost = 0.04 if candidate.kb.scope == KnowledgeScope.WORKSPACE.value else 0.0
-            heading_boost = 0.03 if query_terms & heading_terms else 0.0
-            title_boost = 0.03 if query_terms & title_terms else 0.0
-            rerank_score = min(1.0, candidate.score + authority_boost + heading_boost + title_boost)
-            candidate.rerank_score = round(rerank_score, 4)
-            candidate.score = candidate.rerank_score
-        return candidates
 
     def _candidate_to_evidence_chunk(
         self,

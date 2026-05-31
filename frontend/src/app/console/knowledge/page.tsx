@@ -11,6 +11,7 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  TrendingUp,
   Upload,
 } from 'lucide-react';
 
@@ -21,6 +22,7 @@ import {
   type KnowledgeBase,
   type KnowledgeDocument,
   type KnowledgeScope,
+  type KnowledgeUsageStats,
 } from '@/lib/api';
 import { formatAppDateTime } from '@/lib/date-time';
 import styles from './knowledge.module.css';
@@ -68,6 +70,7 @@ export default function KnowledgePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchScopes, setSearchScopes] = useState<KnowledgeScope[]>(['workspace']);
   const [evidencePack, setEvidencePack] = useState<EvidencePack | null>(null);
+  const [usageStats, setUsageStats] = useState<KnowledgeUsageStats | null>(null);
 
   // 个人知识库归当前用户所有，不应被工作空间级写权限误拦。
   const canCreateWorkspaceKnowledgeBase = hasPermission('knowledge_base', 'create');
@@ -95,11 +98,13 @@ export default function KnowledgePage() {
   const activeCount = knowledgeBases.filter((item) => item.status === 'active').length;
   const personalCount = knowledgeBases.filter((item) => item.scope === 'personal').length;
   const readyDocumentCount = getDocumentReadyCount(documents);
+  const averageChunksPerSearch = usageStats?.average_chunks_per_search ?? 0;
 
   const loadKnowledgeBases = useCallback(async () => {
     if (!workspace?.id) {
       setKnowledgeBases([]);
       setSelectedKbId('');
+      setUsageStats(null);
       setLoadingKb(false);
       return;
     }
@@ -109,8 +114,10 @@ export default function KnowledgePage() {
 
     try {
       const response = await knowledgeApi.list(workspace.id);
+      const stats = await knowledgeApi.stats();
       const items = response.knowledge_bases || [];
       setKnowledgeBases(items);
+      setUsageStats(stats);
       setSelectedKbId((current) => {
         if (current && items.some((item) => item.id === current)) {
           return current;
@@ -356,6 +363,26 @@ export default function KnowledgePage() {
           <Archive size={18} aria-hidden="true" />
           <span>个人库</span>
           <strong>{personalCount}</strong>
+        </article>
+        <article className={styles.metricCard}>
+          <Search size={18} aria-hidden="true" />
+          <span>检索次数</span>
+          <strong>{usageStats?.total_searches ?? 0}</strong>
+        </article>
+        <article className={styles.metricCard}>
+          <TrendingUp size={18} aria-hidden="true" />
+          <span>平均命中</span>
+          <strong>{averageChunksPerSearch.toFixed(1)}</strong>
+        </article>
+        <article className={styles.metricCard}>
+          <ShieldCheck size={18} aria-hidden="true" />
+          <span>冲突检索</span>
+          <strong>{usageStats?.conflict_search_count ?? 0}</strong>
+        </article>
+        <article className={styles.metricCard}>
+          <DatabaseZap size={18} aria-hidden="true" />
+          <span>未验证检索</span>
+          <strong>{usageStats?.unverified_search_count ?? 0}</strong>
         </article>
       </section>
 

@@ -274,6 +274,18 @@ export interface RetrievalEvaluationResponse {
   }>;
 }
 
+export interface KnowledgeUsageStats {
+  workspace_id: string;
+  total_searches: number;
+  total_chunks_returned: number;
+  average_chunks_per_search: number;
+  conflict_search_count: number;
+  unverified_search_count: number;
+  last_search_at?: string | null;
+  scope_counts: Record<string, number>;
+  mode_counts: Record<string, number>;
+}
+
 export interface WorkflowTrace {
   workflow: Record<string, unknown>;
   nodes: Record<string, unknown>[];
@@ -961,6 +973,8 @@ export const knowledgeApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  stats: () => request<KnowledgeUsageStats>('/knowledge/stats'),
 };
 
 // Artifact API

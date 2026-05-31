@@ -232,6 +232,20 @@ class RetrievalEvaluationResponse(BaseModel):
     results: list[RetrievalEvaluationResult]
 
 
+class KnowledgeUsageStats(BaseModel):
+    """知识库使用统计。"""
+
+    workspace_id: str
+    total_searches: int = 0
+    total_chunks_returned: int = 0
+    average_chunks_per_search: float = 0.0
+    conflict_search_count: int = 0
+    unverified_search_count: int = 0
+    last_search_at: datetime | None = None
+    scope_counts: dict[str, int] = Field(default_factory=dict)
+    mode_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class RetrievalConfig(BaseModel):
     """工作流运行时知识检索配置。"""
 

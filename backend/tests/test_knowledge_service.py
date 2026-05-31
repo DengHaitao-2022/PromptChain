@@ -573,6 +573,114 @@ def test_retrieval_evaluation_reports_hit_rate_mrr_and_precision(run_with_knowle
     run_with_knowledge_session(scenario)
 
 
+def test_usage_stats_summarizes_current_user_retrieval_logs(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="stats.md",
+            content=b"usage statistics evidence source",
+        )
+
+        await service.search(
+            request=KnowledgeSearchRequest(
+                query="usage statistics",
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=3,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+        await service.search(
+            request=KnowledgeSearchRequest(
+                query="missing evidence",
+                scopes=[KnowledgeScope.PERSONAL],
+                top_k=3,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+        await service.search(
+            request=KnowledgeSearchRequest(
+                query="other user query",
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=3,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-other",
+        )
+
+        stats = await service.get_usage_stats(workspace_id="ws-1", user_id="user-owner")
+        owner_rollup = await service.get_usage_stats(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+        )
+
+        assert stats.total_searches == 2
+        assert stats.total_chunks_returned == 1
+        assert stats.average_chunks_per_search == 0.5
+        assert stats.unverified_search_count == 1
+        assert stats.scope_counts == {"workspace": 1, "personal": 1}
+        assert stats.mode_counts == {"hybrid": 2}
+        assert stats.last_search_at is not None
+        assert owner_rollup.total_searches == 3
+
+    run_with_knowledge_session(scenario)
+
+
+def test_reranker_provider_records_rerank_score(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="rerank.md",
+            content=b"# Rerank\nrerank provider should boost matching heading",
+        )
+
+        search = await service.search(
+            request=KnowledgeSearchRequest(
+                query="rerank provider",
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=3,
+                min_score=0.0,
+                enable_rerank=True,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        assert service.reranker_provider.provider_name == "heuristic"
+        assert search.evidence_pack.chunks[0].rerank_score is not None
+
+    run_with_knowledge_session(scenario)
+
+
 def test_async_indexing_keeps_new_document_pending_until_worker_runs(run_with_knowledge_session):
     async def scenario(knowledge_session):
         service = KnowledgeService(knowledge_session)
