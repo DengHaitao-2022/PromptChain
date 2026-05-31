@@ -139,7 +139,10 @@ def _split_migration_statements(sql: str) -> list[str]:
 
 
 def _runtime_schema_statements(database_url: str) -> list[str]:
-    """返回运行态表的幂等升级语句。"""
+    """返回 legacy 运行态表的幂等升级语句。
+
+    这些语句已归属 Alembic baseline；这里只作为开发兼容路径保留。
+    """
     if not database_url.startswith("postgresql"):
         return []
 
@@ -164,25 +167,38 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_category VARCHAR(50)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_type VARCHAR(50)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS outcome VARCHAR(20)",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_snapshot JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_snapshot JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata_json JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS schema_version VARCHAR(20) DEFAULT 'legacy'",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_snapshot JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_snapshot JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata_json JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS schema_version VARCHAR(20)",
         """
         DO $$
         BEGIN
             IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'uq_membership_user_workspace'
+            ) AND EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE tablename = 'memberships'
+                  AND indexname = 'uq_membership_user_workspace'
+            ) THEN
+                ALTER TABLE memberships
+                    ADD CONSTRAINT uq_membership_user_workspace UNIQUE USING INDEX uq_membership_user_workspace;
+            ELSIF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'uq_membership_user_workspace'
+            ) AND NOT EXISTS (
                 SELECT 1
                 FROM memberships
                 GROUP BY user_id, workspace_id
                 HAVING COUNT(*) > 1
             ) THEN
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_user_workspace
-                    ON memberships (user_id, workspace_id);
+                ALTER TABLE memberships
+                    ADD CONSTRAINT uq_membership_user_workspace UNIQUE (user_id, workspace_id);
             END IF;
         END $$;
         """,
-        "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id) WHERE event_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_request_id ON audit_logs (request_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_trace_id ON audit_logs (trace_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_outcome ON audit_logs (outcome)",
@@ -299,6 +315,14 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
         END $$;
         """,
     ]
+
+
+def _legacy_schema_init_enabled() -> bool:
+    """是否允许应用启动时执行 legacy create_all/ALTER。
+
+    生产环境应设置 DATABASE_AUTO_SCHEMA_INIT=false，并通过 Alembic 管理 schema 版本。
+    """
+    return os.getenv("DATABASE_AUTO_SCHEMA_INIT", "true").lower() in {"1", "true", "yes", "on"}
 
 
 # ==================== ORM 模型定义 ====================
@@ -563,7 +587,10 @@ class PostgresArtifactStore:
             self._initialized = True
 
     async def init_db(self):
-        """初始化数据库表"""
+        """初始化数据库表。
+
+        Alembic 是生产 schema 变更的唯一入口；这里仅保留开发兼容初始化。
+        """
         for module_name in (
             "models.auth_orm",
             "models.admin_orm",
@@ -571,6 +598,9 @@ class PostgresArtifactStore:
             "orm.knowledge_orm",
         ):
             importlib.import_module(module_name)
+
+        if not _legacy_schema_init_enabled():
+            return
 
         async with self.engine.begin() as conn:
             for statement in _runtime_schema_statements(self.database_url):

@@ -7,6 +7,7 @@ LLM Provider 抽象层
 - Ollama (本地模型)
 - Google (Gemini)
 - GitHub Models (GitHub Copilot)
+- Fake (smoke 验收专用)
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_FALLBACK_MODEL = "gpt-4o"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference"
+INTERNAL_PROVIDER_NAMES = {"fake"}
 
 
 def _read_env(name: str) -> str:
@@ -194,6 +196,18 @@ class GitHubProvider(LLMProvider):
         )
 
 
+class FakeProvider(LLMProvider):
+    """Smoke 验收专用 provider；必须显式选择，不参与生产 provider 回退。"""
+
+    def get_default_model_name(self) -> str:
+        return self.registration.default_model_name
+
+    def get_model(self, model_name: str | None = None, **kwargs) -> BaseChatModel:
+        from services.fake_llm_provider import FakeSmokeChatModel
+
+        return FakeSmokeChatModel(model_name=self.get_default_model_name())
+
+
 @dataclass(frozen=True)
 class ProviderRegistration:
     """Provider registry 的最小元数据。"""
@@ -258,6 +272,11 @@ PROVIDER_REGISTRY: dict[str, ProviderRegistration] = {
         default_model_name="openai/gpt-4.1",
         credential_env="GITHUB_MODEL_TOKEN",
     ),
+    "fake": ProviderRegistration(
+        name="fake",
+        provider_class=FakeProvider,
+        default_model_name="fake-smoke-model",
+    ),
 }
 
 
@@ -270,7 +289,7 @@ class LLMProviderFactory:
     @classmethod
     def get_supported_provider_names(cls) -> list[str]:
         """返回当前支持的 provider 名称列表。"""
-        return list(cls._registry.keys())
+        return [name for name in cls._registry if name not in INTERNAL_PROVIDER_NAMES]
 
     @classmethod
     def get_registration(cls, provider_name: str | None = None) -> ProviderRegistration:
@@ -308,6 +327,8 @@ class LLMProviderFactory:
             return model_name
 
         registration = cls.get_registration(provider_name)
+        if registration.name in INTERNAL_PROVIDER_NAMES:
+            return registration.default_model_name
         return _resolve_model_override() or registration.default_model_name
 
     @classmethod
@@ -443,10 +464,14 @@ def _build_environment_runtime_config(
     base_url = _read_env("OLLAMA_BASE_URL") if registration.name == "ollama" else None
     if registration.name == "github":
         base_url = DEFAULT_GITHUB_MODELS_BASE_URL
+    if registration.name == "fake":
+        resolved_model = registration.default_model_name
+    else:
+        resolved_model = model_name or _resolve_model_override() or registration.default_model_name
 
     return RuntimeModelConfig(
         provider=registration.name,
-        model=model_name or _resolve_model_override() or registration.default_model_name,
+        model=resolved_model,
         credential=credential,
         base_url=base_url,
         source="environment",
@@ -545,6 +570,11 @@ def _build_model_from_runtime_config(
             base_url=runtime_config.base_url or DEFAULT_OLLAMA_BASE_URL,
             **kwargs,
         )
+
+    if runtime_config.provider == "fake":
+        from services.fake_llm_provider import FakeSmokeChatModel
+
+        return FakeSmokeChatModel(model_name=runtime_config.model)
 
     raise _build_unsupported_provider_error(
         runtime_config.provider,

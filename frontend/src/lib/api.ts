@@ -20,6 +20,219 @@ export type WorkflowStatus =
 export type ClarificationPriority = 'high' | 'medium' | 'low';
 export type FactCheckDecision = 'confirm' | 'use_suggestion' | 'manual';
 export type WorkflowGateType = 'clarification' | 'outline_approval' | 'fact_check';
+export type ApiErrorDomain =
+  | 'AUTH'
+  | 'WORKSPACE'
+  | 'WORKFLOW'
+  | 'TRACE'
+  | 'ADMIN'
+  | 'INFRA'
+  | 'COMMON'
+  | 'UNKNOWN';
+
+export type ApiErrorDetails = Record<string, unknown> | unknown[] | null;
+
+export interface ApiErrorOptions {
+  code: string;
+  message: string;
+  requestId: string | null;
+  details: ApiErrorDetails;
+  status: number;
+  cause?: unknown;
+}
+
+export class PromptChainApiError extends Error {
+  code: string;
+  requestId: string | null;
+  details: ApiErrorDetails;
+  status: number;
+  domain: ApiErrorDomain;
+  cause?: unknown;
+
+  constructor(options: ApiErrorOptions) {
+    super(options.message);
+    this.name = 'PromptChainApiError';
+    this.code = options.code;
+    this.requestId = options.requestId;
+    this.details = options.details;
+    this.status = options.status;
+    this.domain = getApiErrorDomain(options.code);
+    this.cause = options.cause;
+  }
+}
+
+export function getApiErrorDomain(code: string): ApiErrorDomain {
+  const prefix = code.split('_')[0];
+  if (
+    prefix === 'AUTH' ||
+    prefix === 'WORKSPACE' ||
+    prefix === 'WORKFLOW' ||
+    prefix === 'TRACE' ||
+    prefix === 'ADMIN' ||
+    prefix === 'INFRA' ||
+    prefix === 'COMMON'
+  ) {
+    return prefix;
+  }
+
+  return 'UNKNOWN';
+}
+
+export function isPromptChainApiError(error: unknown): error is PromptChainApiError {
+  return error instanceof PromptChainApiError;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function normalizeDetails(value: unknown, code: string): ApiErrorDetails {
+  if (code.startsWith('INFRA_')) {
+    // 基础设施 details 可能包含内部依赖信息，客户端只保留错误码作为稳定判断依据。
+    return null;
+  }
+
+  if (isRecord(value) || Array.isArray(value)) {
+    return value;
+  }
+
+  return null;
+}
+
+function legacyResultStatus(code: number): number {
+  if (code >= 50000) {
+    return 500;
+  }
+  if (code >= 40900) {
+    return 409;
+  }
+  if (code >= 40400) {
+    return 404;
+  }
+  if (code >= 40300) {
+    return 403;
+  }
+  if (code >= 40100) {
+    return 401;
+  }
+  return 400;
+}
+
+function createApiErrorFromEnvelope(
+  payload: Record<string, unknown>,
+  fallbackStatus: number
+): PromptChainApiError | null {
+  const code = asString(payload.code);
+  if (!code) {
+    return null;
+  }
+
+  return new PromptChainApiError({
+    code,
+    message: asString(payload.message) ?? code,
+    requestId: asString(payload.request_id) ?? asString(payload.requestId),
+    details: normalizeDetails(payload.details, code),
+    status:
+      typeof payload.status === 'number' && Number.isFinite(payload.status)
+        ? payload.status
+        : fallbackStatus,
+  });
+}
+
+function getRequestId(response: Response, payload: unknown): string | null {
+  if (isRecord(payload)) {
+    const requestId = asString(payload.request_id) ?? asString(payload.requestId);
+    if (requestId) {
+      return requestId;
+    }
+  }
+
+  return response.headers.get('x-request-id');
+}
+
+function getLegacyMessage(detail: unknown): string | null {
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    return '请求参数校验失败';
+  }
+
+  if (isRecord(detail)) {
+    return asString(detail.message) ?? asString(detail.detail);
+  }
+
+  return null;
+}
+
+async function readResponsePayload(response: Response): Promise<unknown> {
+  const contentType = response.headers.get('content-type') ?? '';
+
+  if (contentType.includes('application/json')) {
+    return response.json().catch(() => null);
+  }
+
+  const text = await response.text().catch(() => '');
+  return text.trim() ? text : null;
+}
+
+async function createApiError(response: Response): Promise<PromptChainApiError> {
+  const payload = await readResponsePayload(response);
+
+  if (isRecord(payload) && payload.success === false && typeof payload.code === 'string') {
+    const requestId = getRequestId(response, payload);
+    return (
+      createApiErrorFromEnvelope(
+        {
+          ...payload,
+          request_id: requestId,
+          status: response.status,
+        },
+        response.status
+      ) ??
+      new PromptChainApiError({
+        code: 'COMMON_HTTP_ERROR',
+        message: `HTTP ${response.status}`,
+        requestId,
+        details: null,
+        status: response.status,
+      })
+    );
+  }
+
+  const legacyDetail = isRecord(payload) ? payload.detail : null;
+  const legacyMessage =
+    (isRecord(payload) ? asString(payload.message) : null) ??
+    getLegacyMessage(legacyDetail) ??
+    (typeof payload === 'string' && payload.trim() ? payload : null) ??
+    `HTTP ${response.status}`;
+  const fallbackCode = response.status === 401 ? 'AUTH_UNAUTHENTICATED' : 'COMMON_HTTP_ERROR';
+  const code = isRecord(payload) ? asString(payload.code) ?? fallbackCode : fallbackCode;
+
+  return new PromptChainApiError({
+    code,
+    message: legacyMessage,
+    requestId: getRequestId(response, payload),
+    details: normalizeDetails(legacyDetail, code),
+    status: response.status,
+  });
+}
+
+function createNetworkApiError(error: unknown): PromptChainApiError {
+  return new PromptChainApiError({
+    code: 'INFRA_NETWORK_ERROR',
+    message: error instanceof Error && error.message ? error.message : '网络请求失败',
+    requestId: null,
+    details: null,
+    status: 0,
+    cause: error,
+  });
+}
 
 export interface WorkflowResponse {
   workflow_run_id: string;
@@ -328,6 +541,18 @@ export interface WorkflowStreamErrorEvent {
   timestamp?: string;
 }
 
+export interface WorkflowAppErrorEvent {
+  success?: false;
+  code: string;
+  message: string;
+  request_id?: string | null;
+  requestId?: string | null;
+  details?: ApiErrorDetails;
+  data?: null;
+  status?: number;
+  workflow_run_id?: string;
+}
+
 export interface WorkflowEventHandlers {
   onSnapshot?: (snapshot: WorkflowEventSnapshot) => void;
   onDone?: (payload: { workflow_run_id?: string; status?: WorkflowStatus | string }) => void;
@@ -528,17 +753,21 @@ async function request<T>(
 ): Promise<T> {
   const url = apiUrl(endpoint);
 
-  const response = await authenticatedFetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
-  });
+  let response: Response;
+  try {
+    response = await authenticatedFetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    });
+  } catch (error) {
+    throw createNetworkApiError(error);
+  }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw await createApiError(response);
   }
 
   return response.json();
@@ -550,16 +779,20 @@ async function requestBlob(
 ): Promise<Blob> {
   const url = apiUrl(endpoint);
 
-  const response = await authenticatedFetch(url, {
-    ...options,
-    headers: {
-      ...options.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await authenticatedFetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+      },
+    });
+  } catch (error) {
+    throw createNetworkApiError(error);
+  }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw await createApiError(response);
   }
 
   return response.blob();
@@ -580,11 +813,24 @@ async function requestResult<T>(
   const result = await request<ApiResult<T>>(endpoint, options);
 
   if (result.code !== 0) {
-    throw new Error(result.message || 'Request failed');
+    const code = `COMMON_RESULT_${result.code}`;
+    throw new PromptChainApiError({
+      code,
+      message: result.message || '请求失败',
+      requestId: null,
+      details: normalizeDetails(result.data, code),
+      status: legacyResultStatus(result.code),
+    });
   }
 
   if (result.data == null) {
-    throw new Error(result.message || 'Request returned empty data');
+    throw new PromptChainApiError({
+      code: 'COMMON_EMPTY_DATA',
+      message: result.message || '响应数据为空',
+      requestId: null,
+      details: null,
+      status: 200,
+    });
   }
 
   return result.data;
@@ -679,7 +925,7 @@ export const workflowApi = {
   },
 
   // 获取运行记录列表
-    getRuns: () => request<{ runs: WorkflowRunSummary[] }>('/workflow/runs'),
+  getRuns: () => request<{ runs: WorkflowRunSummary[] }>('/workflow/runs'),
 
   // 获取工作流状态
   getStatus: (workflowRunId: string) =>
@@ -751,6 +997,26 @@ export const workflowApi = {
       if (payload) {
         handlers.onStreamError?.(payload);
       }
+    });
+
+    source.addEventListener('app_error', (event) => {
+      const payload = parsePayload<WorkflowAppErrorEvent>(event as MessageEvent<string>);
+      if (!payload || !isRecord(payload)) {
+        return;
+      }
+
+      const errorPayload: Record<string, unknown> = payload;
+      const apiError =
+        createApiErrorFromEnvelope(errorPayload, payload.status ?? 500) ??
+        new PromptChainApiError({
+          code: 'COMMON_HTTP_ERROR',
+          message: '工作流实时连接返回错误',
+          requestId: null,
+          details: null,
+          status: 500,
+        });
+      handlers.onError?.(apiError);
+      source.close();
     });
 
     source.addEventListener('error', () => {
@@ -997,10 +1263,11 @@ export const healthCheck = () =>
       'Content-Type': 'application/json',
     },
     credentials: 'include',
+  }).catch((error) => {
+    throw createNetworkApiError(error);
   }).then(async (response) => {
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new Error(error.detail || `HTTP ${response.status}`);
+      throw await createApiError(response);
     }
 
     return response.json() as Promise<{ status: string; service: string; version: string }>;

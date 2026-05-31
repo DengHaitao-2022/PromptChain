@@ -57,19 +57,68 @@
   - 或可访问的 `OLLAMA_BASE_URL`
 - 若没有有效 LLM 环境，Smoke E / F 只能记为“环境阻塞”或“静态通过”，不能记为通过
 
-## 2. 启动本地环境
+## 2. 自动化 Smoke Harness 分层
+
+MVP1 smoke 分为三层，避免把 CI、PostgreSQL/Redis、真实模型稳定性混成同一个结论。
+
+| 层级 | 命令/入口 | 外部依赖 | 可进入 CI | 结论边界 |
+|---|---|---|---|---|
+| CI Fake Contract Smoke | `cd backend && uv run pytest tests/test_llm_provider.py -q` | 无真实 LLM key；不依赖 PostgreSQL/Redis | 是 | 只证明 fake provider 与 provider 契约可用，不代表业务 live smoke 通过 |
+| Local Infra Fake LLM Smoke | `cd backend && DEFAULT_LLM_PROVIDER=fake uv run python ../scripts/smoke/acceptance_smoke.py` | 后端服务、PostgreSQL；Redis 仅在 `WORKFLOW_EVENT_BUS_BACKEND=redis` 时需要 | 可选，取决于 CI 是否提供服务容器 | 覆盖注册/登录、发布 workflow、启动 run、Gate、重跑、DOCX 导出；不依赖 OpenAI/Anthropic/Gemini key |
+| Manual Live Provider Smoke | 本文 Smoke E/F/G 的人工或脚本化步骤 | 真实 provider key、网络、可用模型服务 | 否 | 只有真实执行后才能写 `pass`；未执行必须写 `not_run` 或 `blocked` |
+
+### Local Infra Fake LLM 前置条件
+
+启动后端时显式使用 fake provider：
+
+```bash
+cd backend
+DEFAULT_LLM_PROVIDER=fake uv run uvicorn app:app --reload --port 8000
+```
+
+另开终端运行 smoke：
+
+```bash
+cd backend
+DEFAULT_LLM_PROVIDER=fake uv run python ../scripts/smoke/acceptance_smoke.py
+```
+
+脚本输出为 JSON，顶层 `status` 只允许：
+
+- `pass`：所有 fake smoke 步骤真实完成
+- `fail`：脚本或断言出现非预期错误
+- `blocked`：PostgreSQL、Redis、后端服务、provider 配置、DOCX 依赖等环境前置不满足
+
+PostgreSQL/Redis 不可用时，脚本必须输出 `blocked` 和明确原因；不能把环境 blocker 记为业务失败或通过。
+
+### PR 描述结果格式
+
+```text
+Smoke:
+- ci_fake_contract: pass | fail | blocked
+  command: cd backend && uv run pytest tests/test_llm_provider.py -q
+  evidence: <关键输出或失败原因>
+- local_fake_llm: pass | fail | blocked
+  command: cd backend && DEFAULT_LLM_PROVIDER=fake uv run python ../scripts/smoke/acceptance_smoke.py
+  evidence: provider=fake, postgres=<ok/blocked>, redis=<ok/skipped/blocked>, workflow_run_id=<id>
+- manual_live_provider: not_run | pass | fail | blocked
+  provider: openai | anthropic | google | github | ollama
+  evidence: <真实运行证据；未运行时必须写 not_run>
+```
+
+## 3. 启动本地环境
 
 ### 基础设施
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain
+cd <repo-root>
 docker compose up -d postgres redis
 ```
 
 ### 后端
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 uv sync
 uv run uvicorn app:app --reload --port 8000
 ```
@@ -77,7 +126,7 @@ uv run uvicorn app:app --reload --port 8000
 ### 前端
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/frontend
+cd frontend
 npm install
 npm run dev
 ```
@@ -92,7 +141,7 @@ npm run dev
 - 若未配置 SMTP，注册验证链接和密码重置链接不会真正发邮件，而是直接打印在后端服务日志中
 - 本地验收时可直接从后端日志中复制 `verify-email` 或 `reset-password` 链接到浏览器打开
 
-## 3. Smoke Test A：注册、邮箱验证与登录
+## 4. Smoke Test A：注册、邮箱验证与登录
 
 ### 目标
 
@@ -124,7 +173,7 @@ npm run dev
 - 登录成功后浏览器持有 Cookie 会话
 - `GET /api/me` 能返回当前用户与工作空间上下文
 
-## 4. Smoke Test B：忘记密码、重置密码与重新登录
+## 5. Smoke Test B：忘记密码、重置密码与重新登录
 
 ### 目标
 
@@ -152,7 +201,7 @@ npm run dev
 - `reset-password` 页面能正确处理缺 token、无效/过期 token、密码不一致、密码过短、重置成功等状态
 - 密码重置成功后可使用新密码登录
 
-## 5. Smoke Test C：登录后的身份边界与角色访问
+## 6. Smoke Test C：登录后的身份边界与角色访问
 
 ### 目标
 
@@ -184,7 +233,7 @@ npm run dev
 - 管理员可查看成员、日志和全量任务
 - 越权访问管理入口或他人运行态资源时，不得返回非授权内容
 
-## 6. Smoke Test D：工作流草稿、校验与发布
+## 7. Smoke Test D：工作流草稿、校验与发布
 
 ### 目标
 
@@ -212,7 +261,7 @@ npm run dev
 - 发布动作产生可运行版本
 - 未发布流程不会出现在普通用户的可运行列表中
 
-## 7. Smoke Test E：标准生成链路与 Gate
+## 8. Smoke Test E：标准生成链路与 Gate
 
 ### 目标
 
@@ -244,7 +293,7 @@ npm run dev
 - 中间产物至少包含意图卡、提纲、自检结果和终稿
 - US1 不应只靠“能触发 Gate”来签收；US2 也不应只靠“无 Gate 标准链路”来签收
 
-## 8. Smoke Test F：手动暂停与恢复
+## 9. Smoke Test F：手动暂停与恢复
 
 ### 目标
 
@@ -271,7 +320,7 @@ npm run dev
 - `paused` 与三个 Gate 状态不会混淆
 - 验收时应以“节点完成后进入 paused 读模型”为准，不要求中断同一 HTTP 请求中的正在执行节点
 
-## 9. Smoke Test G：回放、产物历史、重跑与导出
+## 10. Smoke Test G：回放、产物历史、重跑与导出
 
 ### 目标
 
@@ -300,7 +349,7 @@ npm run dev
 - DOCX 导出仅允许已完成任务，未完成任务应返回明确错误
 - SSE 快照流可以增强详情页实时体验，但 REST 状态与 Trace 仍是最终对账入口
 
-## 10. 快速 API 验证示例
+## 11. 快速 API 验证示例
 
 以下命令用于最小化验证会话与运行态接口。它们依赖目标功能已经实现完成。
 
@@ -337,7 +386,7 @@ curl -L -b cookies.txt "$API/api/workflow/<workflow_run_id>/exports/docx" \
 curl -b viewer-cookies.txt "$API/api/trace/<other_users_workflow_run_id>"
 ```
 
-## 11. Current-dev 验收执行结果（2026-04-10，`dev@698b80d`）
+## 12. Current-dev 验收执行结果（2026-04-10，`dev@698b80d`）
 
 ### 结果摘要
 
@@ -365,7 +414,7 @@ curl -b viewer-cookies.txt "$API/api/trace/<other_users_workflow_run_id>"
 - LLM blocker：`backend/.env` 中 `DEFAULT_LLM_PROVIDER=anthropic` 且 `ANTHROPIC_API_KEY` 为空；虽然 `GEMINI_API_KEY` 已配置，但当前默认 provider 未切到 `google`
 - 详细证据、命令回显与日志摘录见 [`specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md)
 
-## 12. Latest-dev 验收状态（2026-05-23，`dev@699bf53`）
+## 13. Latest-dev 验收状态（2026-05-31，`dev@cf2818a`）
 
 ### 当前结论
 
@@ -386,11 +435,11 @@ curl -b viewer-cookies.txt "$API/api/trace/<other_users_workflow_run_id>"
 - PR #5 的统一错误体系不属于当前 `dev@699bf53` 主线事实；合入前不得把统一错误 envelope 写成已发布 API 契约。
 - PR #4 的生产 CI/CD 基线仍未合入 `dev`；虽然当前 PR 检查已通过，合入前仍不得写成生产交付完成。
 
-## 13. Acceptance Review Gate
+## 14. Acceptance Review Gate
 
 本轮 current-dev smoke 已执行，但 `US1 / US2 / US3 / US5` 仍存在明确环境 blocker，因此当前状态是“可进入 acceptance review 的阻塞审查”，不是“可直接签收”。
 
-## 14. Homepage 候选修复复核（2026-04-12，`fix-homepage-mvp1@e994c86`）
+## 15. Homepage 候选修复复核（2026-04-12，`fix-homepage-mvp1@e994c86`）
 
 ### 结果摘要
 

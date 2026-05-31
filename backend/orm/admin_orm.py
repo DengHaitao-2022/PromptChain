@@ -5,7 +5,7 @@
 """
 
 # 使用现有的 Base
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import relationship
 
 from core.time import utc_now_naive
@@ -79,6 +79,8 @@ class AuditLogORM(Base):
     """审计日志 ORM 模型"""
 
     __tablename__ = "audit_logs"
+    # 记录现有目标查询索引，确保 ORM metadata 与 Alembic baseline 保持一致。
+    __table_args__ = (Index("ix_audit_logs_target", "target_type", "target_id"),)
 
     id = Column(String(36), primary_key=True)
     event_id = Column(String(64), nullable=True, index=True)
