@@ -387,6 +387,14 @@ def test_runs_list_returns_current_user_visible_runs(monkeypatch):
         "completed_at",
         "total_duration_ms",
     }.issubset(body["runs"][0].keys())
+    assert {
+        "workflow_definition_id",
+        "workflow_version_id",
+        "runtime_plan",
+        "runtime_progress",
+        "gate",
+        "pause",
+    }.issubset(body["runs"][0].keys())
 
 
 def test_runs_list_admin_scope_still_excludes_foreign_workspace(monkeypatch):

@@ -5,6 +5,8 @@
 **Status**: Draft
 **Input**: User description: "基于当前 PromptChain 的 LLM provider 实现现状，并参考 OpenClaw 的 provider 设计思想，产出一个“最小可落地”的 Provider 架构设计 spec。目标是新增 google provider、保持统一调用入口不变，并消除 quickstart 因 provider 不支持导致的阻塞。"
 
+> 当前主线说明（2026-05-23）：本规格最初用于补齐 Google provider。当前 `dev@699bf53` 已在此基础上继续支持 `github` provider，主线 provider 集合为 `openai / anthropic / google / github / ollama`。本文的 Google 设计目标仍作为历史规格与最小演进原则保留。
+
 ## Overview
 
 PromptChain 当前已经具备统一的模型访问入口，但受支持的模型提供方仍不完整，导致仅持有 Google 凭证的开发者无法直接完成本地启动与最小验收。该能力缺口不仅阻塞 quickstart，也让 provider 支持范围、配置方式和错误反馈不够一致。
@@ -97,7 +99,7 @@ PromptChain 当前已经具备统一的模型访问入口，但受支持的模�
 - **SC-001**: 仅持有 Google 凭证的开发者能够在 15 分钟内完成本地 provider 配置并成功触发首次模型请求
 - **SC-002**: 现有统一模型访问入口在接入 Google 后仍保持零调用面迁移，既有工作流节点无需修改即可继续请求模型
 - **SC-003**: 在验收中构造的“不支持 provider”“缺少凭证”“无效凭证”三类场景里，100% 都能得到可区分、可读的错误反馈
-- **SC-004**: Google、OpenAI、Anthropic、Ollama 四类受支持 provider 都能通过配置被正确解析并进入可用状态
+- **SC-004**: Google、OpenAI、Anthropic、Ollama 四类受支持 provider 都能通过配置被正确解析并进入可用状态；当前主线另已补齐 GitHub Models provider
 - **SC-005**: quickstart 不再因为“代码尚未支持 Google provider”而阻塞；剩余失败原因仅限于环境配置或凭证有效性问题
 
 ## Assumptions & Dependencies

@@ -1,6 +1,6 @@
 # Workflow Definition & Publication API Contract
 
-## 0. Current Baseline (`dev@8218f54`)
+## 0. Current Baseline (`dev@699bf53`)
 
 - 工作流定义 CRUD、validate、compile、publish、versions、compare、restore 已全部在主线。
 - `GET /api/workflows` 与 `GET /api/workflows/{workflow_id}` 对 `viewer` 角色默认返回已发布快照；编辑器读取草稿语义则走 `/definition`。

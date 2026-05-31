@@ -1,6 +1,6 @@
 # Auth & Access Contract
 
-## 0. Current Baseline (`dev@8218f54`)
+## 0. Current Baseline (`dev@699bf53`)
 
 - `viewer` 现在已经具备 `workflow.read` + `workflow.execute`，可运行已发布工作流并处理自己的 Gate。
 - 运行态、trace、artifact 访问现在同时校验 `workspace_id` 与 `user_id` 归属；`admin` / `owner` 才能跨用户查看同工作空间数据。
@@ -33,6 +33,7 @@
 | `POST` | `/api/auth/refresh` | Existing | 刷新访问令牌 |
 | `POST` | `/api/auth/logout` | Existing | 清除 Cookie 并退出 |
 | `POST` | `/api/auth/verify-email` | Existing | 完成邮箱验证 |
+| `POST` | `/api/auth/resend-verification-email` | Existing | 重发邮箱验证邮件 |
 | `POST` | `/api/auth/forgot-password` | Existing | 发起密码重置 |
 | `POST` | `/api/auth/reset-password` | Existing | 提交新密码 |
 | `GET` | `/api/me` | Existing | 获取当前用户、工作空间和角色 |

@@ -67,7 +67,27 @@
 }
 ```
 
-### 4) `POST /api/workflow/{workflow_run_id}/approve-outline`
+### 4) `POST /api/workflow/{workflow_run_id}/pause`
+
+- 用途：用户主动暂停正在自动执行的工作流
+- 请求体：
+
+```json
+{
+  "reason": "需要先确认输入材料"
+}
+```
+
+- 约束：Gate 等待态、`completed`、`failed` 不可暂停
+- 成功后 `status` 为 `paused`，`state.pause` 保留最近暂停上下文
+
+### 5) `POST /api/workflow/{workflow_run_id}/resume`
+
+- 用途：恢复用户主动暂停的工作流
+- 请求体：`{}`
+- 约束：仅 `paused` 状态可恢复；Gate 等待态需走对应审批/澄清接口
+
+### 6) `POST /api/workflow/{workflow_run_id}/approve-outline`
 
 - 用途：提纲审批
 - 请求体：
@@ -82,7 +102,7 @@
 
 - `action` 枚举：`approve | modify | regenerate`
 
-### 5) `POST /api/workflow/{workflow_run_id}/approve-fact-check`
+### 7) `POST /api/workflow/{workflow_run_id}/approve-fact-check`
 
 - 用途：审批高风险事实项（人机门控关键接口）
 - 请求体：
@@ -101,11 +121,11 @@
 
 - `decisions` 枚举值：`confirm | use_suggestion | manual`
 
-### 6) `GET /api/workflow/{workflow_run_id}/rerun-options`
+### 8) `GET /api/workflow/{workflow_run_id}/rerun-options`
 
 - 用途：获取可重跑节点
 
-### 7) `POST /api/workflow/{workflow_run_id}/rerun`
+### 9) `POST /api/workflow/{workflow_run_id}/rerun`
 
 - 用途：从指定节点重跑
 - 请求体：
@@ -118,23 +138,23 @@
 }
 ```
 
-### 8) `GET /api/workflow/{workflow_run_id}/rerun-history`
+### 10) `GET /api/workflow/{workflow_run_id}/rerun-history`
 
 - 用途：查询重跑历史
 
-### 9) `GET /api/workflow/runs`
+### 11) `GET /api/workflow/runs`
 
 - 用途：获取当前用户在当前工作空间可见的运行记录列表
 - 权限：需要 `workflow_run.read`
 - 可见范围：普通用户只看本人运行，`admin` / `owner` 可看同工作空间运行
 
-### 10) `GET /api/workflow/{workflow_run_id}/events`
+### 12) `GET /api/workflow/{workflow_run_id}/events`
 
 - 用途：工作流详情页 SSE 快照流
 - 事件：`snapshot`、`token`、`section_started`、`section_completed`、`stream_error`、`heartbeat`、`done`
 - 说明：SSE 是实时体验增强通道；最终状态仍以 `GET /api/workflow/{workflow_run_id}` 与 Trace 为准
 
-### 11) `GET /api/workflow/{workflow_run_id}/exports/docx`
+### 13) `GET /api/workflow/{workflow_run_id}/exports/docx`
 
 - 用途：导出已完成工作流的最终产物 DOCX
 - 前置：运行状态必须是 `completed`
@@ -145,6 +165,11 @@
 - `clarification_questions`: 当前需要回答的问题列表（流程判断入口）
 - `outline`: 提纲对象
 - `fact_check_report`: 事实核查报告
+- `pause`: 最近一次手动暂停/恢复上下文
+- `gate`: 当前 Gate 类型、问题、回答和等待信息
+- `runtime_plan` / `runtime_progress`: 已发布编排定义编译后的受限运行计划与进度摘要
+- `final_artifact_id`: 最终产物 ID
+- `quality_metrics`: 质量、token 与耗时聚合指标
 - `final_content`: 章节内容预览映射，形如：
 
 ```json

@@ -15,6 +15,7 @@ from core.time import to_utc_iso, to_utc_iso_or_none
 from graph.runtime_plan import canonical_runtime_plan
 from models.artifact import WorkflowRunStatus
 from models.auth_models import MemberRole
+from models.knowledge import RetrievalConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class StartWorkflowRequest(BaseModel):
     workflow_version_id: str | None = None
     model_provider_id: str | None = None
     model_name: str | None = None
+    retrieval_config: RetrievalConfig | None = None
 
 
 class ApproveOutlineRequest(BaseModel):
@@ -557,6 +559,11 @@ def _simplify_state(
                 }
             else:
                 simplified[key] = value
+        elif key == "evidence_pack" or key == "retrieval_config":
+            if hasattr(value, "model_dump"):
+                simplified[key] = value.model_dump(mode="json")
+            else:
+                simplified[key] = value
         elif key in ["clarification_questions"]:
             # 转换 Uncertainty 对象
             if isinstance(value, list):
@@ -755,26 +762,32 @@ def _normalize_pause_state(
     workflow_run: Any | None, *, state: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
     """从图状态和 WorkflowRun 元数据构建规范化的 pause 状态。"""
-    state_pause = state.get("pause") if isinstance(state, dict) else None
-    if isinstance(state_pause, dict):
-        return {
-            "reason": state_pause.get("reason"),
-            "paused_at": _coerce_iso(state_pause.get("paused_at")),
-            "resumed_at": _coerce_iso(state_pause.get("resumed_at")),
-            "source": state_pause.get("source") or "user",
-        }
+    state_pause = _coerce_mapping(state.get("pause")) if isinstance(state, dict) else {}
+    metadata: dict[str, Any] = {}
+    metadata_pause: dict[str, Any] = {}
+    if workflow_run is not None:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        metadata_pause = _coerce_mapping(metadata.get("pause"))
 
-    if workflow_run is None:
-        return None
-
-    metadata = _ensure_workflow_metadata(workflow_run)
-    pause_state = metadata.get("pause")
-    if isinstance(pause_state, dict):
+    if state_pause:
+        # 图状态优先，但用持久化 metadata 补齐 resumed_at/source 等历史字段。
+        pause_state = {**metadata_pause, **state_pause}
         return {
             "reason": pause_state.get("reason"),
             "paused_at": _coerce_iso(pause_state.get("paused_at")),
             "resumed_at": _coerce_iso(pause_state.get("resumed_at")),
             "source": pause_state.get("source") or "user",
+        }
+
+    if workflow_run is None:
+        return None
+
+    if metadata_pause:
+        return {
+            "reason": metadata_pause.get("reason"),
+            "paused_at": _coerce_iso(metadata_pause.get("paused_at")),
+            "resumed_at": _coerce_iso(metadata_pause.get("resumed_at")),
+            "source": metadata_pause.get("source") or "user",
         }
 
     legacy_reason = metadata.get("pause_reason")

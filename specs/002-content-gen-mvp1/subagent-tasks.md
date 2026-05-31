@@ -5,10 +5,10 @@
 
 ## Dispatch Baseline
 
-- 当前派工事实源固定为 `dev@8218f54`、[tasks.md](./tasks.md) 顶部状态快照，以及 canonical 协作文件。
+- 当前派工事实源固定为 `dev@699bf53`、[tasks.md](./tasks.md) 顶部状态快照，以及 canonical 协作文件。
 - 旧的 `1 个 coordinator + Agent 0-5` owner 表与批次编排已经完成历史使命；它们解释了“代码怎么进 dev”，但不再适合作为“下一轮怎么派工”的依据。
 - 如果后续需要重新拆分多 agent 队列，应基于本文件的剩余缺口重新建队列，而不是恢复 2026-03-08 那版 owner 分配。
-- PR #5 是统一错误体系候选，PR #4 是生产 CI/CD 候选；二者尚未合入 `dev`，不能当成主线事实。
+- PR #5 是统一错误体系候选，PR #4 是生产 CI/CD 候选；二者尚未合入 `dev`，不能当成主线事实。PR #4 当前检查已通过，但仍需合并 gate。
 
 ## Current Mainline Snapshot
 
@@ -22,7 +22,7 @@
 | 权限与管理后台 | `T009`, `T038`, `T039`, `T040`, `T041` | 已在 `dev` | viewer/editor/admin/owner 权限矩阵、成员管理页、运行态/trace 归属校验已并主线 |
 | 运行记录总览页 | `T036`, `T037` | 已在 `dev`，待 smoke | `frontend/src/app/console/runs/page.tsx` 通过 `workflowApi.getRuns()` 读取真实运行记录；仍需 live smoke 验证监控、回放、重跑和导出 |
 | 共享前端运行态客户端 | `T005`, `T011` | 已在 `dev` | 首页列表、版本、模型供应商和启动路径已收拢到 `frontend/src/lib/api.ts` 的 runtime client |
-| Quickstart / Contracts / 协作文档 | `T043`, `T044`, `T047`, `T048` | 本轮已回填 | 文档现已按 `dev@8218f54` 对齐，不再沿用旧任务表结论 |
+| Quickstart / Contracts / 协作文档 | `T043`, `T044`, `T047`, `T048` | 本轮已回填 | 文档现已按 `dev@699bf53` 对齐，不再沿用旧任务表结论 |
 | 验收与 polish | `T017`, `T024`, `T031`, `T037`, `T042` | 仍待继续 | 当前剩余主线只保留最终 live smoke 与验收归档，不再包含 auth-flow、publish/version、Gate、runs 或 runtime client 的缺失实现 |
 
 ## Branch And Worktree State
@@ -41,22 +41,22 @@
   - `code/feat-runtime-frontend-polish`
   - `code/feat-rbac-admin-boundaries`
   - 各类临时 integration / merge worktree
-- 当前 MVP1 不存在仍在推进中的核心实现分支；下一轮若继续开发，应直接从 `dev@8218f54` 新建干净分支。
+- 当前 MVP1 不存在仍在推进中的核心实现分支；下一轮若继续开发，应直接从 `dev@699bf53` 新建干净分支。
 - 根工作区中的 `.cunzhi-memory/*`、`specs/002-content-gen-mvp1/*.jsonl`、`update.py` 属于本地运行态或协作工件，不能当作“已经进入 dev”的功能证据；`backend/orm/*` 已是当前仓库跟踪内容，不再视为未入主线目录。
 
 ## Next Dispatch Queue
 
 1. `T017 + T024 + T031 + T037 + T042`
-   - 目标：在 `dev@8218f54` 上完成最终 live smoke：标准生成、Gate、pause/resume、发布可见性、运行记录、Trace、Artifact history、Rerun、SSE、DOCX 导出、auth/access。
+   - 目标：在 `dev@699bf53` 上完成最终 live smoke：标准生成、Gate、pause/resume、发布可见性、运行记录、Trace、Artifact history、Rerun、SSE、DOCX 导出、auth/access。
    - 现状：实现侧已进入主线，缺当前基线的可复用验收证据。
 
 2. PR #5 merge gate
    - 目标：等待/处理统一错误体系 PR 的评审与 CI/CD gate。
-   - 现状：CodeQL 通过且 mergeable，但尚未合入 `dev`；合入前不得把统一错误 envelope 写成主线 API 契约。
+   - 现状：CodeQL 通过但当前 merge state 不是 clean，尚未合入 `dev`；合入前不得把统一错误 envelope 写成主线 API 契约。
 
-3. PR #4 CI 修复
-   - 目标：修复生产 CI/CD 分支的后端质量检查与前端质量检查失败。
-   - 现状：CodeQL 通过，但 PR CI 失败；不能作为生产部署基线归档。
+3. PR #4 合并前 gate
+   - 目标：完成生产 CI/CD 分支的 review / merge gate。
+   - 现状：当前 PR 检查已通过，但尚未合入 `dev`；合入前不能作为生产部署基线归档。
 
 4. MVP2 后续派工
    - 目标：统一错误体系合入后继续 legacy-alignment / frontend-consumer；生产化方向继续 migration / worker queue / observability。
