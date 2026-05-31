@@ -4,14 +4,28 @@
 提供状态规范化、响应构建、Gate/Pause 状态处理等共享逻辑
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 from pydantic import BaseModel, Field
 
-from core.time import to_utc_iso, utc_now_iso
+from core.errors.codes import (
+    AUTH_UNAUTHENTICATED,
+    WORKFLOW_GATE_CONFLICT,
+    WORKFLOW_NOT_FOUND,
+    WORKFLOW_STATE_CONFLICT,
+    WORKSPACE_ACCESS_DENIED,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.exceptions import ApplicationError, DomainError
+from core.time import to_utc_iso, to_utc_iso_or_none
+from graph.runtime_plan import canonical_runtime_plan
 from models.auth_models import MemberRole
+from models.knowledge import RetrievalConfig
+
+logger = logging.getLogger(__name__)
 
 # ==================== 类型定义 ====================
 
@@ -39,6 +53,7 @@ class StartWorkflowRequest(BaseModel):
     workflow_version_id: str | None = None
     model_provider_id: str | None = None
     model_name: str | None = None
+    retrieval_config: RetrievalConfig | None = None
 
 
 class ApproveOutlineRequest(BaseModel):
@@ -87,6 +102,8 @@ class WorkflowResponse(BaseModel):
 
     workflow_run_id: str
     status: WorkflowStatus
+    final_artifact_id: str | None = None
+    quality_metrics: dict[str, Any] | None = None
     state: dict[str, Any]
 
 
@@ -97,9 +114,21 @@ class WorkflowRunListItem(BaseModel):
     workflow_name: str
     status: WorkflowStatus
     current_node: str | None = None
+    workflow_definition_id: str | None = None
+    workflow_version_id: str | None = None
+    final_artifact_id: str | None = None
+    runtime_model: dict[str, Any] | None = None
+    runtime_plan: dict[str, Any] | None = None
+    runtime_progress: dict[str, Any] | None = None
+    quality_metrics: dict[str, Any] | None = None
+    gate: dict[str, Any] | None = None
+    pause: dict[str, Any] | None = None
+    model_provider_id: str | None = None
+    model_name: str | None = None
+    error: str | None = None
     user_input: str
-    started_at: datetime
-    completed_at: datetime | None = None
+    started_at: str
+    completed_at: str | None = None
     total_duration_ms: int | None = None
 
 
@@ -115,6 +144,9 @@ _GATE_STATUS_TO_TYPE: dict[str, str] = {
     "needs_clarification": "clarification",
     "awaiting_outline_approval": "outline_approval",
     "awaiting_fact_check_approval": "fact_check",
+}
+_GATE_TYPE_ALIASES: dict[str, str] = {
+    "fact_check_approval": "fact_check",
 }
 _GATE_STATUSES = set(_GATE_STATUS_TO_TYPE)
 
@@ -145,10 +177,13 @@ def _build_workflow_response(
     workflow_run: Any | None = None,
 ) -> WorkflowResponse:
     """构建统一工作流响应"""
+    simplified_state = _simplify_state(state, workflow_run=workflow_run, status=status)
     return WorkflowResponse(
         workflow_run_id=workflow_run_id,
         status=status,
-        state=_simplify_state(state, workflow_run=workflow_run, status=status),
+        final_artifact_id=simplified_state.get("final_artifact_id"),
+        quality_metrics=simplified_state.get("quality_metrics"),
+        state=simplified_state,
     )
 
 
@@ -164,20 +199,177 @@ def _get_workflow_public_status(workflow_run: Any) -> WorkflowStatus:
 
 def _build_workflow_run_list_response(workflow_runs: list[Any]) -> WorkflowRunListResponse:
     """构建控制台运行记录列表响应。"""
-    runs = [
-        WorkflowRunListItem(
-            id=workflow_run.id,
-            workflow_name=getattr(workflow_run, "workflow_name", "content_generation"),
-            status=_get_workflow_public_status(workflow_run),
-            current_node=getattr(workflow_run, "current_node", None),
-            user_input=getattr(workflow_run, "user_input", ""),
-            started_at=workflow_run.started_at,
-            completed_at=getattr(workflow_run, "completed_at", None),
-            total_duration_ms=getattr(workflow_run, "total_duration_ms", None),
+    runs: list[WorkflowRunListItem] = []
+    for workflow_run in workflow_runs:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        status = _get_workflow_public_status(workflow_run)
+        runtime_plan = _runtime_plan({}, workflow_run)
+        runs.append(
+            WorkflowRunListItem(
+                id=workflow_run.id,
+                workflow_name=getattr(workflow_run, "workflow_name", "content_generation"),
+                status=status,
+                current_node=getattr(workflow_run, "current_node", None),
+                workflow_definition_id=getattr(workflow_run, "workflow_definition_id", None),
+                workflow_version_id=getattr(workflow_run, "workflow_version_id", None),
+                final_artifact_id=getattr(workflow_run, "final_artifact_id", None),
+                runtime_model=metadata.get("runtime_model"),
+                runtime_plan=runtime_plan,
+                runtime_progress=_runtime_progress({}, workflow_run, status=status),
+                quality_metrics=_quality_metrics(workflow_run),
+                gate=_normalize_gate_state(status, {}, workflow_run),
+                pause=_normalize_pause_state(workflow_run),
+                model_provider_id=metadata.get("model_provider_id"),
+                model_name=metadata.get("model_name"),
+                error=metadata.get("error"),
+                user_input=getattr(workflow_run, "user_input", ""),
+                started_at=to_utc_iso(workflow_run.started_at),
+                completed_at=to_utc_iso_or_none(getattr(workflow_run, "completed_at", None)),
+                total_duration_ms=getattr(workflow_run, "total_duration_ms", None),
+            )
         )
-        for workflow_run in workflow_runs
-    ]
     return WorkflowRunListResponse(runs=runs)
+
+
+def _runtime_plan(state: dict, workflow_run: Any | None = None) -> dict[str, Any]:
+    """返回当前运行实例实际采用的受限运行计划。"""
+    plan = state.get("runtime_plan")
+    if isinstance(plan, dict):
+        return plan
+
+    if workflow_run is not None:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        metadata_plan = metadata.get("runtime_plan")
+        if isinstance(metadata_plan, dict):
+            return metadata_plan
+
+    return canonical_runtime_plan()
+
+
+def _normalize_definition_plan(workflow_context: Any) -> dict[str, Any] | None:
+    """从已发布工作流上下文提取前端可渲染的编排节点。"""
+    context = _coerce_mapping(workflow_context)
+    if not context:
+        return None
+
+    nodes = context.get("nodes")
+    if not isinstance(nodes, list):
+        nodes = []
+
+    normalized_nodes: list[dict[str, Any]] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        data = _coerce_mapping(node.get("data"))
+        normalized_nodes.append(
+            {
+                "id": node.get("id"),
+                "name": node.get("id"),
+                "label": data.get("label") or node.get("id"),
+                "type": node.get("type"),
+            }
+        )
+
+    return {
+        "workflow_definition_id": context.get("workflow_definition_id"),
+        "workflow_version_id": context.get("workflow_version_id"),
+        "definition_name": context.get("definition_name"),
+        "definition_description": context.get("definition_description"),
+        "version": context.get("version"),
+        "nodes": normalized_nodes,
+        "execution_mode": "published_dsl_runtime",
+        "execution_note": "已发布编排定义会编译为当前引擎支持的受限运行计划；暂未支持的节点类型按五类运行时能力映射执行。",
+    }
+
+
+def _runtime_progress(
+    state: dict,
+    workflow_run: Any | None = None,
+    *,
+    status: WorkflowStatus | None = None,
+) -> dict[str, Any]:
+    """基于运行计划构建前端可直接消费的动态进度摘要。"""
+    plan = _runtime_plan(state, workflow_run)
+    steps = plan.get("steps")
+    normalized_steps: list[dict[str, Any]] = []
+    if isinstance(steps, list):
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            normalized_steps.append(
+                {
+                    "id": step.get("id"),
+                    "label": step.get("label") or step.get("name") or step.get("id"),
+                    "runtime_type": step.get("runtime_type"),
+                    "source_node_id": step.get("source_node_id"),
+                    "source_node_label": step.get("source_node_label"),
+                    "index": index,
+                }
+            )
+
+    current_node = state.get("current_node") or getattr(workflow_run, "current_node", None)
+    current_step_index = next(
+        (
+            step["index"]
+            for step in normalized_steps
+            if current_node is not None and step.get("id") == current_node
+        ),
+        None,
+    )
+    total_steps = len(normalized_steps)
+
+    if status == "completed":
+        completed_step_count = total_steps
+    elif isinstance(current_step_index, int):
+        completed_step_count = current_step_index
+    else:
+        completed_step_count = 0
+
+    percent = (
+        round((completed_step_count / total_steps) * 100)
+        if total_steps > 0
+        else (100 if status == "completed" else 0)
+    )
+
+    return {
+        "execution_mode": plan.get("execution_mode"),
+        "current_step_id": current_node,
+        "current_step_index": current_step_index,
+        "completed_step_count": completed_step_count,
+        "total_steps": total_steps,
+        "percent": max(0, min(100, percent)),
+        "features": plan.get("features") if isinstance(plan.get("features"), dict) else {},
+        "warnings": plan.get("warnings") if isinstance(plan.get("warnings"), list) else [],
+        "steps": normalized_steps,
+    }
+
+
+def _quality_metrics(workflow_run: Any | None) -> dict[str, Any] | None:
+    """读取运行质量指标；历史运行缺少聚合时返回最小统计兜底。"""
+    if workflow_run is None:
+        return None
+
+    metadata = _ensure_workflow_metadata(workflow_run)
+    metrics = metadata.get("quality_metrics")
+    if isinstance(metrics, dict):
+        return metrics
+
+    return {
+        "average_quality_score": None,
+        "quality_score_count": 0,
+        "revisions_requested": 0,
+        "fact_check": None,
+        "tokens": {
+            "total": getattr(workflow_run, "total_tokens", 0),
+            "llm_call_count": getattr(workflow_run, "total_llm_calls", 0),
+        },
+        "latency": {
+            "total_node_duration_ms": getattr(workflow_run, "total_duration_ms", 0),
+            "average_llm_latency_ms": None,
+        },
+        "final_artifact_id": getattr(workflow_run, "final_artifact_id", None),
+        "final_content_hash": None,
+    }
 
 
 # ==================== 运行时上下文 ====================
@@ -206,9 +398,9 @@ async def require_workspace_permission(
         workspace_id = user.get("default_workspace_id") or user.get("workspace_id")
 
     if not user_id:
-        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+        raise ApplicationError(code=AUTH_UNAUTHENTICATED, message="未登录或登录已过期")
     if not workspace_id:
-        raise HTTPException(status_code=400, detail="请先选择工作空间")
+        raise ApplicationError(code=WORKSPACE_CONTEXT_REQUIRED, message="请先选择工作空间")
 
     store = get_postgres_store()
     async with store.async_session() as session:
@@ -259,18 +451,21 @@ async def require_workflow_run_access(
     workflow_run = await store.get_workflow_run(workflow_run_id)
 
     if not workflow_run:
-        raise HTTPException(status_code=404, detail="Workflow not found")
+        raise DomainError(code=WORKFLOW_NOT_FOUND, message="工作流不存在")
 
     metadata = _ensure_workflow_metadata(workflow_run)
     run_workspace_id = metadata.get("workspace_id")
     run_user_id = metadata.get("user_id")
 
     if not run_workspace_id or not run_user_id:
-        raise HTTPException(status_code=403, detail="该任务缺少归属信息，暂不允许访问")
+        raise DomainError(
+            code=WORKSPACE_ACCESS_DENIED,
+            message="该任务缺少归属信息，暂不允许访问",
+        )
     if run_workspace_id != workspace_id:
-        raise HTTPException(status_code=403, detail="您无权访问该工作空间中的任务")
+        raise DomainError(code=WORKSPACE_ACCESS_DENIED, message="您无权访问该工作空间中的任务")
     if not _is_admin_role(role) and run_user_id != user_id:
-        raise HTTPException(status_code=403, detail="您只能访问自己的任务")
+        raise DomainError(code=WORKSPACE_ACCESS_DENIED, message="您只能访问自己的任务")
 
     return workflow_run
 
@@ -282,7 +477,7 @@ async def require_node_run_access(request: Request, node_run_id: str) -> Any:
     store = get_artifact_store()
     node_run = await store.get_node_run(node_run_id)
     if not node_run:
-        raise HTTPException(status_code=404, detail="NodeRun not found")
+        raise DomainError(code=WORKFLOW_NOT_FOUND, message="节点运行记录不存在")
 
     await require_workflow_run_access(request, node_run.workflow_run_id)
     return node_run
@@ -295,7 +490,7 @@ async def require_artifact_access(request: Request, artifact_id: str) -> Any:
     store = get_artifact_store()
     artifact = await store.get_artifact(artifact_id)
     if not artifact:
-        raise HTTPException(status_code=404, detail="Artifact not found")
+        raise DomainError(code=WORKFLOW_NOT_FOUND, message="产物不存在")
 
     await require_workflow_run_access(request, artifact.workflow_run_id)
     return artifact
@@ -303,18 +498,23 @@ async def require_artifact_access(request: Request, artifact_id: str) -> Any:
 
 async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, dict, WorkflowStatus]:
     """加载工作流运行时上下文（store, workflow, workflow_run, graph_state, status）"""
-    from fastapi import HTTPException
-
     from graph import get_workflow
     from services import get_artifact_store
 
     store = get_artifact_store()
     workflow_run = await store.get_workflow_run(workflow_run_id)
     if not workflow_run:
-        raise HTTPException(status_code=404, detail="Workflow not found")
+        raise DomainError(code=WORKFLOW_NOT_FOUND, message="工作流不存在")
 
     workflow = get_workflow()
     graph_state = await _get_graph_state(workflow, workflow_run_id)
+    if graph_state.get("state_read_error"):
+        # checkpoint 读取失败只记录诊断信息，不把一次读路径异常固化成终态失败。
+        metadata = _ensure_workflow_metadata(workflow_run)
+        metadata["error"] = graph_state.get("error")
+        metadata["state_read_error"] = graph_state.get("state_read_error")
+        workflow_run.metadata = metadata
+        await store.update_workflow_run(workflow_run)
     status = _extract_workflow_status(workflow, workflow_run, graph_state)
     return store, workflow, workflow_run, graph_state, status
 
@@ -327,14 +527,12 @@ def _assert_status(
     paused_detail: str,
 ) -> None:
     """断言工作流状态，不满足时抛出 HTTPException"""
-    from fastapi import HTTPException
-
     if current_status == "paused":
-        raise HTTPException(status_code=409, detail=paused_detail)
+        raise DomainError(code=WORKFLOW_GATE_CONFLICT, message=paused_detail)
     if current_status not in allowed:
-        raise HTTPException(
-            status_code=409,
-            detail=f"当前工作流状态为 {current_status}，不能执行{action}。",
+        raise DomainError(
+            code=WORKFLOW_STATE_CONFLICT,
+            message=f"当前工作流状态为 {current_status}，不能执行{action}。",
         )
 
 
@@ -366,6 +564,11 @@ def _simplify_state(
                 }
             else:
                 simplified[key] = value
+        elif key == "evidence_pack" or key == "retrieval_config":
+            if hasattr(value, "model_dump"):
+                simplified[key] = value.model_dump(mode="json")
+            else:
+                simplified[key] = value
         elif key in ["clarification_questions"]:
             # 转换 Uncertainty 对象
             if isinstance(value, list):
@@ -379,6 +582,20 @@ def _simplify_state(
     if current_node:
         simplified["current_node"] = current_node
 
+    simplified["runtime_plan"] = _runtime_plan(state, workflow_run)
+    simplified["runtime_progress"] = _runtime_progress(state, workflow_run, status=status)
+    if workflow_run is not None:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        runtime_model = metadata.get("runtime_model")
+        if isinstance(runtime_model, dict):
+            simplified["runtime_model"] = runtime_model
+        quality_metrics = _quality_metrics(workflow_run)
+        if quality_metrics:
+            simplified["quality_metrics"] = quality_metrics
+    definition_plan = _normalize_definition_plan(state.get("workflow_context"))
+    if definition_plan:
+        simplified["definition_plan"] = definition_plan
+
     error = state.get("error")
     if not error and workflow_run is not None:
         metadata = _ensure_workflow_metadata(workflow_run)
@@ -386,7 +603,14 @@ def _simplify_state(
     if error:
         simplified["error"] = error
 
-    pause = _normalize_pause_state(workflow_run)
+    final_artifact_id = state.get("final_content_artifact_id") or getattr(
+        workflow_run, "final_artifact_id", None
+    )
+    if final_artifact_id:
+        simplified["final_content_artifact_id"] = final_artifact_id
+        simplified["final_artifact_id"] = final_artifact_id
+
+    pause = _normalize_pause_state(workflow_run, state=state)
     if pause:
         simplified["pause"] = pause
 
@@ -401,14 +625,21 @@ def _simplify_state(
 
 
 async def _get_graph_state(workflow: Any, workflow_run_id: str) -> dict:
-    """从图检查点读取最新状态，失败时返回空状态"""
+    """从图检查点读取最新状态，失败时返回显式错误状态。"""
     config = {"configurable": {"thread_id": workflow_run_id}}
     try:
         snapshot = await workflow.graph.aget_state(config)
         if snapshot and isinstance(snapshot.values, dict):
             return snapshot.values
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.exception("读取工作流 checkpoint 状态失败: workflow_run_id=%s", workflow_run_id)
+        return {
+            "error": "工作流状态读取失败，请检查运行时 checkpoint 存储。",
+            "state_read_error": {
+                "type": exc.__class__.__name__,
+                "source": "checkpoint",
+            },
+        }
     return {}
 
 
@@ -421,7 +652,7 @@ def _extract_workflow_status(workflow: Any, workflow_run: Any, graph_state: dict
             return graph_status
         if graph_status in {"completed", "failed"}:
             return graph_status
-        if graph_state.get("error"):
+        if graph_state.get("error") and not graph_state.get("state_read_error"):
             return "failed"
 
     raw_status = _get_workflow_run_status(workflow_run)
@@ -464,9 +695,17 @@ def _coerce_iso(value: Any) -> str | None:
     return str(value)
 
 
-def _now_iso() -> str:
-    """获取当前 UTC 时间的 ISO 字符串"""
-    return utc_now_iso()
+def _duration_between_iso(start: str | None, end: str | None) -> int | None:
+    """计算两个 ISO 时间之间的耗时，统一以毫秒返回。"""
+    if not start or not end:
+        return None
+
+    def _parse(value: str) -> datetime:
+        text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(text)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+    return int((_parse(end) - _parse(start)).total_seconds() * 1000)
 
 
 # ==================== 澄清问题规范化 ====================
@@ -524,19 +763,36 @@ def _coerce_mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _normalize_pause_state(workflow_run: Any | None) -> dict[str, Any] | None:
-    """从 WorkflowRun 元数据构建规范化的 pause 状态"""
-    if workflow_run is None:
-        return None
+def _normalize_pause_state(
+    workflow_run: Any | None, *, state: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """从图状态和 WorkflowRun 元数据构建规范化的 pause 状态。"""
+    state_pause = _coerce_mapping(state.get("pause")) if isinstance(state, dict) else {}
+    metadata: dict[str, Any] = {}
+    metadata_pause: dict[str, Any] = {}
+    if workflow_run is not None:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        metadata_pause = _coerce_mapping(metadata.get("pause"))
 
-    metadata = _ensure_workflow_metadata(workflow_run)
-    pause_state = metadata.get("pause")
-    if isinstance(pause_state, dict):
+    if state_pause:
+        # 图状态优先，但用持久化 metadata 补齐 resumed_at/source 等历史字段。
+        pause_state = {**metadata_pause, **state_pause}
         return {
             "reason": pause_state.get("reason"),
             "paused_at": _coerce_iso(pause_state.get("paused_at")),
             "resumed_at": _coerce_iso(pause_state.get("resumed_at")),
             "source": pause_state.get("source") or "user",
+        }
+
+    if workflow_run is None:
+        return None
+
+    if metadata_pause:
+        return {
+            "reason": metadata_pause.get("reason"),
+            "paused_at": _coerce_iso(metadata_pause.get("paused_at")),
+            "resumed_at": _coerce_iso(metadata_pause.get("resumed_at")),
+            "source": metadata_pause.get("source") or "user",
         }
 
     legacy_reason = metadata.get("pause_reason")
@@ -601,7 +857,8 @@ def _normalize_gate_state(
 
     metadata = _ensure_workflow_metadata(workflow_run) if workflow_run is not None else {}
     gate_metadata = metadata.get("gate") if isinstance(metadata.get("gate"), dict) else {}
-    gate_type = gate_metadata.get("gate_type") or _GATE_STATUS_TO_TYPE[status]
+    raw_gate_type = gate_metadata.get("gate_type") or _GATE_STATUS_TO_TYPE[status]
+    gate_type = _GATE_TYPE_ALIASES.get(str(raw_gate_type), str(raw_gate_type))
 
     if gate_type == "clarification":
         questions = _normalize_clarification_questions(state.get("clarification_questions", []))
@@ -616,13 +873,17 @@ def _normalize_gate_state(
         answers = state.get("fact_check_decisions") or state.get("manual_corrections")
         trigger_reason = gate_metadata.get("trigger_reason") or "fact_risk"
 
+    opened_at = _coerce_iso(gate_metadata.get("opened_at"))
+    handled_at = _coerce_iso(gate_metadata.get("handled_at"))
+
     return {
         "gate_type": gate_type,
         "trigger_reason": trigger_reason,
         "questions": questions,
         "answers": answers or gate_metadata.get("answers"),
-        "opened_at": _coerce_iso(gate_metadata.get("opened_at")),
-        "handled_at": _coerce_iso(gate_metadata.get("handled_at")),
+        "opened_at": opened_at,
+        "handled_at": handled_at,
+        "waiting_duration_ms": _duration_between_iso(opened_at, handled_at),
         "resolution": gate_metadata.get("resolution"),
     }
 
@@ -648,6 +909,29 @@ def _normalize_trace_payload(
     )
     if current_node:
         workflow_payload["current_node"] = current_node
+
+    runtime_plan = _runtime_plan(graph_state, workflow_run)
+    workflow_payload["runtime_plan"] = runtime_plan
+    workflow_payload["runtime_progress"] = _runtime_progress(
+        graph_state,
+        workflow_run,
+        status=status,
+    )
+    metadata = _ensure_workflow_metadata(workflow_run)
+    runtime_model = metadata.get("runtime_model")
+    if isinstance(runtime_model, dict):
+        workflow_payload["runtime_model"] = runtime_model
+    quality_metrics = _quality_metrics(workflow_run)
+    if quality_metrics:
+        workflow_payload["quality_metrics"] = quality_metrics
+
+    final_artifact_id = graph_state.get("final_content_artifact_id") or getattr(
+        workflow_run,
+        "final_artifact_id",
+        None,
+    )
+    if final_artifact_id:
+        workflow_payload["final_artifact_id"] = final_artifact_id
 
     pause = _normalize_pause_state(workflow_run)
     if pause:
@@ -699,12 +983,14 @@ def _enrich_timeline(
         )
 
     gate = _normalize_gate_state(status, graph_state, workflow_run)
-    if gate and "workflow_gate_waiting" not in event_names:
+    gate_opened_at = None
+    if gate:
+        gate_opened_at = gate.get("opened_at") or _infer_gate_opened_at_from_timeline(events)
+
+    if gate and gate_opened_at and "workflow_gate_waiting" not in event_names:
         events.append(
             {
-                "timestamp": gate.get("opened_at")
-                or _coerce_iso(getattr(workflow_run, "started_at", None))
-                or _now_iso(),
+                "timestamp": gate_opened_at,
                 "event": "workflow_gate_waiting",
                 "gate_type": gate["gate_type"],
                 "questions": gate.get("questions", []),
@@ -734,3 +1020,16 @@ def _timeline_sort_key(event: dict[str, Any]) -> tuple[int, float]:
         return (0, parsed.timestamp())
     except ValueError:
         return (1, float("inf"))
+
+
+def _infer_gate_opened_at_from_timeline(events: list[dict[str, Any]]) -> str | None:
+    """兼容旧数据：缺少 opened_at 时，回退到最近一次节点完成时间。"""
+    completed_events = [
+        event
+        for event in events
+        if event.get("event") == "node_completed" and event.get("timestamp")
+    ]
+    if not completed_events:
+        return None
+    completed_events.sort(key=_timeline_sort_key)
+    return str(completed_events[-1]["timestamp"])

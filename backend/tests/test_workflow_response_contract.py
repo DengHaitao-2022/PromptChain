@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.errors.codes import WORKFLOW_GATE_CONFLICT
 from tests._runtime_auth import authenticated_client, ownership_metadata
 
 
@@ -70,6 +71,15 @@ class _FakeWorkflow:
     async def pause(self, workflow_run_id: str, reason: str = ""):
         if self.store:
             self.store.workflow_run.status = "paused"
+            metadata = dict(self.store.workflow_run.metadata or {})
+            metadata["pause"] = {
+                "reason": reason,
+                "paused_at": "2026-03-08T10:02:00Z",
+                "resumed_at": None,
+                "source": "user",
+            }
+            metadata["pause_reason"] = reason
+            self.store.workflow_run.metadata = metadata
         return {
             "workflow_run_id": workflow_run_id,
             "status": "paused",
@@ -87,6 +97,15 @@ class _FakeWorkflow:
     async def resume_paused(self, workflow_run_id: str):
         if self.store:
             self.store.workflow_run.status = "running"
+            metadata = dict(self.store.workflow_run.metadata or {})
+            metadata["pause"] = {
+                "reason": "等待人工复核",
+                "paused_at": "2026-03-08T10:02:00Z",
+                "resumed_at": "2026-03-08T10:03:00Z",
+                "source": "user",
+            }
+            metadata["pause_reason"] = None
+            self.store.workflow_run.metadata = metadata
         return {
             "workflow_run_id": workflow_run_id,
             "status": "running",
@@ -157,7 +176,9 @@ def test_get_workflow_status_returns_workflow_response_shape(monkeypatch):
 
     assert res.status_code == 200
     body = res.json()
-    assert set(body.keys()) == {"workflow_run_id", "status", "state"}
+    assert {"workflow_run_id", "status", "state"}.issubset(body.keys())
+    assert "final_artifact_id" in body
+    assert "quality_metrics" in body
     assert body["status"] == "needs_clarification"
     assert body["state"]["current_node"] == "parse_intent"
     assert body["state"]["gate"]["gate_type"] == "clarification"
@@ -191,6 +212,43 @@ def test_pause_and_resume_endpoints_round_trip_pause_metadata(monkeypatch):
     assert resume_body["state"]["pause"]["resumed_at"]
 
 
+def test_state_pause_keeps_metadata_fields_when_graph_pause_is_partial(monkeypatch):
+    store = _FakeStore(
+        _FakeWorkflowRun(
+            current_node="generate_content",
+            metadata={
+                "pause": {
+                    "reason": "等待人工复核",
+                    "paused_at": "2026-03-08T10:02:00Z",
+                    "resumed_at": "2026-03-08T10:03:00Z",
+                    "source": "user",
+                }
+            },
+        )
+    )
+    workflow = _FakeWorkflow(
+        {
+            "current_node": "generate_content",
+            "is_paused": True,
+            "pause": {
+                "reason": "等待人工复核",
+                "paused_at": "2026-03-08T10:02:00Z",
+            },
+        },
+        store=store,
+    )
+    monkeypatch.setattr("services.get_artifact_store", lambda: store)
+    monkeypatch.setattr("graph.get_workflow", lambda: workflow)
+
+    client = authenticated_client(monkeypatch)
+    res = client.get("/api/workflow/wf-123")
+
+    assert res.status_code == 200
+    pause = res.json()["state"]["pause"]
+    assert pause["resumed_at"] == "2026-03-08T10:03:00Z"
+    assert pause["source"] == "user"
+
+
 def test_pause_rejects_gate_waiting_workflow(monkeypatch):
     store = _FakeStore(_FakeWorkflowRun(current_node="parse_intent"))
     workflow = _FakeWorkflow(
@@ -212,7 +270,11 @@ def test_pause_rejects_gate_waiting_workflow(monkeypatch):
     res = client.post("/api/workflow/wf-123/pause", json={"reason": "先暂停"})
 
     assert res.status_code == 409
-    assert "Gate" in res.json()["detail"]
+    body = res.json()
+    assert body["success"] is False
+    assert body["code"] == WORKFLOW_GATE_CONFLICT
+    assert "Gate" in body["message"]
+    assert body["request_id"]
 
 
 def test_manual_pause_status_beats_running_graph_snapshot(monkeypatch):

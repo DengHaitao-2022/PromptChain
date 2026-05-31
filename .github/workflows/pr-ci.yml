@@ -1,0 +1,156 @@
+name: PR CI
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  push:
+    branches:
+      - dev
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: 变更范围识别
+    runs-on: ubuntu-latest
+    outputs:
+      backend-python: ${{ steps.filter.outputs.backend_python }}
+      frontend-source: ${{ steps.filter.outputs.frontend_source }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 识别本次 PR 变更范围
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          base_sha="${BASE_SHA}"
+          head_sha="${HEAD_SHA}"
+          if [[ -z "${base_sha}" || "${base_sha}" =~ ^0+$ ]]; then
+            base_sha="$(git rev-parse "${head_sha}^")"
+          fi
+
+          changed_files="$(git diff --name-only "${base_sha}" "${head_sha}")"
+          printf '%s\n' "${changed_files}"
+
+          backend_python=false
+          frontend_source=false
+
+          if printf '%s\n' "${changed_files}" | grep -Eq '^backend/.*\.py$'; then
+            backend_python=true
+          fi
+
+          if printf '%s\n' "${changed_files}" | grep -Eq '^(frontend/src/|frontend/(eslint\.config\.mjs|next\.config\.ts|tsconfig\.json|package(-lock)?\.json))'; then
+            frontend_source=true
+          fi
+
+          echo "backend_python=${backend_python}" >> "${GITHUB_OUTPUT}"
+          echo "frontend_source=${frontend_source}" >> "${GITHUB_OUTPUT}"
+
+  infrastructure:
+    name: 基础设施配置检查
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 校验 YAML 文件
+        run: |
+          ruby -e 'require "yaml"; ARGV.each { |file| YAML.load_file(file); puts "ok #{file}" }' \
+            .github/workflows/pr-ci.yml \
+            .github/workflows/codeql.yml \
+            docker-compose.prod.yml
+
+      - name: 校验生产 Compose 配置
+        env:
+          POSTGRES_PASSWORD: local-check
+          JWT_SECRET_KEY: local-check-jwt-secret
+          SECRETS_ENCRYPTION_KEY: local-check-secrets-encryption-key
+        run: docker compose -f docker-compose.prod.yml config
+
+  backend:
+    name: 后端质量检查
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Ruff 检查
+        if: needs.changes.outputs.backend-python == 'true'
+        run: uvx ruff==0.14.10 check backend --config backend/ruff.toml
+
+      - name: Ruff 格式检查
+        if: needs.changes.outputs.backend-python == 'true'
+        run: uvx ruff==0.14.10 format backend --check --config backend/ruff.toml
+
+      - name: 跳过 Ruff 检查说明
+        if: needs.changes.outputs.backend-python != 'true'
+        run: echo "本次 PR 未修改 backend/**/*.py，跳过后端 Ruff gate；基础设施配置检查仍会阻塞。"
+
+  frontend:
+    name: 前端质量检查
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装前端依赖
+        if: needs.changes.outputs.frontend-source == 'true'
+        run: npm ci
+
+      - name: ESLint 检查
+        if: needs.changes.outputs.frontend-source == 'true'
+        run: npm run lint
+
+      - name: 跳过 ESLint 检查说明
+        if: needs.changes.outputs.frontend-source != 'true'
+        run: echo "本次 PR 未修改 frontend/src 或前端构建配置，跳过既有前端源码 ESLint gate。"
+
+      - name: TypeScript 类型检查
+        if: needs.changes.outputs.frontend-source == 'true'
+        run: npx tsc --noEmit
+
+      - name: Next.js 构建
+        if: needs.changes.outputs.frontend-source == 'true'
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npm run build
+
+      - name: 跳过前端类型检查和构建说明
+        if: needs.changes.outputs.frontend-source != 'true'
+        run: echo "本次 PR 未修改 frontend/src 或前端构建配置，跳过既有前端源码 typecheck/build gate。"

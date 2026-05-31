@@ -1,15 +1,20 @@
 """
-统一API响应模型
+统一 API 响应兼容层。
 
-提供标准化的API响应格式
+注意：该模块保留给仍使用 `Result/PageResult` 的旧成功响应与局部兼容场景。
+新错误路径应抛出 `PromptChainError`，由 `core.errors` 的全局 handler 输出统一
+`ErrorEnvelope`。
 """
 
 from pydantic import BaseModel
 
+from core.errors.codes import get_legacy_numeric_code
+from core.errors.models import ErrorEnvelope
+
 
 class Result[T](BaseModel):
     """
-    统一API响应格式
+    旧版 API 响应格式。
 
     成功响应:
     {
@@ -32,37 +37,47 @@ class Result[T](BaseModel):
 
     @classmethod
     def success(cls, data: T = None, message: str = "success") -> Result[T]:
-        """创建成功响应"""
+        """创建旧版成功响应。"""
         return cls(code=0, message=message, data=data)
 
     @classmethod
     def error(cls, code: int, message: str, data: T = None) -> Result[T]:
-        """创建错误响应"""
+        """创建旧版错误响应，仅供未迁移调用方临时兼容。"""
         return cls(code=code, message=message, data=data)
 
     @classmethod
+    def from_error_envelope(cls, error: ErrorEnvelope) -> Result[None]:
+        """把统一错误 envelope 桥接为旧数字 code 风格。"""
+
+        return cls(
+            code=get_legacy_numeric_code(error.code),
+            message=error.message,
+            data=None,
+        )
+
+    @classmethod
     def bad_request(cls, message: str = "请求参数错误") -> Result:
-        """400 Bad Request"""
+        """400 Bad Request，仅供未迁移调用方临时兼容。"""
         return cls(code=40000, message=message)
 
     @classmethod
     def unauthorized(cls, message: str = "未授权") -> Result:
-        """401 Unauthorized"""
+        """401 Unauthorized，仅供未迁移调用方临时兼容。"""
         return cls(code=40100, message=message)
 
     @classmethod
     def forbidden(cls, message: str = "无权限") -> Result:
-        """403 Forbidden"""
+        """403 Forbidden，仅供未迁移调用方临时兼容。"""
         return cls(code=40300, message=message)
 
     @classmethod
     def not_found(cls, message: str = "资源不存在") -> Result:
-        """404 Not Found"""
+        """404 Not Found，仅供未迁移调用方临时兼容。"""
         return cls(code=40400, message=message)
 
     @classmethod
     def server_error(cls, message: str = "服务器内部错误") -> Result:
-        """500 Internal Server Error"""
+        """500 Internal Server Error，仅供未迁移调用方临时兼容。"""
         return cls(code=50000, message=message)
 
 

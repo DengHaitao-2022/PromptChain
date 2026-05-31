@@ -19,6 +19,7 @@ interface VersionHistoryModalProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onVersionSelect?: (versionId: string) => void;
+    onCompareVersions?: (versionIds: [string, string]) => void;
 }
 
 export function VersionHistoryModal({
@@ -26,19 +27,13 @@ export function VersionHistoryModal({
     open,
     onOpenChange,
     onVersionSelect,
+    onCompareVersions,
 }: VersionHistoryModalProps) {
     const [versions, setVersions] = React.useState<VersionInfo[]>([]);
     const [loading, setLoading] = React.useState(false);
     const [selectedVersions, setSelectedVersions] = React.useState<string[]>([]);
 
-    // 加载版本历史
-    React.useEffect(() => {
-        if (open && artifactId) {
-            loadVersionHistory();
-        }
-    }, [open, artifactId]);
-
-    const loadVersionHistory = async () => {
+    const loadVersionHistory = React.useCallback(async () => {
         setLoading(true);
         try {
             const response = await artifactApi.getHistory(artifactId);
@@ -48,7 +43,14 @@ export function VersionHistoryModal({
         } finally {
             setLoading(false);
         }
-    };
+    }, [artifactId]);
+
+    // 加载版本历史
+    React.useEffect(() => {
+        if (open && artifactId) {
+            void loadVersionHistory();
+        }
+    }, [open, artifactId, loadVersionHistory]);
 
     // 格式化时间
     const formatTime = (timestamp: string) => {
@@ -57,6 +59,7 @@ export function VersionHistoryModal({
 
     // 切换版本选择
     const toggleVersionSelect = (versionId: string) => {
+        onVersionSelect?.(versionId);
         if (selectedVersions.includes(versionId)) {
             setSelectedVersions(selectedVersions.filter((v) => v !== versionId));
         } else if (selectedVersions.length < 2) {
@@ -73,7 +76,7 @@ export function VersionHistoryModal({
                         版本历史
                     </Dialog.Title>
                     <Dialog.Description className={styles.description}>
-                        查看产物的所有历史版本，选择两个版本可进行对比
+                        查看产物的所有历史版本，选择版本后可由接入页面打开详情或对比。
                     </Dialog.Description>
 
                     {loading ? (
@@ -115,17 +118,14 @@ export function VersionHistoryModal({
                     )}
 
                     <div className={styles.actions}>
-                        {selectedVersions.length === 2 && (
+                        {selectedVersions.length === 2 && onCompareVersions ? (
                             <button
                                 className="btn btn-secondary"
-                                onClick={() => {
-                                    // TODO: 打开对比视图
-                                    console.log('Compare:', selectedVersions);
-                                }}
+                                onClick={() => onCompareVersions([selectedVersions[0], selectedVersions[1]])}
                             >
                                 对比版本
                             </button>
-                        )}
+                        ) : null}
                         <Dialog.Close asChild>
                             <button className="btn btn-ghost">关闭</button>
                         </Dialog.Close>

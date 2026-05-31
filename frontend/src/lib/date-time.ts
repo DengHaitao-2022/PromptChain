@@ -3,17 +3,44 @@ const APP_TIME_ZONE = 'Asia/Shanghai';
 
 type DateInput = string | number | Date | null | undefined;
 
-function parseDate(value: DateInput): Date | null {
+function hasExplicitTimezone(value: string): boolean {
+  return /Z$|[+-]\d{2}:\d{2}$/i.test(value);
+}
+
+function normalizeApiDateString(value: string): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (hasExplicitTimezone(trimmed)) {
+    return trimmed;
+  }
+
+  if (process.env.NODE_ENV !== 'production' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)) {
+    console.warn('[time] API datetime has no timezone:', trimmed);
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)) {
+    return `${trimmed}Z`;
+  }
+
+  return trimmed;
+}
+
+export function parseAppDate(value: DateInput): Date | null {
   if (value === null || value === undefined || value === '') {
     return null;
   }
 
-  const date = value instanceof Date ? value : new Date(value);
+  const normalized = typeof value === 'string' ? normalizeApiDateString(value) : value;
+  const date = normalized instanceof Date ? normalized : new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
 export function formatAppDateTime(value: DateInput, fallback = '暂无记录'): string {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   if (!date) {
     return fallback;
   }
@@ -29,7 +56,7 @@ export function formatAppDateTime(value: DateInput, fallback = '暂无记录'): 
 }
 
 export function formatAppDate(value: DateInput, fallback = '暂无记录'): string {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   if (!date) {
     return fallback;
   }
@@ -43,7 +70,7 @@ export function formatAppDate(value: DateInput, fallback = '暂无记录'): stri
 }
 
 export function formatCompactAppDateTime(value: DateInput, fallback = '暂无记录'): string {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   if (!date) {
     return fallback;
   }
@@ -58,7 +85,7 @@ export function formatCompactAppDateTime(value: DateInput, fallback = '暂无记
 }
 
 export function formatAppTime(value: DateInput, fallback = '暂无记录'): string {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   if (!date) {
     return fallback;
   }
@@ -72,8 +99,13 @@ export function formatAppTime(value: DateInput, fallback = '暂无记录'): stri
 }
 
 export function toUtcIsoString(value: DateInput): string | undefined {
-  const date = parseDate(value);
+  const date = parseAppDate(value);
   return date?.toISOString();
+}
+
+export function toEpochMilliseconds(value: DateInput): number | undefined {
+  const date = parseAppDate(value);
+  return date?.getTime();
 }
 
 export function appDateTimeInputToUtcIsoString(value: string): string | undefined {

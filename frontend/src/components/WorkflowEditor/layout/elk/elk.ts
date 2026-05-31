@@ -20,7 +20,7 @@ export async function layoutGraph(
 ): Promise<Node[]> {
     if (nodes.length === 0) return nodes;
 
-    // TODO: 目前 elkjs 在重排局部选区时，由于必须考虑全局上下文才能算好相对位置，
+    // 目前 elkjs 在重排局部选区时，由于必须考虑全局上下文才能算好相对位置，
     // 最简单的策略是：用完整的图算出一版全局布局，但在 apply 阶段只提取选区中节点的新坐标。
     // 这可能导致选区坐标跳跃。如果要在原位排列选区，可以提取子图进行独立布局再叠加偏移。
     // 作为初步阶段，我们直接在应用阶段过滤（详见 applyElkLayout）。

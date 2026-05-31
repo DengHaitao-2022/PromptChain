@@ -130,4 +130,5 @@ class WorkflowCompileResult(BaseModel):
 
     success: bool
     graph_code: str | None = None  # 生成的LangGraph代码预览
+    runtime_plan: dict[str, Any] | None = None
     errors: list[str] = Field(default_factory=list)

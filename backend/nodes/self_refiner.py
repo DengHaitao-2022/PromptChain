@@ -4,8 +4,11 @@ Self-Refine 自检修订节点
 功能：
 1. 生成→反馈→精炼循环
 2. 自动评估内容质量
-3. 创建 Artifact 版本
+3. 对修订正文提供 token 级流式输出
+4. 创建 Artifact 版本
 """
+
+from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
@@ -13,11 +16,15 @@ from pydantic import BaseModel, Field
 from core.time import utc_now_naive
 from models import ArtifactType, IntentCard, LLMCallRecord, NodeRun, NodeRunStatus, OutlineSection
 from services import (
+    build_structured_chain_for_workspace,
+    ensure_usage_metadata,
+    extract_usage_metadata,
     format_workflow_error,
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
-    get_structured_llm_for_workspace,
+    get_workflow_event_bus,
+    invoke_structured_with_usage,
     invoke_with_llm_retry,
     is_llm_rate_limit_error,
 )
@@ -42,6 +49,9 @@ FEEDBACK_PROMPT = """作为一个严格的编辑，请审阅以下文章段落�
 
 ## 章节标题
 {section_title}
+
+## 重跑修订要求
+{rerun_instruction}
 
 ## 待审阅内容
 {content}
@@ -68,6 +78,9 @@ REFINE_PROMPT = """请根据以下反馈，修订文章内容。
 
 ## 反馈意见
 {feedback}
+
+## 重跑修订要求
+{rerun_instruction}
 
 ## 修订要求
 1. 仅修改反馈中指出的问题
@@ -111,6 +124,39 @@ def _build_section_order(state: dict, sections: dict[str, str]) -> list[str]:
     ]
 
 
+def _extract_chunk_text(chunk: Any) -> str:
+    """从 LangChain stream chunk 中提取可展示正文。"""
+    content = getattr(chunk, "content", None)
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+
+    return ""
+
+
+async def _publish_stream_event(
+    state: dict,
+    event_type: str,
+    data: dict[str, Any],
+) -> None:
+    """向工作流详情页发布 refinement 相关增量事件。"""
+    workflow_run_id = state.get("workflow_run_id")
+    if not workflow_run_id:
+        return
+    await get_workflow_event_bus().publish(workflow_run_id, event_type, data)
+
+
 async def _create_final_content_artifact(
     store,
     state: dict,
@@ -144,7 +190,11 @@ async def _create_final_content_artifact(
     )
 
 
-async def generate_feedback(state: dict, section_id: str, content: str) -> RefinementFeedback:
+async def generate_feedback(
+    state: dict,
+    section_id: str,
+    content: str,
+) -> tuple[RefinementFeedback, dict[str, int]]:
     """为单个章节生成反馈"""
     intent_card: IntentCard = state["intent_card"]
     outline = state["outline"]
@@ -158,17 +208,19 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
             target_words = section.target_words
             break
 
-    llm = await get_structured_llm_for_workspace(
+    chain, _structured_runtime = await build_structured_chain_for_workspace(
         RefinementFeedback,
+        FEEDBACK_PROMPT,
         state.get("workspace_id"),
         model=state.get("model_name"),
         model_provider_id=state.get("model_provider_id"),
+        model_provider_name=state.get("model_provider_name"),
     )
-    prompt = ChatPromptTemplate.from_template(FEEDBACK_PROMPT)
-    chain = prompt | llm
+    rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
 
-    feedback = await invoke_with_llm_retry(
-        lambda: chain.ainvoke(
+    feedback, usage = await invoke_with_llm_retry(
+        lambda: invoke_structured_with_usage(
+            chain,
             {
                 "audience": intent_card.audience.value,
                 "tone": intent_card.tone.value,
@@ -177,21 +229,28 @@ async def generate_feedback(state: dict, section_id: str, content: str) -> Refin
                 "section_id": section_id,
                 "content": content,
                 "current_words": len(content),
-            }
+                "rerun_instruction": rerun_instruction,
+            },
         )
     )
 
-    return feedback
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=f"{section_title}\n{content}",
+        completion_text=str(feedback.model_dump()),
+    )
+    return feedback, usage
 
 
 async def refine_section(
     state: dict, section_id: str, original_content: str, feedback: RefinementFeedback
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """根据反馈修订章节"""
     llm = await get_llm_for_workspace(
         state.get("workspace_id"),
         model=state.get("model_name"),
         model_provider_id=state.get("model_provider_id"),
+        model_provider_name=state.get("model_provider_name"),
         temperature=0.5,
     )  # 降低温度以保持一致性
     prompt = ChatPromptTemplate.from_template(REFINE_PROMPT)
@@ -207,12 +266,86 @@ async def refine_section(
 
 质量评分: {feedback.quality_score}/10
 """
+    section_lookup = _build_section_lookup(state)
+    section = section_lookup.get(feedback.section_id)
+    section_title = section.title if section else feedback.section_id
+    payload = {
+        "original_content": original_content,
+        "feedback": feedback_text,
+        "rerun_instruction": state.get("rerun_instruction") or "无额外修订要求",
+    }
 
-    result = await invoke_with_llm_retry(
-        lambda: chain.ainvoke({"original_content": original_content, "feedback": feedback_text})
+    async def _stream_once() -> tuple[list[str], dict[str, int]]:
+        attempt_chunks: list[str] = []
+        attempt_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        await _publish_stream_event(
+            state,
+            "section_started",
+            {
+                "node": "self_refine",
+                "section_id": feedback.section_id,
+                "section_title": section_title,
+                "mode": "refine",
+            },
+        )
+        async for chunk in chain.astream(payload):
+            chunk_usage = extract_usage_metadata(chunk)
+            if chunk_usage["total_tokens"] > 0:
+                attempt_usage = chunk_usage
+            token = _extract_chunk_text(chunk)
+            if not token:
+                continue
+
+            attempt_chunks.append(token)
+            await _publish_stream_event(
+                state,
+                "token",
+                {
+                    "node": "self_refine",
+                    "section_id": feedback.section_id,
+                    "section_title": section_title,
+                    "delta": token,
+                    "mode": "refine",
+                },
+            )
+        return attempt_chunks, attempt_usage
+
+    chunks: list[str] = []
+    try:
+        chunks, usage = await invoke_with_llm_retry(_stream_once)
+    except Exception as exc:
+        await _publish_stream_event(
+            state,
+            "stream_error",
+            {
+                "node": "self_refine",
+                "section_id": feedback.section_id,
+                "section_title": section_title,
+                "detail": str(exc),
+                "mode": "refine",
+            },
+        )
+        raise
+
+    refined_content = "".join(chunks)
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=f"{section_id}\n{original_content}\n{feedback_text}",
+        completion_text=refined_content,
+    )
+    await _publish_stream_event(
+        state,
+        "section_completed",
+        {
+            "node": "self_refine",
+            "section_id": feedback.section_id,
+            "section_title": section_title,
+            "content_length": len(refined_content),
+            "mode": "refine",
+        },
     )
 
-    return result.content
+    return refined_content, usage
 
 
 async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
@@ -261,7 +394,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
             feedback_list: list[RefinementFeedback] = []
             for section_id, content in current_content.items():
                 start_time = utc_now_naive()
-                feedback = await generate_feedback(state, section_id, content)
+                feedback, usage = await generate_feedback(state, section_id, content)
                 end_time = utc_now_naive()
 
                 feedback_list.append(feedback)
@@ -293,11 +426,15 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 model_info = await get_current_model_info_for_workspace(
                     state.get("workspace_id"),
                     model_provider_id=state.get("model_provider_id"),
+                    model_provider_name=state.get("model_provider_name"),
                     model=state.get("model_name"),
                 )
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],
+                    prompt_tokens=usage["prompt_tokens"],
+                    completion_tokens=usage["completion_tokens"],
+                    total_tokens=usage["total_tokens"],
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Feedback for {section_id}",
                     response_preview=f"Score: {feedback.quality_score}",
@@ -316,7 +453,7 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
             for feedback in sections_needing_revision:
                 section = section_lookup[feedback.section_id]
                 start_time = utc_now_naive()
-                refined_content = await refine_section(
+                refined_content, usage = await refine_section(
                     state, feedback.section_id, current_content[feedback.section_id], feedback
                 )
                 end_time = utc_now_naive()
@@ -347,11 +484,15 @@ async def self_refine_loop(state: dict, max_iterations: int = 2) -> dict:
                 model_info = await get_current_model_info_for_workspace(
                     state.get("workspace_id"),
                     model_provider_id=state.get("model_provider_id"),
+                    model_provider_name=state.get("model_provider_name"),
                     model=state.get("model_name"),
                 )
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],
+                    prompt_tokens=usage["prompt_tokens"],
+                    completion_tokens=usage["completion_tokens"],
+                    total_tokens=usage["total_tokens"],
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Refine {feedback.section_id}",
                     response_preview=refined_content[:100],

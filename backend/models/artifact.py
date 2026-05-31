@@ -26,6 +26,7 @@ class ArtifactType(StrEnum):
 
     INTENT_CARD = "intent_card"
     OUTLINE = "outline"
+    EVIDENCE_PACK = "evidence_pack"
     FACT_CHECK_REPORT = "fact_check_report"
     SECTION_CONTENT = "section_content"
     REFINEMENT_FEEDBACK = "refinement_feedback"
@@ -212,10 +213,9 @@ class WorkflowRun(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
     def complete(self, status: WorkflowRunStatus = WorkflowRunStatus.COMPLETED):
-        """标记工作流完成"""
+        """标记工作流完成。
+
+        注意：total_duration_ms 由运行态按节点耗时统一汇总，避免把 Gate/暂停等待时间混入。
+        """
         self.completed_at = utc_now_naive()
         self.status = status
-        if self.started_at:
-            self.total_duration_ms = int(
-                (self.completed_at - self.started_at).total_seconds() * 1000
-            )

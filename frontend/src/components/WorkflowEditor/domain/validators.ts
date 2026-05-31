@@ -4,7 +4,7 @@
  * 后端 /validate 接口依然是最终门禁。
  */
 
-import type { Node, Edge } from '@xyflow/react';
+import type { Node } from '@xyflow/react';
 
 export function checkHasNodes(nodes: Node[]): string | null {
     if (nodes.length === 0) {

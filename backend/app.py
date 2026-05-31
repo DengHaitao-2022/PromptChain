@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
+from core.errors import install_error_infrastructure
 
 
 def create_app() -> FastAPI:
@@ -32,8 +33,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    install_error_infrastructure(application)
+
     # 注册路由
     _register_routes(application)
+    _register_lifecycle(application)
 
     return application
 
@@ -79,6 +83,11 @@ def _register_routes(application: FastAPI) -> None:
 
     application.include_router(version_router, prefix="/api", tags=["workflow-version"])
 
+    # 知识库路由
+    from routes.knowledge_routes import router as knowledge_router
+
+    application.include_router(knowledge_router, prefix="/api", tags=["knowledge"])
+
     # WebSocket 路由
     from routes.websocket_routes import router as ws_router
 
@@ -93,6 +102,19 @@ def _register_routes(application: FastAPI) -> None:
             "service": "PromptChain API",
             "version": get_settings().APP_VERSION,
         }
+
+
+def _register_lifecycle(application: FastAPI) -> None:
+    """注册应用生命周期钩子。"""
+
+    @application.on_event("shutdown")
+    async def shutdown_runtime_resources() -> None:
+        # 热重载或进程退出时主动释放外部连接，减少残留失效连接。
+        from db.postgres_store import dispose_postgres_store
+        from services.workflow_event_bus import dispose_workflow_event_bus
+
+        await dispose_workflow_event_bus()
+        await dispose_postgres_store()
 
 
 # 创建应用实例（uvicorn 入口）

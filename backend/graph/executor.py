@@ -11,10 +11,20 @@ ContentGenerationWorkflow 负责：
 import asyncio
 from typing import Any
 
+from core.time import utc_now_iso
 from graph.builder import build_content_generation_graph
+from graph.runtime_plan import compile_workflow_runtime_plan
 from graph.state import GraphState
-from models import WorkflowRun, WorkflowRunStatus
-from services import format_workflow_error, get_artifact_store
+from models import (
+    ArtifactType,
+    FactCheckReport,
+    KnowledgeScope,
+    RetrievalConfig,
+    WorkflowRun,
+    WorkflowRunStatus,
+)
+from services import format_workflow_error, get_artifact_store, get_postgres_store
+from services.knowledge_service import KnowledgeService
 
 
 class ContentGenerationWorkflow:
@@ -60,27 +70,67 @@ class ContentGenerationWorkflow:
             )
         return None
 
+    def _require_bound_workflow_context(
+        self,
+        workflow_run: WorkflowRun,
+        workflow_context: dict | None,
+    ) -> None:
+        """显式绑定发布工作流时，禁止静默退回默认链路。"""
+        if not workflow_run.workflow_definition_id and not workflow_run.workflow_version_id:
+            return
+        if not workflow_context or not workflow_context.get("workflow_version_id"):
+            raise ValueError("指定的工作流尚未发布或版本不存在，无法启动运行。")
+        if not isinstance(workflow_context.get("nodes"), list):
+            raise ValueError("指定的工作流版本缺少节点快照，无法启动运行。")
+
     async def _build_initial_state(
         self,
         workflow_run: WorkflowRun,
         overrides: dict | None = None,
     ) -> GraphState:
         workflow_context = await self._load_workflow_context(workflow_run)
+        self._require_bound_workflow_context(workflow_run, workflow_context)
+        metadata_runtime_plan = (workflow_run.metadata or {}).get("runtime_plan")
+        runtime_plan = (
+            metadata_runtime_plan
+            if isinstance(metadata_runtime_plan, dict) and workflow_context is None
+            else compile_workflow_runtime_plan(workflow_context)
+        )
+        actual_workflow_definition_id = (
+            workflow_context.get("workflow_definition_id")
+            if isinstance(workflow_context, dict)
+            else workflow_run.workflow_definition_id
+        )
+        actual_workflow_version_id = (
+            workflow_context.get("workflow_version_id")
+            if isinstance(workflow_context, dict)
+            else workflow_run.workflow_version_id
+        )
         state: GraphState = {
             "user_input": workflow_run.user_input,
             "workflow_run_id": workflow_run.id,
             "workspace_id": (workflow_run.metadata or {}).get("workspace_id"),
             "user_id": (workflow_run.metadata or {}).get("user_id"),
             "model_provider_id": (workflow_run.metadata or {}).get("model_provider_id"),
+            "model_provider_name": (workflow_run.metadata or {}).get("model_provider_name"),
             "model_name": (workflow_run.metadata or {}).get("model_name"),
-            "workflow_definition_id": workflow_run.workflow_definition_id,
-            "workflow_version_id": workflow_run.workflow_version_id,
+            "workflow_definition_id": actual_workflow_definition_id,
+            "workflow_version_id": actual_workflow_version_id,
             "workflow_context": workflow_context,
+            "runtime_plan": runtime_plan,
+            "retrieval_config": RetrievalConfig.from_raw(
+                (workflow_run.metadata or {}).get("retrieval_config")
+            ),
             "is_paused": False,
             "pause_reason": None,
             "needs_clarification": False,
             "clarification_questions": [],
             "user_clarifications": {},
+            "evidence_pack": None,
+            "evidence_artifact_id": None,
+            "citations": [],
+            "knowledge_conflicts": [],
+            "unverified_points": [],
             "awaiting_outline_approval": False,
             "outline_approved": False,
             "draft_sections": {},
@@ -89,9 +139,122 @@ class ContentGenerationWorkflow:
         }
         if overrides:
             state.update(overrides)
+            if "runtime_plan" not in overrides:
+                state["runtime_plan"] = runtime_plan
+
+        metadata = dict(workflow_run.metadata or {})
+        metadata["workflow_context_loaded"] = bool(workflow_context)
+        metadata["runtime_plan"] = state.get("runtime_plan")
+        workflow_run.workflow_definition_id = actual_workflow_definition_id
+        workflow_run.workflow_version_id = actual_workflow_version_id
+        workflow_run.metadata = metadata
+        await self.store.update_workflow_run(workflow_run)
         return state
 
-    # ==================== WebSocket 事件推送 ====================
+    # ==================== 实时事件推送 ====================
+
+    async def _publish_stream_event(
+        self,
+        workflow_run_id: str,
+        event_type: str,
+        data: dict,
+    ) -> None:
+        try:
+            from services.workflow_event_bus import get_workflow_event_bus
+
+            await get_workflow_event_bus().publish(workflow_run_id, event_type, data)
+        except Exception:
+            return
+
+    @staticmethod
+    def _coerce_event_mapping(value: Any) -> dict[str, Any]:
+        """将事件载荷中的 Pydantic 模型统一转为可序列化字典。"""
+        if hasattr(value, "model_dump"):
+            value = value.model_dump()
+        return value if isinstance(value, dict) else {}
+
+    @classmethod
+    def _coerce_event_list(cls, value: Any) -> list[dict[str, Any]]:
+        """将事件载荷中的模型列表统一转为字典列表。"""
+        if not isinstance(value, list):
+            return []
+        return [item_payload for item in value if (item_payload := cls._coerce_event_mapping(item))]
+
+    @staticmethod
+    def _get_gate_metadata(workflow_run: WorkflowRun | None) -> dict[str, Any]:
+        """读取当前运行记录上的 Gate 元数据。"""
+        if workflow_run is None or not isinstance(workflow_run.metadata, dict):
+            return {}
+        gate = workflow_run.metadata.get("gate")
+        return gate if isinstance(gate, dict) else {}
+
+    @staticmethod
+    def _map_clarification_priority(value: Any) -> str:
+        """把澄清问题内部优先级映射为前端稳定枚举。"""
+        if isinstance(value, str) and value in {"high", "medium", "low"}:
+            return value
+        try:
+            priority = int(value)
+        except (TypeError, ValueError):
+            priority = 5
+        if priority <= 2:
+            return "high"
+        if priority == 3:
+            return "medium"
+        return "low"
+
+    @classmethod
+    def _normalize_clarification_gate_questions(cls, questions: Any) -> list[dict[str, Any]]:
+        """统一澄清 Gate 事件的问题结构，避免泄漏内部数值枚举。"""
+        normalized: list[dict[str, Any]] = []
+        for question in cls._coerce_event_list(questions):
+            normalized.append(
+                {
+                    "field": question.get("field"),
+                    "question": question.get("question"),
+                    "priority": cls._map_clarification_priority(question.get("priority", 5)),
+                    "default_assumption": question.get("default_assumption"),
+                }
+            )
+        return normalized
+
+    @classmethod
+    def _build_outline_gate_questions(cls, outline: Any) -> list[dict[str, Any]]:
+        """构建提纲审批事件中的问题列表，保持与公开 Gate 契约一致。"""
+        outline_payload = cls._coerce_event_mapping(outline)
+        sections = outline_payload.get("sections")
+        question: dict[str, Any] = {
+            "question": "请确认当前提纲是否可以进入正文生成。",
+            "action_options": ["approve", "modify", "regenerate"],
+        }
+        if isinstance(sections, list):
+            question["section_count"] = len(sections)
+        if isinstance(outline_payload.get("total_target_words"), int):
+            question["target_words"] = outline_payload["total_target_words"]
+        return [question]
+
+    @classmethod
+    def _build_fact_check_gate_questions(cls, report: Any) -> list[dict[str, Any]]:
+        """只把高风险事实核查项作为人工 Gate 问题发给前端。"""
+        report_payload = cls._coerce_event_mapping(report)
+        results = report_payload.get("results")
+        if not isinstance(results, list):
+            return []
+
+        questions: list[dict[str, Any]] = []
+        for result in results:
+            result_payload = cls._coerce_event_mapping(result)
+            if result_payload.get("risk_level") != "high":
+                continue
+            questions.append(
+                {
+                    "claim_id": result_payload.get("claim_id"),
+                    "question": result_payload.get("verification_question"),
+                    "risk_level": result_payload.get("risk_level"),
+                    "suggested_correction": result_payload.get("suggested_correction"),
+                }
+            )
+        return questions
 
     async def _emit_node_status(
         self,
@@ -100,10 +263,14 @@ class ContentGenerationWorkflow:
         status: str,
         data: dict | None = None,
     ) -> None:
+        event_type = f"node_{status}"
+        payload = {"type": event_type, "node_id": node_id, "data": data or {}}
+        await self._publish_stream_event(workflow_run_id, event_type, payload)
+
         try:
             from routes.websocket_routes import emit_node_status
 
-            await emit_node_status(workflow_run_id, node_id, status, data or {})
+            await emit_node_status(workflow_run_id, node_id, status, payload["data"])
         except Exception:
             return
 
@@ -113,10 +280,14 @@ class ContentGenerationWorkflow:
         status: str,
         data: dict | None = None,
     ) -> None:
+        event_type = f"workflow_{status}"
+        payload = {"type": event_type, "data": data or {}}
+        await self._publish_stream_event(workflow_run_id, event_type, payload)
+
         try:
             from routes.websocket_routes import emit_workflow_status
 
-            await emit_workflow_status(workflow_run_id, status, data or {})
+            await emit_workflow_status(workflow_run_id, status, payload["data"])
         except Exception:
             return
 
@@ -173,10 +344,141 @@ class ContentGenerationWorkflow:
         if checkpoint_id is not None:
             metadata["checkpoint_id"] = checkpoint_id
         metadata["workflow_context_loaded"] = bool(state.get("workflow_context"))
+        if isinstance(state.get("runtime_plan"), dict):
+            metadata["runtime_plan"] = state.get("runtime_plan")
+        retrieval_config = state.get("retrieval_config")
+        if hasattr(retrieval_config, "model_dump"):
+            metadata["retrieval_config"] = retrieval_config.model_dump(mode="json")
+        elif isinstance(retrieval_config, dict):
+            metadata["retrieval_config"] = retrieval_config
         workflow_run.metadata = metadata
 
+        await self._refresh_workflow_stats(workflow_run)
         await self.store.update_workflow_run(workflow_run)
         return workflow_run
+
+    async def _refresh_workflow_stats(self, workflow_run: WorkflowRun) -> None:
+        """刷新运行态统计，避免 Gate/失败态顶部摘要长期停留在 0。"""
+        node_runs = await self.store.get_node_runs_by_workflow(workflow_run.id)
+
+        workflow_run.total_node_runs = len(node_runs)
+        workflow_run.total_llm_calls = sum(len(node.llm_calls) for node in node_runs)
+        workflow_run.total_tokens = sum(
+            call.total_tokens for node in node_runs for call in node.llm_calls
+        )
+
+        # 这里使用节点耗时之和，避免把 Gate 等待时间也计入运行耗时。
+        workflow_run.total_duration_ms = sum(node.duration_ms or 0 for node in node_runs)
+        metadata = dict(workflow_run.metadata or {})
+        metadata["quality_metrics"] = await self._build_quality_metrics(workflow_run, node_runs)
+        workflow_run.metadata = metadata
+
+    async def _build_quality_metrics(
+        self,
+        workflow_run: WorkflowRun,
+        node_runs: list[Any],
+    ) -> dict[str, Any]:
+        """汇总当前运行的质量、事实核查和模型调用指标。"""
+        artifacts = await self.store.get_artifacts_by_workflow(workflow_run.id)
+        latest_fact_report = max(
+            (artifact for artifact in artifacts if artifact.type == ArtifactType.FACT_CHECK_REPORT),
+            key=lambda artifact: artifact.created_at,
+            default=None,
+        )
+        latest_evidence_pack = max(
+            (artifact for artifact in artifacts if artifact.type == ArtifactType.EVIDENCE_PACK),
+            key=lambda artifact: artifact.created_at,
+            default=None,
+        )
+        final_artifact = (
+            await self.store.get_artifact(workflow_run.final_artifact_id)
+            if workflow_run.final_artifact_id
+            else None
+        )
+
+        quality_scores: list[float] = []
+        revisions_requested = 0
+        for artifact in artifacts:
+            if artifact.type != ArtifactType.REFINEMENT_FEEDBACK:
+                continue
+            content = artifact.content if isinstance(artifact.content, dict) else {}
+            feedback = content.get("feedback") if isinstance(content.get("feedback"), dict) else {}
+            score = feedback.get("quality_score")
+            if isinstance(score, int | float):
+                quality_scores.append(float(score))
+            if feedback.get("needs_revision") is True:
+                revisions_requested += 1
+
+        fact_check_metrics = (
+            self._extract_fact_check_metrics(latest_fact_report.content)
+            if latest_fact_report
+            else None
+        )
+        llm_calls = [call for node in node_runs for call in node.llm_calls]
+        total_latency_ms = sum(call.latency_ms for call in llm_calls)
+        average_latency_ms = round(total_latency_ms / len(llm_calls)) if llm_calls else None
+
+        return {
+            "average_quality_score": (
+                round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else None
+            ),
+            "quality_score_count": len(quality_scores),
+            "revisions_requested": revisions_requested,
+            "fact_check": fact_check_metrics,
+            "knowledge": self._extract_evidence_metrics(
+                latest_evidence_pack.content if latest_evidence_pack else None
+            ),
+            "tokens": {
+                "total": workflow_run.total_tokens,
+                "llm_call_count": workflow_run.total_llm_calls,
+            },
+            "latency": {
+                "total_node_duration_ms": workflow_run.total_duration_ms,
+                "average_llm_latency_ms": average_latency_ms,
+            },
+            "final_artifact_id": workflow_run.final_artifact_id,
+            "final_content_hash": getattr(final_artifact, "content_hash", None),
+        }
+
+    @staticmethod
+    def _extract_evidence_metrics(content: Any) -> dict[str, Any]:
+        """从 Evidence Artifact 提取检索质量指标，供运行记录与验收观察使用。"""
+        if not isinstance(content, dict):
+            return {
+                "chunk_count": 0,
+                "conflict_count": 0,
+                "unverified_count": 0,
+                "scopes": [],
+                "average_score": None,
+            }
+        chunks = content.get("chunks") if isinstance(content.get("chunks"), list) else []
+        scores = [
+            float(chunk.get("score"))
+            for chunk in chunks
+            if isinstance(chunk, dict) and isinstance(chunk.get("score"), int | float)
+        ]
+        return {
+            "chunk_count": len(chunks),
+            "conflict_count": len(content.get("conflicts") or []),
+            "unverified_count": len(content.get("unverified_points") or []),
+            "scopes": content.get("scopes") or [],
+            "average_score": round(sum(scores) / len(scores), 4) if scores else None,
+        }
+
+    @staticmethod
+    def _extract_fact_check_metrics(content: Any) -> dict[str, Any]:
+        """从事实核查 Artifact 中提取稳定指标。"""
+        try:
+            report = FactCheckReport.model_validate(content)
+        except Exception:
+            return {}
+        report.compute_stats()
+        return {
+            "total_claims": report.total_claims,
+            "verified_count": report.verified_count,
+            "unverified_count": report.unverified_count,
+            "high_risk_count": report.high_risk_count,
+        }
 
     async def _mark_failed(self, workflow_run_id: str, error: str) -> None:
         workflow_run = await self.store.get_workflow_run(workflow_run_id)
@@ -407,40 +709,60 @@ class ContentGenerationWorkflow:
 
                 public_status = self._get_workflow_status(state)
                 if public_status == "needs_clarification":
+                    gate_metadata = self._get_gate_metadata(workflow_run)
+                    questions = self._normalize_clarification_gate_questions(
+                        gate_metadata.get("questions")
+                    )
+                    if not questions:
+                        questions = self._normalize_clarification_gate_questions(
+                            state.get("clarification_questions", [])
+                        )
                     await self._emit_workflow_status(
                         workflow_run_id,
                         "gate_waiting",
                         {
                             "gate_type": "clarification",
-                            "questions": state.get("clarification_questions", []),
+                            "questions": questions,
+                            "opened_at": gate_metadata.get("opened_at"),
+                            "trigger_reason": gate_metadata.get("trigger_reason"),
                             "current_node": workflow_run.current_node,
                         },
                     )
                     break
                 if public_status == "awaiting_outline_approval":
-                    outline = state.get("outline")
-                    if hasattr(outline, "model_dump"):
-                        outline = outline.model_dump()
+                    gate_metadata = self._get_gate_metadata(workflow_run)
+                    outline = self._coerce_event_mapping(state.get("outline"))
+                    questions = self._coerce_event_list(gate_metadata.get("questions"))
+                    if not questions:
+                        questions = self._build_outline_gate_questions(outline)
                     await self._emit_workflow_status(
                         workflow_run_id,
                         "gate_waiting",
                         {
                             "gate_type": "outline_approval",
+                            "questions": questions,
                             "outline": outline,
+                            "opened_at": gate_metadata.get("opened_at"),
+                            "trigger_reason": gate_metadata.get("trigger_reason"),
                             "current_node": workflow_run.current_node,
                         },
                     )
                     break
                 if public_status == "awaiting_fact_check_approval":
-                    report = state.get("fact_check_report")
-                    if hasattr(report, "model_dump"):
-                        report = report.model_dump()
+                    gate_metadata = self._get_gate_metadata(workflow_run)
+                    report = self._coerce_event_mapping(state.get("fact_check_report"))
+                    questions = self._coerce_event_list(gate_metadata.get("questions"))
+                    if not questions:
+                        questions = self._build_fact_check_gate_questions(report)
                     await self._emit_workflow_status(
                         workflow_run_id,
                         "gate_waiting",
                         {
-                            "gate_type": "fact_check_approval",
-                            "questions": report,
+                            "gate_type": "fact_check",
+                            "questions": questions,
+                            "fact_check_report": report,
+                            "opened_at": gate_metadata.get("opened_at"),
+                            "trigger_reason": gate_metadata.get("trigger_reason"),
                             "current_node": workflow_run.current_node,
                         },
                     )
@@ -482,17 +804,51 @@ class ContentGenerationWorkflow:
         user_id: str | None = None,
         model_provider_id: str | None = None,
         model_name: str | None = None,
+        retrieval_config: RetrievalConfig | dict | None = None,
+        run_upload_documents: list[dict[str, Any]] | None = None,
     ) -> dict:
         """启动新的工作流，并在后台逐节点推进。"""
+        from services.llm_provider import get_workspace_runtime_model_config
+
+        # 启动前先校验显式模型供应商，避免后台节点静默切换到其他模型。
+        runtime_model_config = await get_workspace_runtime_model_config(
+            workspace_id,
+            model_name,
+            model_provider_id,
+        )
+        upload_documents = run_upload_documents or []
+        retrieval_config_model = RetrievalConfig.from_raw(retrieval_config)
+        if upload_documents:
+            retrieval_config_model = retrieval_config_model.model_copy(
+                update={"enabled": True, "use_run_upload": True}
+            )
+
         metadata = {}
         if workspace_id:
             metadata["workspace_id"] = workspace_id
         if user_id:
             metadata["user_id"] = user_id
         if model_provider_id:
-            metadata["model_provider_id"] = model_provider_id
+            metadata["requested_model_provider_id"] = model_provider_id
         if model_name:
-            metadata["model_name"] = model_name
+            metadata["requested_model_name"] = model_name
+        metadata["runtime_model"] = {
+            "provider": runtime_model_config.provider,
+            "model": runtime_model_config.model,
+            "provider_id": runtime_model_config.provider_id,
+            "provider_name": runtime_model_config.provider_name,
+            "source": runtime_model_config.source,
+            "structured_output_method": runtime_model_config.structured_output_method,
+        }
+        if runtime_model_config.provider_id:
+            metadata["model_provider_id"] = runtime_model_config.provider_id
+        if model_provider_id:
+            metadata.setdefault("model_provider_id", model_provider_id)
+        metadata["model_provider_name"] = runtime_model_config.provider
+        metadata["model_name"] = runtime_model_config.model
+        metadata["retrieval_config"] = retrieval_config_model.model_dump(mode="json")
+        if upload_documents:
+            metadata["run_upload_document_count"] = len(upload_documents)
 
         workflow_run = WorkflowRun(
             user_input=user_input,
@@ -501,7 +857,33 @@ class ContentGenerationWorkflow:
             workflow_version_id=workflow_version_id,
             metadata=metadata,
         )
+
+        # 显式选择发布工作流时先做上下文校验，避免创建后才发现无法执行。
+        workflow_context = await self._load_workflow_context(workflow_run)
+        self._require_bound_workflow_context(workflow_run, workflow_context)
+        if isinstance(workflow_context, dict):
+            workflow_run.workflow_definition_id = (
+                workflow_context.get("workflow_definition_id")
+                or workflow_run.workflow_definition_id
+            )
+            workflow_run.workflow_version_id = (
+                workflow_context.get("workflow_version_id") or workflow_run.workflow_version_id
+            )
         await self.store.create_workflow_run(workflow_run)
+
+        if upload_documents:
+            if not workspace_id or not user_id:
+                raise ValueError("本次运行资料上传需要用户和工作空间上下文。")
+            try:
+                await self._attach_run_upload_documents(
+                    workflow_run_id=workflow_run.id,
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    documents=upload_documents,
+                )
+            except Exception as exc:
+                await self._mark_failed(workflow_run.id, format_workflow_error(exc))
+                raise
 
         initial_state = await self._build_initial_state(workflow_run)
         self._schedule_drive(workflow_run.id, initial_state=initial_state)
@@ -511,6 +893,42 @@ class ContentGenerationWorkflow:
             "state": {**initial_state, "current_node": "parse_intent"},
             "status": "running",
         }
+
+    async def _attach_run_upload_documents(
+        self,
+        *,
+        workflow_run_id: str,
+        workspace_id: str,
+        user_id: str,
+        documents: list[dict[str, Any]],
+    ) -> None:
+        """把本次运行上传资料索引到只属于当前 workflow_run 的临时知识库。"""
+        async with get_postgres_store().initialized_session() as session:
+            service = KnowledgeService(session)
+            kb = await service.create_knowledge_base(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                role="viewer",
+                name="本次运行上传资料",
+                description="仅用于当前工作流运行的临时检索资料。",
+                scope=KnowledgeScope.RUN_UPLOAD,
+                workflow_run_id=workflow_run_id,
+            )
+            for document in documents:
+                content = document.get("content")
+                file_name = str(document.get("file_name") or "untitled.txt")
+                if not isinstance(content, bytes):
+                    raise ValueError(f"运行资料 {file_name} 缺少二进制内容。")
+                metadata = document.get("metadata")
+                await service.add_document(
+                    kb_id=kb.id,
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    role="viewer",
+                    file_name=file_name,
+                    content=content,
+                    metadata=metadata if isinstance(metadata, dict) else {},
+                )
 
     async def resume(self, workflow_run_id: str, user_input: dict) -> dict:
         """
@@ -543,6 +961,78 @@ class ContentGenerationWorkflow:
             emit_resumed=True,
         )
 
+    async def rerun_from_node(
+        self,
+        workflow_run_id: str,
+        *,
+        from_node: str,
+        preserved_state: dict,
+    ) -> dict:
+        """创建新运行后，从指定节点继续执行而不是回到图入口。"""
+        workflow_run = await self.store.get_workflow_run(workflow_run_id)
+        if workflow_run is None:
+            raise ValueError(f"WorkflowRun not found: {workflow_run_id}")
+
+        initial_state, updated_config = await self._prepare_rerun_target(
+            workflow_run,
+            from_node=from_node,
+            preserved_state=preserved_state,
+        )
+        if updated_config is None:
+            return await self._drive_workflow(
+                workflow_run_id,
+                initial_state=initial_state,
+                emit_resumed=True,
+            )
+        return await self._drive_workflow(
+            workflow_run_id,
+            config=updated_config,
+            emit_resumed=True,
+        )
+
+    async def start_rerun_from_node(
+        self,
+        workflow_run_id: str,
+        *,
+        from_node: str,
+        preserved_state: dict,
+    ) -> dict:
+        """后台启动重跑，避免 HTTP 请求被节点执行时间阻塞。"""
+        workflow_run = await self.store.get_workflow_run(workflow_run_id)
+        if workflow_run is None:
+            raise ValueError(f"WorkflowRun not found: {workflow_run_id}")
+
+        initial_state, updated_config = await self._prepare_rerun_target(
+            workflow_run,
+            from_node=from_node,
+            preserved_state=preserved_state,
+        )
+
+        # 先把目标节点写回运行态，详情页可立即进入轮询/SSE，而不是等待节点跑完。
+        workflow_run.current_node = from_node
+        metadata = dict(workflow_run.metadata or {})
+        metadata["last_public_status"] = "running"
+        metadata.pop("error", None)
+        workflow_run.metadata = metadata
+        await self.store.update_workflow_run(workflow_run)
+
+        if updated_config is None:
+            self._schedule_drive(
+                workflow_run_id,
+                initial_state=initial_state,
+            )
+        else:
+            self._schedule_drive(
+                workflow_run_id,
+                config=updated_config,
+            )
+
+        return {
+            "workflow_run_id": workflow_run_id,
+            "state": {**initial_state, "current_node": from_node},
+            "status": "running",
+        }
+
     async def _resume_from_node(
         self,
         workflow_run_id: str,
@@ -571,6 +1061,47 @@ class ContentGenerationWorkflow:
             emit_resumed=True,
         )
 
+    async def _prepare_rerun_target(
+        self,
+        workflow_run: WorkflowRun,
+        *,
+        from_node: str,
+        preserved_state: dict,
+    ) -> tuple[dict, dict | None]:
+        """统一构建重跑入口状态，供同步 rerun 和后台 rerun 复用。"""
+        initial_state = await self._build_initial_state(
+            workflow_run,
+            {
+                **preserved_state,
+                "rerun_from_node": from_node,
+            },
+        )
+
+        if from_node == "parse_intent":
+            return initial_state, None
+
+        planned_steps = [
+            step.get("id")
+            for step in (initial_state.get("runtime_plan") or {}).get("steps", [])
+            if isinstance(step, dict) and step.get("id")
+        ]
+        predecessor_by_node = {
+            node_id: planned_steps[index - 1]
+            for index, node_id in enumerate(planned_steps)
+            if index > 0
+        }
+        predecessor_by_node.setdefault("clarify_intent", "parse_intent")
+        predecessor = predecessor_by_node.get(from_node)
+        if predecessor is None:
+            raise ValueError(f"Unsupported rerun node for this workflow runtime plan: {from_node}")
+
+        updated_config = await self.graph.aupdate_state(
+            self._base_config(workflow_run.id),
+            initial_state,
+            as_node=predecessor,
+        )
+        return initial_state, updated_config
+
     async def pause(self, workflow_run_id: str, reason: str = "") -> dict:
         """请求手动暂停，当前节点完成后停在下一份 checkpoint。"""
         workflow_run = await self.store.get_workflow_run(workflow_run_id)
@@ -579,6 +1110,16 @@ class ContentGenerationWorkflow:
 
         workflow_run.status = WorkflowRunStatus.PAUSED
         metadata = dict(workflow_run.metadata or {})
+        previous_pause = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
+        paused_at = previous_pause.get("paused_at")
+        if paused_at is None or previous_pause.get("resumed_at") is not None:
+            paused_at = utc_now_iso()
+        metadata["pause"] = {
+            "reason": reason,
+            "paused_at": paused_at,
+            "resumed_at": None,
+            "source": previous_pause.get("source") or "user",
+        }
         metadata["pause_reason"] = reason
         workflow_run.metadata = metadata
         await self.store.update_workflow_run(workflow_run)
@@ -619,6 +1160,13 @@ class ContentGenerationWorkflow:
 
         workflow_run.status = WorkflowRunStatus.RUNNING
         metadata = dict(workflow_run.metadata or {})
+        previous_pause = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
+        metadata["pause"] = {
+            "reason": previous_pause.get("reason"),
+            "paused_at": previous_pause.get("paused_at") or utc_now_iso(),
+            "resumed_at": utc_now_iso(),
+            "source": previous_pause.get("source") or "user",
+        }
         metadata["pause_reason"] = None
         workflow_run.metadata = metadata
         await self.store.update_workflow_run(workflow_run)

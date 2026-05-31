@@ -6,6 +6,7 @@ LangGraph 图中用于决定工作流分支走向的条件判断函数
 
 from langgraph.graph import END
 
+from graph.runtime_plan import runtime_feature_enabled
 from graph.state import GraphState
 
 
@@ -39,4 +40,18 @@ def should_proceed_after_fact_check(state: GraphState) -> str:
         state.get("fact_check_decisions") or state.get("manual_corrections")
     ):
         return "approve_fact_check"
+    return "finalize"
+
+
+def should_run_self_refine(state: GraphState) -> str:
+    """判断运行计划是否启用自检修订。"""
+    if runtime_feature_enabled(state, "self_refine", default=True):
+        return "self_refine"
+    return should_run_fact_check(state)
+
+
+def should_run_fact_check(state: GraphState) -> str:
+    """判断运行计划是否启用事实核查。"""
+    if runtime_feature_enabled(state, "fact_check", default=True):
+        return "check_facts"
     return "finalize"

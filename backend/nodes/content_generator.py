@@ -3,9 +3,11 @@
 
 功能：
 1. 基于提纲分段生成内容
-2. 支持流式输出
+2. 支持正文 token 级流式输出
 3. 创建 Artifact 版本
 """
+
+from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -20,9 +22,12 @@ from models import (
     OutlineSection,
 )
 from services import (
+    ensure_usage_metadata,
+    extract_usage_metadata,
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
+    get_workflow_event_bus,
     invoke_with_llm_retry,
 )
 
@@ -41,12 +46,20 @@ SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据�
 ## 已完成章节（上下文）
 {previous_sections}
 
+## 可用证据
+{evidence_context}
+
+## 重跑修订要求
+{rerun_instruction}
+
 ## 要求
 1. 严格遵循风格要求
 2. 确保与已完成章节的内容连贯
 3. 控制字数在目标字数 ±10% 范围内
 4. 内容要有深度，避免泛泛而谈
 5. 使用适当的段落结构
+6. 如果存在可用证据，必须优先基于证据展开，并在段落中自然标注来源名称
+7. 证据不足的内容请明确使用“尚无资料证明”之类表述，不要编造引用
 
 请开始撰写{section_title}章节的内容："""
 
@@ -73,7 +86,87 @@ def _compile_generated_content(outline: Outline, sections: dict[str, str]) -> st
     return "\n\n".join(compiled_sections)
 
 
-async def generate_section(state: dict, section: OutlineSection, previous_content: str = "") -> str:
+def _format_evidence_context(state: dict, section: OutlineSection, *, max_chunks: int = 8) -> str:
+    """为章节生成准备证据上下文。"""
+    evidence_pack = state.get("evidence_pack")
+    if not evidence_pack:
+        return "未启用知识库或未检索到可用证据。"
+
+    chunks = getattr(evidence_pack, "chunks", None)
+    if chunks is None and isinstance(evidence_pack, dict):
+        chunks = evidence_pack.get("chunks")
+    if not chunks:
+        unverified = getattr(evidence_pack, "unverified_points", None)
+        if unverified is None and isinstance(evidence_pack, dict):
+            unverified = evidence_pack.get("unverified_points")
+        if unverified:
+            return f"未检索到足够证据；需标记未验证点：{', '.join(map(str, unverified))}"
+        return "未启用知识库或未检索到可用证据。"
+
+    section_terms = {section.title.lower(), *[part.lower() for part in section.summary.split()]}
+    formatted: list[str] = []
+    for index, chunk in enumerate(chunks[:max_chunks], start=1):
+        document_name = getattr(chunk, "document_name", None)
+        content = getattr(chunk, "content", None)
+        score = getattr(chunk, "score", None)
+        heading_path = getattr(chunk, "heading_path", None)
+        if isinstance(chunk, dict):
+            document_name = chunk.get("document_name")
+            content = chunk.get("content")
+            score = chunk.get("score")
+            heading_path = chunk.get("heading_path")
+        if not content:
+            continue
+        heading = " / ".join(heading_path or []) if isinstance(heading_path, list) else ""
+        relevance_note = (
+            "章节相关"
+            if any(term and term in content.lower() for term in section_terms)
+            else "全局证据"
+        )
+        formatted.append(
+            f"[{index}] {relevance_note}；来源：{document_name or '未知文档'}；标题路径：{heading or '无'}；分数：{score}\n{content}"
+        )
+    return "\n\n".join(formatted) if formatted else "未启用知识库或未检索到可用证据。"
+
+
+def _extract_chunk_text(chunk: Any) -> str:
+    """从 LangChain stream chunk 中尽量提取可展示文本。"""
+    content = getattr(chunk, "content", None)
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+
+    return ""
+
+
+async def _publish_stream_event(
+    state: dict,
+    event_type: str,
+    data: dict[str, Any],
+) -> None:
+    """向工作流详情页发布细粒度 SSE 事件。"""
+    workflow_run_id = state.get("workflow_run_id")
+    if not workflow_run_id:
+        return
+    await get_workflow_event_bus().publish(workflow_run_id, event_type, data)
+
+
+async def generate_section(
+    state: dict,
+    section: OutlineSection,
+    previous_content: str = "",
+) -> tuple[str, dict[str, int]]:
     """
     生成单个章节内容
 
@@ -92,11 +185,13 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
         state.get("workspace_id"),
         model=state.get("model_name"),
         model_provider_id=state.get("model_provider_id"),
+        model_provider_name=state.get("model_provider_name"),
         temperature=0.7,
     )
     prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
     chain = prompt | llm
 
+    rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
     result = await invoke_with_llm_retry(
         lambda: chain.ainvoke(
             {
@@ -107,11 +202,122 @@ async def generate_section(state: dict, section: OutlineSection, previous_conten
                 "section_summary": section.summary,
                 "target_words": section.target_words,
                 "previous_sections": previous_content or "（这是第一个章节）",
+                "evidence_context": _format_evidence_context(state, section),
+                "rerun_instruction": rerun_instruction,
             }
         )
     )
 
-    return result.content
+    usage = ensure_usage_metadata(
+        extract_usage_metadata(result),
+        prompt_text=f"{section.title}\n{section.summary}\n{previous_content}",
+        completion_text=result.content,
+    )
+    return result.content, usage
+
+
+async def generate_section_streaming(
+    state: dict,
+    section: OutlineSection,
+    previous_content: str = "",
+) -> tuple[str, dict[str, int]]:
+    """生成单个章节内容，并把正文增量通过 SSE 推给详情页。"""
+    intent_card: IntentCard = state["intent_card"]
+    outline: Outline = state["outline"]
+
+    llm = await get_llm_for_workspace(
+        state.get("workspace_id"),
+        model=state.get("model_name"),
+        model_provider_id=state.get("model_provider_id"),
+        model_provider_name=state.get("model_provider_name"),
+        temperature=0.7,
+    )
+    prompt = ChatPromptTemplate.from_template(SECTION_GENERATION_PROMPT)
+    chain = prompt | llm
+
+    rerun_instruction = state.get("rerun_instruction") or "无额外修订要求"
+    payload = {
+        "article_title": outline.title,
+        "audience": intent_card.audience.value,
+        "tone": intent_card.tone.value,
+        "section_title": section.title,
+        "section_summary": section.summary,
+        "target_words": section.target_words,
+        "previous_sections": previous_content or "（这是第一个章节）",
+        "evidence_context": _format_evidence_context(state, section),
+        "rerun_instruction": rerun_instruction,
+    }
+
+    async def _stream_once() -> tuple[list[str], dict[str, int]]:
+        attempt_chunks: list[str] = []
+        attempt_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        await _publish_stream_event(
+            state,
+            "section_started",
+            {
+                "node": "generate_content",
+                "section_id": section.id,
+                "section_title": section.title,
+                "mode": "generate",
+            },
+        )
+        async for chunk in chain.astream(payload):
+            chunk_usage = extract_usage_metadata(chunk)
+            if chunk_usage["total_tokens"] > 0:
+                attempt_usage = chunk_usage
+            token = _extract_chunk_text(chunk)
+            if not token:
+                continue
+
+            attempt_chunks.append(token)
+            await _publish_stream_event(
+                state,
+                "token",
+                {
+                    "node": "generate_content",
+                    "section_id": section.id,
+                    "section_title": section.title,
+                    "delta": token,
+                    "mode": "generate",
+                },
+            )
+        return attempt_chunks, attempt_usage
+
+    chunks: list[str] = []
+    try:
+        chunks, usage = await invoke_with_llm_retry(_stream_once)
+    except Exception as exc:
+        await _publish_stream_event(
+            state,
+            "stream_error",
+            {
+                "node": "generate_content",
+                "section_id": section.id,
+                "section_title": section.title,
+                "detail": str(exc),
+                "mode": "generate",
+            },
+        )
+        raise
+
+    content = "".join(chunks)
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=f"{section.title}\n{section.summary}\n{previous_content}",
+        completion_text=content,
+    )
+    await _publish_stream_event(
+        state,
+        "section_completed",
+        {
+            "node": "generate_content",
+            "section_id": section.id,
+            "section_title": section.title,
+            "content_length": len(content),
+            "mode": "generate",
+        },
+    )
+    return content, usage
 
 
 async def generate_all_sections(state: dict) -> dict:
@@ -143,6 +349,7 @@ async def generate_all_sections(state: dict) -> dict:
             for artifact_id in [
                 state.get("intent_card_artifact_id"),
                 state.get("outline_artifact_id"),
+                state.get("evidence_artifact_id"),
             ]
             if artifact_id
         ],
@@ -160,7 +367,7 @@ async def generate_all_sections(state: dict) -> dict:
         for index, section in enumerate(flat_sections):
             # 生成章节内容
             start_time = utc_now_naive()
-            content = await generate_section(state, section, previous_content)
+            content, usage = await generate_section_streaming(state, section, previous_content)
             end_time = utc_now_naive()
 
             generated_sections[section.id] = content
@@ -169,11 +376,15 @@ async def generate_all_sections(state: dict) -> dict:
             model_info = await get_current_model_info_for_workspace(
                 state.get("workspace_id"),
                 model_provider_id=state.get("model_provider_id"),
+                model_provider_name=state.get("model_provider_name"),
                 model=state.get("model_name"),
             )
             llm_call = LLMCallRecord(
                 model=model_info["model"],
                 provider=model_info["provider"],
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+                total_tokens=usage["total_tokens"],
                 latency_ms=int((end_time - start_time).total_seconds() * 1000),
                 prompt_preview=section.title,
                 response_preview=content[:200] if len(content) > 200 else content,
@@ -190,6 +401,7 @@ async def generate_all_sections(state: dict) -> dict:
                     "section_index": index,
                     "generation_phase": "draft",
                     "outline_artifact_id": state.get("outline_artifact_id"),
+                    "evidence_artifact_id": state.get("evidence_artifact_id"),
                     "previous_section_ids": [
                         previous_section.id for previous_section in flat_sections[:index]
                     ],
@@ -282,7 +494,7 @@ async def regenerate_section(state: dict) -> dict:
 
         # 重新生成
         start_time = utc_now_naive()
-        new_content = await generate_section(state, target_section, previous_content)
+        new_content, usage = await generate_section(state, target_section, previous_content)
         end_time = utc_now_naive()
 
         # 更新
@@ -308,11 +520,15 @@ async def regenerate_section(state: dict) -> dict:
         model_info = await get_current_model_info_for_workspace(
             state.get("workspace_id"),
             model_provider_id=state.get("model_provider_id"),
+            model_provider_name=state.get("model_provider_name"),
             model=state.get("model_name"),
         )
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],
+            prompt_tokens=usage["prompt_tokens"],
+            completion_tokens=usage["completion_tokens"],
+            total_tokens=usage["total_tokens"],
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
             prompt_preview=target_section.title,
             response_preview=new_content[:200],

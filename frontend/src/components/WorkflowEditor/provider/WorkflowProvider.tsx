@@ -5,7 +5,7 @@
 
 'use client';
 
-import { createContext, useContext, useRef } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { useStore } from 'zustand';
 import { type WorkflowStore, createWorkflowStore, type WorkflowState } from '../store/workflowStore';
 
@@ -16,13 +16,10 @@ interface WorkflowProviderProps extends React.PropsWithChildren {
 }
 
 export function WorkflowProvider({ children, initialState }: WorkflowProviderProps) {
-    const storeRef = useRef<WorkflowStore>(null);
-    if (!storeRef.current) {
-        storeRef.current = createWorkflowStore(initialState);
-    }
+    const [store] = useState(() => createWorkflowStore(initialState));
 
     return (
-        <WorkflowContext.Provider value={storeRef.current}>
+        <WorkflowContext.Provider value={store}>
             {children}
         </WorkflowContext.Provider>
     );

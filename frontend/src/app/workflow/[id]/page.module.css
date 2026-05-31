@@ -275,6 +275,151 @@
     flex-shrink: 0;
 }
 
+.flowShell {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 20px;
+    background:
+        var(--workflow-surface-sheen-soft),
+        var(--workflow-surface-bg-soft);
+    box-shadow:
+        var(--workflow-shadow-card),
+        var(--workflow-inset-highlight);
+}
+
+.flowHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+}
+
+.flowTitle {
+    margin: 0;
+    font-size: 1.15rem;
+}
+
+.flowSummary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 10px;
+    border-radius: var(--radius-full);
+    background: var(--workflow-control-bg);
+    border: 1px solid var(--workflow-border-subtle);
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.flowCanvas {
+    width: 100%;
+    height: 320px;
+    overflow: hidden;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 18px;
+    background: var(--workflow-surface-bg-subtle);
+}
+
+.flowCanvas :global(.react-flow__controls) {
+    overflow: hidden;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 12px;
+    box-shadow: var(--workflow-shadow-card);
+}
+
+.flowCanvas :global(.react-flow__controls-button) {
+    background: var(--workflow-surface-bg);
+    border-bottom-color: var(--workflow-border-subtle);
+    color: var(--color-text-secondary);
+}
+
+.flowCanvas :global(.react-flow__controls-button:hover) {
+    background: var(--workflow-control-hover-bg);
+    color: var(--color-text-primary);
+}
+
+.flowCanvas :global(.react-flow__attribution) {
+    display: none;
+}
+
+.flowNode {
+    width: 180px;
+    border: 1px solid var(--workflow-border-subtle) !important;
+    border-radius: 16px !important;
+    background: var(--workflow-surface-bg) !important;
+    color: var(--color-text-primary) !important;
+    box-shadow: var(--workflow-shadow-card);
+}
+
+.flowNode :global(.react-flow__handle) {
+    opacity: 0;
+}
+
+.flowNodeLabel {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+    text-align: left;
+}
+
+.flowNodeTitle {
+    overflow: hidden;
+    color: var(--color-text-primary);
+    font-size: 0.86rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.flowNodeMeta {
+    color: var(--color-text-muted);
+    font-size: 0.72rem;
+}
+
+.flowNodeCurrent {
+    border-color: var(--workflow-brand-border) !important;
+    background: var(--workflow-control-hover-bg) !important;
+}
+
+.flowNodeRunning,
+.flowNodeGate_waiting {
+    border-color: var(--workflow-brand-border) !important;
+    box-shadow:
+        var(--workflow-shadow-card),
+        0 0 0 4px var(--workflow-brand-soft);
+}
+
+.flowNodeCompleted {
+    border-color: var(--workflow-success-border) !important;
+    background: var(--workflow-success-soft) !important;
+}
+
+.flowNodePaused,
+.flowNodeInterrupted {
+    border-color: var(--workflow-warning-border) !important;
+    background: var(--workflow-warning-soft) !important;
+}
+
+.flowNodeFailed {
+    border-color: var(--workflow-danger-border) !important;
+    background: var(--workflow-danger-soft) !important;
+}
+
+.flowEdge :global(.react-flow__edge-path) {
+    stroke: var(--workflow-border-muted);
+    stroke-width: 1.5;
+}
+
+.flowEdgeActive :global(.react-flow__edge-path) {
+    stroke: var(--color-brand-primary);
+    stroke-width: 2;
+}
+
 .stageShell {
     display: flex;
     flex-direction: column;
@@ -358,11 +503,176 @@
 }
 
 .stageBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
     animation: stageEnter 220ms ease-out;
 }
 
 .contentBlock {
     color: var(--color-text-primary);
+}
+
+.contentSectionHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+
+.contentSectionHeader h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+.evidencePanel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-brand-border);
+    border-radius: 18px;
+    background: var(--workflow-surface-bg-subtle);
+}
+
+.evidenceHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-lg);
+}
+
+.evidenceEyebrow {
+    margin: 0 0 6px;
+    color: var(--color-brand-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.evidenceHeader h3 {
+    margin: 0 0 8px;
+    font-size: 1.125rem;
+}
+
+.evidenceHeader p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+}
+
+.evidenceStats,
+.evidenceScopes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.evidenceStats {
+    justify-content: flex-end;
+    min-width: 240px;
+}
+
+.evidenceStats span,
+.evidenceScopes span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: var(--radius-full);
+    background: var(--workflow-control-bg);
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+}
+
+.evidenceGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.evidenceCard {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    min-height: 180px;
+    padding: var(--spacing-md);
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 16px;
+    background: var(--workflow-control-bg);
+}
+
+.evidenceCard header,
+.evidenceCard footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.evidenceCard strong {
+    min-width: 0;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.evidenceCard header span,
+.evidenceCard footer span {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.evidenceCard p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+    word-break: break-word;
+}
+
+.evidenceNotice {
+    padding: var(--spacing-md);
+    border: 1px solid var(--workflow-warning-border);
+    border-radius: 16px;
+    background: var(--workflow-warning-soft);
+}
+
+.evidenceNotice strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--color-text-primary);
+}
+
+.evidenceNotice ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+}
+
+.followStreamButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--workflow-brand-border);
+    border-radius: var(--radius-full);
+    background: var(--workflow-brand-soft);
+    color: var(--color-brand-primary);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.followStreamButton:hover {
+    background: var(--color-brand-primary);
+    color: white;
 }
 
 .runningStage,
@@ -504,6 +814,13 @@
     flex-wrap: wrap;
 }
 
+.exportStatus {
+    margin: calc(var(--spacing-sm) * -1) 0 0;
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
 .viewToggle {
     display: inline-flex;
     align-items: center;
@@ -537,6 +854,158 @@
 .toggleIcon {
     width: 16px;
     height: 16px;
+}
+
+.documentReaderShell {
+    display: grid;
+    grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+    gap: var(--spacing-lg);
+    align-items: start;
+}
+
+.documentTocAside {
+    position: sticky;
+    top: 96px;
+    max-height: calc(100vh - 120px);
+    overflow: auto;
+}
+
+.documentTocCard {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 18px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+        var(--workflow-control-bg);
+}
+
+.documentTocEyebrow {
+    margin: 0 0 8px;
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.documentTocLink {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 12px;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    transition:
+        background-color var(--transition-fast),
+        color var(--transition-fast);
+}
+
+.documentTocLink:hover,
+.documentTocLink:focus-visible {
+    color: var(--color-text-primary);
+    background: var(--workflow-control-hover-bg);
+    outline: none;
+}
+
+.documentTocLink small {
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+.documentReader {
+    min-width: 0;
+    padding: clamp(20px, 4vw, 48px);
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 24px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 260px),
+        var(--workflow-surface-bg-muted);
+}
+
+.documentReaderHeader {
+    max-width: 880px;
+    margin: 0 auto var(--spacing-xl);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--workflow-border-subtle);
+}
+
+.documentReaderEyebrow {
+    margin: 0 0 8px;
+    color: var(--color-brand-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.documentReaderHeader h1 {
+    margin: 0 0 10px;
+    color: var(--color-text-primary);
+    font-size: clamp(1.6rem, 3vw, 2.35rem);
+    line-height: 1.25;
+}
+
+.documentReaderHeader p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+}
+
+.documentAbstractBlock,
+.documentSection {
+    max-width: 880px;
+    margin: 0 auto;
+}
+
+.documentAbstractBlock {
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-brand-border);
+    border-radius: 18px;
+    background: var(--workflow-brand-soft);
+    margin-bottom: var(--spacing-xl);
+}
+
+.documentAbstractBlock h2 {
+    margin: 0 0 var(--spacing-md);
+    color: var(--color-text-primary);
+    font-size: 1.15rem;
+}
+
+.documentSection {
+    scroll-margin-top: 110px;
+    padding-bottom: var(--spacing-xl);
+}
+
+.documentSection + .documentSection {
+    padding-top: var(--spacing-xl);
+    border-top: 1px dashed var(--workflow-border-subtle);
+}
+
+.documentSectionHeader {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.documentSectionHeader h2 {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-size: clamp(1.25rem, 2vw, 1.65rem);
+    line-height: 1.35;
+}
+
+.documentSectionHeader span {
+    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+    white-space: nowrap;
 }
 
 .previewGrid {
@@ -588,7 +1057,6 @@
     margin: 0;
     color: var(--color-text-secondary);
     line-height: 1.8;
-    white-space: pre-wrap;
     word-break: break-word;
 }
 
@@ -644,6 +1112,287 @@
     display: flex;
     gap: var(--spacing-sm);
     flex-wrap: wrap;
+}
+
+.rerunPanel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-brand-border);
+    border-radius: 20px;
+    background:
+        radial-gradient(circle at top left, var(--workflow-brand-soft), transparent 38%),
+        var(--workflow-surface-bg-subtle);
+}
+
+.rerunHeader {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--spacing-md);
+    align-items: flex-start;
+}
+
+.rerunHeaderIcon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    border: 1px solid var(--workflow-brand-border);
+    background: var(--workflow-brand-soft);
+    color: var(--color-brand-primary);
+}
+
+.rerunHeaderIcon svg,
+.rerunSectionTitle svg,
+.resumeBanner svg,
+.rerunComposer button svg,
+.rerunHistoryItem svg {
+    width: 16px;
+    height: 16px;
+}
+
+.rerunEyebrow {
+    margin: 0 0 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-brand-primary);
+}
+
+.rerunHeader h3 {
+    margin: 0 0 8px;
+    font-size: 1.2rem;
+}
+
+.rerunHeader p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+}
+
+.resumeBanner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    padding: 14px 16px;
+    border: 1px solid var(--workflow-warning-border);
+    border-radius: 16px;
+    background: var(--workflow-warning-soft);
+}
+
+.resumeBanner div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.resumeBanner strong {
+    color: var(--color-text-primary);
+}
+
+.resumeBanner span {
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+}
+
+.rerunGrid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+    gap: var(--spacing-lg);
+    align-items: start;
+}
+
+.rerunOptions,
+.rerunComposer,
+.rerunHistory {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.rerunSectionTitle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--color-text-primary);
+    font-size: 0.875rem;
+    font-weight: 700;
+}
+
+.rerunOptionList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.rerunOption {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--spacing-md);
+    width: 100%;
+    padding: 14px 16px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 16px;
+    background: var(--workflow-control-bg);
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+        border-color var(--transition-fast),
+        background-color var(--transition-fast),
+        transform var(--transition-fast);
+}
+
+.rerunOption:hover,
+.rerunOption:focus-visible,
+.rerunOptionSelected {
+    border-color: var(--workflow-brand-border);
+    background: var(--workflow-control-hover-bg);
+    transform: translateY(-1px);
+}
+
+.rerunOption:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--workflow-focus-ring);
+}
+
+.rerunOptionMain {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.rerunOptionMain strong {
+    color: var(--color-text-primary);
+}
+
+.rerunOptionMain span,
+.rerunOptionMeta,
+.rerunSelectedHint {
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+}
+
+.rerunOptionMeta {
+    align-self: start;
+    white-space: nowrap;
+}
+
+.rerunEmpty {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    min-height: 64px;
+    padding: 14px 16px;
+    border: 1px dashed var(--workflow-border-muted);
+    border-radius: 16px;
+    color: var(--color-text-secondary);
+}
+
+.rerunLabel {
+    color: var(--color-text-primary);
+    font-size: 0.875rem;
+    font-weight: 700;
+}
+
+.rerunTextarea {
+    width: 100%;
+    resize: vertical;
+    min-height: 132px;
+    padding: 14px 16px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 16px;
+    background: var(--workflow-control-bg);
+    color: var(--color-text-primary);
+    line-height: 1.7;
+    transition:
+        border-color var(--transition-fast),
+        box-shadow var(--transition-fast),
+        background-color var(--transition-fast);
+}
+
+.rerunTextarea::placeholder {
+    color: var(--color-text-muted);
+}
+
+.rerunTextarea:focus {
+    outline: none;
+    border-color: var(--workflow-brand-border);
+    box-shadow: 0 0 0 3px var(--workflow-focus-ring);
+    background: var(--workflow-control-bg-soft);
+}
+
+.rerunSelectedHint {
+    margin: 0;
+}
+
+.rerunSelectedHint strong {
+    margin: 0 4px;
+    color: var(--color-brand-primary);
+}
+
+.rerunStatus {
+    margin: 0;
+    color: var(--color-brand-primary);
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+.rerunError {
+    margin: 0;
+    color: var(--color-danger);
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+.rerunHistory {
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--workflow-border-subtle);
+}
+
+.rerunHistoryList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+}
+
+.rerunHistoryItem {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 0 12px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: var(--radius-full);
+    background: var(--workflow-control-bg);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+}
+
+.rerunHistoryItem:hover,
+.rerunHistoryItem:focus-visible,
+.rerunHistoryCurrent {
+    color: var(--color-text-primary);
+    border-color: var(--workflow-brand-border);
+    background: var(--workflow-control-hover-bg);
+}
+
+.rerunHistoryItem:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--workflow-focus-ring);
+}
+
+.rerunHistoryItem code {
+    color: inherit;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
 }
 
 .loadingContainer,
@@ -762,9 +1511,45 @@
         align-items: flex-start;
     }
 
+    .evidenceHeader {
+        flex-direction: column;
+    }
+
+    .evidenceStats {
+        justify-content: flex-start;
+        min-width: 0;
+    }
+
     .stageMetrics {
         width: 100%;
         min-width: 0;
+    }
+
+    .rerunGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .documentReaderShell {
+        grid-template-columns: 1fr;
+    }
+
+    .documentTocAside {
+        position: static;
+        max-height: none;
+        overflow: visible;
+    }
+
+    .documentTocCard {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+
+    .documentTocEyebrow {
+        width: 100%;
+    }
+
+    .documentTocLink {
+        flex: 0 1 auto;
     }
 }
 
@@ -797,8 +1582,38 @@
         grid-template-columns: 1fr;
     }
 
+    .documentReader {
+        padding: var(--spacing-md);
+        border-radius: 18px;
+    }
+
+    .documentSectionHeader {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+
     .statusHints {
         width: 100%;
+    }
+
+    .rerunPanel {
+        padding: var(--spacing-md);
+    }
+
+    .rerunHeader,
+    .resumeBanner,
+    .rerunOption {
+        grid-template-columns: 1fr;
+    }
+
+    .resumeBanner {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .rerunOptionMeta {
+        white-space: normal;
     }
 }
 

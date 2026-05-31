@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { FileText, BarChart2, Pencil } from 'lucide-react';
+import { MarkdownRenderer } from '@/components/MarkdownRenderer/MarkdownRenderer';
 import styles from './ContentViewer.module.css';
 
 interface ContentSection {
@@ -19,6 +20,8 @@ interface ContentViewerProps {
     onExport?: (format: 'markdown' | 'html' | 'json') => void;
     isEditable?: boolean;
     isStreaming?: boolean;
+    streamingSectionId?: string | null;
+    streamingBottomRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 export function ContentViewer({
@@ -29,6 +32,8 @@ export function ContentViewer({
     onExport,
     isEditable = false,
     isStreaming = false,
+    streamingSectionId = null,
+    streamingBottomRef,
 }: ContentViewerProps) {
     const [editingSection, setEditingSection] = React.useState<string | null>(null);
     const [editContent, setEditContent] = React.useState('');
@@ -153,19 +158,16 @@ export function ContentViewer({
                                 </div>
                             </div>
                         ) : (
-                            <div
-                                className={`${styles.sectionContent} ${
-                                    isStreaming && index === sections.length - 1
-                                        ? styles.streaming
-                                        : ''
-                                }`}
-                            >
-                                {section.content
-                                    .split(/\n{2,}/)
-                                    .filter((paragraph) => paragraph.trim())
-                                    .map((paragraph, pIndex) => (
-                                        <p key={pIndex}>{paragraph}</p>
-                                    ))}
+                            <div className={styles.sectionContent}>
+                                <MarkdownRenderer
+                                    content={section.content}
+                                    isStreaming={
+                                        isStreaming && streamingSectionId === section.id
+                                    }
+                                />
+                                {isStreaming && streamingSectionId === section.id && (
+                                    <div ref={streamingBottomRef} />
+                                )}
                             </div>
                         )}
                     </div>

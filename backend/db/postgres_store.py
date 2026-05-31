@@ -10,8 +10,10 @@ import asyncio
 import base64
 import importlib
 import os
-from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, TypeVar
 
 from langgraph.checkpoint.base import (
     BaseCheckpointSaver,
@@ -35,6 +37,7 @@ from sqlalchemy import (
     and_,
     text,
 )
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.future import select
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -49,6 +52,8 @@ from models.artifact import (
     WorkflowRunStatus,
 )
 
+T = TypeVar("T")
+
 
 class Base(DeclarativeBase):
     """SQLAlchemy 声明式基类"""
@@ -56,8 +61,99 @@ class Base(DeclarativeBase):
     pass
 
 
+def _split_migration_statements(sql: str) -> list[str]:
+    """把迁移 SQL 拆成单语句，避开 asyncpg prepared statement 的多语句限制。"""
+    statements: list[str] = []
+    current: list[str] = []
+    index = 0
+    quote: str | None = None
+    dollar_quote: str | None = None
+    while index < len(sql):
+        char = sql[index]
+        next_char = sql[index + 1] if index + 1 < len(sql) else ""
+
+        if dollar_quote:
+            current.append(char)
+            if sql.startswith(dollar_quote, index):
+                current.extend(sql[index + 1 : index + len(dollar_quote)])
+                index += len(dollar_quote)
+                dollar_quote = None
+            else:
+                index += 1
+            continue
+
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            elif char == "\\" and quote == "'" and next_char:
+                current.append(next_char)
+                index += 1
+            index += 1
+            continue
+
+        if char == "-" and next_char == "-":
+            index += 2
+            while index < len(sql) and sql[index] not in "\r\n":
+                index += 1
+            continue
+
+        if char == "/" and next_char == "*":
+            index += 2
+            while index + 1 < len(sql) and not (sql[index] == "*" and sql[index + 1] == "/"):
+                index += 1
+            index += 2
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            index += 1
+            continue
+
+        if char == "$":
+            end = sql.find("$", index + 1)
+            if end > index:
+                tag = sql[index : end + 1]
+                if tag == "$$" or tag[1:-1].replace("_", "").isalnum():
+                    dollar_quote = tag
+                    current.append(tag)
+                    index = end + 1
+                    continue
+
+        if char == ";":
+            statement = "".join(current).strip()
+            if statement and statement.upper() not in {"BEGIN", "COMMIT"}:
+                statements.append(statement)
+            current.clear()
+            index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    statement = "".join(current).strip()
+    if statement and statement.upper() not in {"BEGIN", "COMMIT"}:
+        statements.append(statement)
+    return statements
+
+
 def _runtime_schema_statements(database_url: str) -> list[str]:
-    """返回运行态表的幂等升级语句。"""
+    """返回 legacy 运行态表的幂等升级语句。
+
+    这些语句已归属 Alembic baseline；这里只作为开发兼容路径保留。
+    """
+    if not database_url.startswith("postgresql"):
+        return []
+
+    return [
+        'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
+        "CREATE EXTENSION IF NOT EXISTS vector",
+    ]
+
+
+def _runtime_upgrade_statements(database_url: str) -> list[str]:
+    """返回模型建表后的幂等补丁语句，兼容未执行迁移的历史库。"""
     if not database_url.startswith("postgresql"):
         return []
 
@@ -71,16 +167,160 @@ def _runtime_schema_statements(database_url: str) -> list[str]:
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_category VARCHAR(50)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_type VARCHAR(50)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS outcome VARCHAR(20)",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_snapshot JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_snapshot JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata_json JSON DEFAULT '{}'::json",
-        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS schema_version VARCHAR(20) DEFAULT 'legacy'",
-        "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id) WHERE event_id IS NOT NULL",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_snapshot JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_snapshot JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS metadata_json JSON",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS schema_version VARCHAR(20)",
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'uq_membership_user_workspace'
+            ) AND EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE tablename = 'memberships'
+                  AND indexname = 'uq_membership_user_workspace'
+            ) THEN
+                ALTER TABLE memberships
+                    ADD CONSTRAINT uq_membership_user_workspace UNIQUE USING INDEX uq_membership_user_workspace;
+            ELSIF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'uq_membership_user_workspace'
+            ) AND NOT EXISTS (
+                SELECT 1
+                FROM memberships
+                GROUP BY user_id, workspace_id
+                HAVING COUNT(*) > 1
+            ) THEN
+                ALTER TABLE memberships
+                    ADD CONSTRAINT uq_membership_user_workspace UNIQUE (user_id, workspace_id);
+            END IF;
+        END $$;
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_request_id ON audit_logs (request_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_trace_id ON audit_logs (trace_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_outcome ON audit_logs (outcome)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_target ON audit_logs (target_type, target_id)",
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_bases (
+            id VARCHAR(36) PRIMARY KEY,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            owner_user_id VARCHAR(36) REFERENCES users(id),
+            workflow_run_id VARCHAR(36),
+            scope VARCHAR(20) NOT NULL DEFAULT 'workspace',
+            name VARCHAR(160) NOT NULL,
+            description TEXT,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            created_by VARCHAR(36) NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS kb_documents (
+            id VARCHAR(36) PRIMARY KEY,
+            kb_id VARCHAR(36) NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            owner_user_id VARCHAR(36) REFERENCES users(id),
+            workflow_run_id VARCHAR(36),
+            file_name VARCHAR(255) NOT NULL,
+            file_type VARCHAR(40) NOT NULL,
+            storage_uri TEXT,
+            checksum VARCHAR(64) NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            parse_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            index_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            created_by VARCHAR(36) NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36)",
+        "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36)",
+        "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'",
+        """
+        CREATE TABLE IF NOT EXISTS kb_chunks (
+            id VARCHAR(36) PRIMARY KEY,
+            document_id VARCHAR(36) NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
+            kb_id VARCHAR(36) NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            owner_user_id VARCHAR(36) REFERENCES users(id),
+            workflow_run_id VARCHAR(36),
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            heading_path JSON DEFAULT '[]'::json,
+            page_number INTEGER,
+            metadata_json JSON DEFAULT '{}'::json,
+            content_hash VARCHAR(64) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36)",
+        """
+        CREATE TABLE IF NOT EXISTS kb_embeddings (
+            id VARCHAR(36) PRIMARY KEY,
+            chunk_id VARCHAR(36) NOT NULL REFERENCES kb_chunks(id) ON DELETE CASCADE,
+            embedding_model VARCHAR(120) NOT NULL,
+            vector_json JSON NOT NULL,
+            dimension INTEGER NOT NULL,
+            embedding_vector vector(1536),
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "ALTER TABLE kb_embeddings ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)",
+        """
+        CREATE TABLE IF NOT EXISTS kb_retrieval_logs (
+            id VARCHAR(36) PRIMARY KEY,
+            workflow_run_id VARCHAR(36),
+            node_run_id VARCHAR(36),
+            user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            query TEXT NOT NULL,
+            rewritten_queries JSON DEFAULT '[]'::json,
+            retrieval_scope JSON DEFAULT '[]'::json,
+            retrieval_mode VARCHAR(20) NOT NULL,
+            top_k INTEGER NOT NULL,
+            min_score DOUBLE PRECISION NOT NULL,
+            retrieved_chunk_ids JSON DEFAULT '[]'::json,
+            scores JSON DEFAULT '[]'::json,
+            metadata_json JSON DEFAULT '{}'::json,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_knowledge_bases_workspace_scope ON knowledge_bases (workspace_id, scope, status)",
+        "CREATE INDEX IF NOT EXISTS ix_knowledge_bases_owner ON knowledge_bases (owner_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_knowledge_bases_run_upload ON knowledge_bases (workspace_id, owner_user_id, workflow_run_id, scope)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_documents_kb_status ON kb_documents (kb_id, index_status)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_documents_kb_lifecycle ON kb_documents (kb_id, status, version)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_documents_workspace ON kb_documents (workspace_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_chunks_kb ON kb_chunks (kb_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_chunks_workspace ON kb_chunks (workspace_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_chunks_run_upload ON kb_chunks (workspace_id, owner_user_id, workflow_run_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_embeddings_chunk ON kb_embeddings (chunk_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_retrieval_logs_workflow ON kb_retrieval_logs (workflow_run_id)",
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+                CREATE INDEX IF NOT EXISTS ix_kb_embeddings_vector_hnsw
+                    ON kb_embeddings USING hnsw (embedding_vector vector_cosine_ops);
+            END IF;
+        END $$;
+        """,
     ]
+
+
+def _legacy_schema_init_enabled() -> bool:
+    """是否允许应用启动时执行 legacy create_all/ALTER。
+
+    生产环境应设置 DATABASE_AUTO_SCHEMA_INIT=false，并通过 Alembic 管理 schema 版本。
+    """
+    return os.getenv("DATABASE_AUTO_SCHEMA_INIT", "true").lower() in {"1", "true", "yes", "on"}
 
 
 # ==================== ORM 模型定义 ====================
@@ -320,7 +560,14 @@ class PostgresArtifactStore:
             "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
         )
         sql_echo = os.getenv("SQL_ECHO", "false").lower() == "true"
-        self.engine = create_async_engine(self.database_url, echo=sql_echo)
+        pool_recycle_seconds = int(os.getenv("DATABASE_POOL_RECYCLE_SECONDS", "1800"))
+        # 连接池取连接前先做健康检查，并定期回收旧连接，避免拿到已失效的 asyncpg 连接。
+        self.engine = create_async_engine(
+            self.database_url,
+            echo=sql_echo,
+            pool_pre_ping=True,
+            pool_recycle=pool_recycle_seconds,
+        )
         self.async_session = async_sessionmaker(
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
@@ -338,14 +585,104 @@ class PostgresArtifactStore:
             self._initialized = True
 
     async def init_db(self):
-        """初始化数据库表"""
-        for module_name in ("models.auth_orm", "models.admin_orm", "models.workflow_orm"):
+        """初始化数据库表。
+
+        Alembic 是生产 schema 变更的唯一入口；这里仅保留开发兼容初始化。
+        """
+        for module_name in (
+            "models.auth_orm",
+            "models.admin_orm",
+            "models.workflow_orm",
+            "orm.knowledge_orm",
+        ):
             importlib.import_module(module_name)
 
+        if not _legacy_schema_init_enabled():
+            return
+
         async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
             for statement in _runtime_schema_statements(self.database_url):
                 await conn.execute(text(statement))
+            await conn.run_sync(Base.metadata.create_all)
+            await self._run_migrations(conn)
+            for statement in _runtime_upgrade_statements(self.database_url):
+                await conn.execute(text(statement))
+
+    async def _run_migrations(self, conn) -> None:
+        """按文件名顺序执行 db/migrations 下的 SQL 迁移，并记录已执行版本。"""
+        if not self.database_url.startswith("postgresql"):
+            return
+
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version VARCHAR(120) PRIMARY KEY,
+                    applied_at TIMESTAMPTZ DEFAULT now()
+                )
+                """
+            )
+        )
+        migrations_dir = Path(__file__).resolve().parent / "migrations"
+        if not migrations_dir.exists():
+            return
+
+        result = await conn.execute(text("SELECT version FROM schema_migrations"))
+        applied_versions = {row[0] for row in result.all()}
+        for migration_file in sorted(migrations_dir.glob("*.sql")):
+            version = migration_file.name
+            if version in applied_versions:
+                continue
+            # 迁移文件由仓库维护，不拼接用户输入；保持原 SQL 便于 DB 自身事务处理。
+            for statement in _split_migration_statements(
+                migration_file.read_text(encoding="utf-8")
+            ):
+                await conn.execute(text(statement))
+            await conn.execute(
+                text("INSERT INTO schema_migrations (version) VALUES (:version)"),
+                {"version": version},
+            )
+
+    @asynccontextmanager
+    async def initialized_session(self) -> AsyncIterator[AsyncSession]:
+        """返回已完成迁移初始化的短生命周期 session。"""
+        await self._ensure_initialized()
+        async with self.async_session() as session:
+            yield session
+
+    async def dispose(self) -> None:
+        """在应用关闭或热重载时主动释放连接池中的底层连接。"""
+        await self.engine.dispose()
+
+    def _is_retryable_disconnect(self, exc: BaseException) -> bool:
+        """识别可通过清理连接池后重试一次恢复的断连错误。"""
+        if isinstance(exc, DBAPIError) and getattr(exc, "connection_invalidated", False):
+            return True
+
+        message = str(exc).lower()
+        return any(
+            marker in message
+            for marker in (
+                "connection is closed",
+                "connection was closed",
+                "connection reset by peer",
+                "server closed the connection unexpectedly",
+            )
+        )
+
+    async def _run_with_session(
+        self,
+        operation: Callable[[AsyncSession], Awaitable[T]],
+    ) -> T:
+        """执行短生命周期数据库操作。
+
+        写路径不能在断连后重放整个操作体，否则提交成功但响应丢失时会重复写入。
+        断连恢复交给 SQLAlchemy 的 pool_pre_ping / pool_recycle 处理。
+        """
+        await self._ensure_initialized()
+
+        async with self.async_session() as session:
+            return await operation(session)
 
     async def create_artifact(
         self,
@@ -362,7 +699,6 @@ class PostgresArtifactStore:
         import hashlib
         import json
 
-        await self._ensure_initialized()
         # 兼容旧调用：历史代码可能使用 `type=` 传参，这里统一归一为 artifact_type。
         if artifact_type is None:
             artifact_type = kwargs.get("type")
@@ -370,8 +706,8 @@ class PostgresArtifactStore:
             raise ValueError("artifact_type is required")
         metadata = metadata or {}
 
-        # 计算版本号
-        async with self.async_session() as session:
+        async def _operation(session: AsyncSession) -> Artifact:
+            # 计算版本号
             if parent_version_id:
                 result = await session.execute(
                     select(ArtifactORM).where(ArtifactORM.id == parent_version_id)
@@ -412,13 +748,17 @@ class PostgresArtifactStore:
 
             return artifact
 
+        return await self._run_with_session(_operation)
+
     async def get_artifact(self, artifact_id: str) -> Artifact | None:
         """获取指定 Artifact"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> Artifact | None:
             result = await session.execute(select(ArtifactORM).where(ArtifactORM.id == artifact_id))
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
+
+        return await self._run_with_session(_operation)
 
     async def get_version_history(self, artifact_id: str) -> list[Artifact]:
         """获取 Artifact 的完整版本历史链"""
@@ -436,17 +776,19 @@ class PostgresArtifactStore:
 
     async def create_node_run(self, node_run: NodeRun) -> NodeRun:
         """创建节点运行记录"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> NodeRun:
             orm = NodeRunORM.from_model(node_run)
             session.add(orm)
             await session.commit()
             return node_run
 
+        return await self._run_with_session(_operation)
+
     async def update_node_run(self, node_run: NodeRun) -> NodeRun:
         """更新节点运行记录"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> NodeRun:
             result = await session.execute(select(NodeRunORM).where(NodeRunORM.id == node_run.id))
             orm = result.scalar_one_or_none()
             if orm:
@@ -466,18 +808,22 @@ class PostgresArtifactStore:
                 await session.commit()
             return node_run
 
+        return await self._run_with_session(_operation)
+
     async def get_node_run(self, node_run_id: str) -> NodeRun | None:
         """获取节点运行记录"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> NodeRun | None:
             result = await session.execute(select(NodeRunORM).where(NodeRunORM.id == node_run_id))
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
 
+        return await self._run_with_session(_operation)
+
     async def get_node_runs_by_workflow(self, workflow_run_id: str) -> list[NodeRun]:
         """获取工作流的所有节点运行记录"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> list[NodeRun]:
             result = await session.execute(
                 select(NodeRunORM)
                 .where(NodeRunORM.workflow_run_id == workflow_run_id)
@@ -486,10 +832,12 @@ class PostgresArtifactStore:
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
+        return await self._run_with_session(_operation)
+
     async def get_latest_node_run(self, workflow_run_id: str) -> NodeRun | None:
         """获取工作流最近一次节点运行。"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> NodeRun | None:
             result = await session.execute(
                 select(NodeRunORM)
                 .where(NodeRunORM.workflow_run_id == workflow_run_id)
@@ -498,19 +846,23 @@ class PostgresArtifactStore:
             orm = result.scalars().first()
             return orm.to_model() if orm else None
 
+        return await self._run_with_session(_operation)
+
     async def create_workflow_run(self, workflow_run: WorkflowRun) -> WorkflowRun:
         """创建工作流运行记录"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> WorkflowRun:
             orm = WorkflowRunORM.from_model(workflow_run)
             session.add(orm)
             await session.commit()
             return workflow_run
 
+        return await self._run_with_session(_operation)
+
     async def update_workflow_run(self, workflow_run: WorkflowRun) -> WorkflowRun:
         """更新工作流运行记录"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> WorkflowRun:
             result = await session.execute(
                 select(WorkflowRunORM).where(WorkflowRunORM.id == workflow_run.id)
             )
@@ -530,15 +882,19 @@ class PostgresArtifactStore:
                 await session.commit()
             return workflow_run
 
+        return await self._run_with_session(_operation)
+
     async def get_workflow_run(self, workflow_run_id: str) -> WorkflowRun | None:
         """获取工作流运行记录"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> WorkflowRun | None:
             result = await session.execute(
                 select(WorkflowRunORM).where(WorkflowRunORM.id == workflow_run_id)
             )
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
+
+        return await self._run_with_session(_operation)
 
     async def list_workflow_runs(
         self,
@@ -547,12 +903,11 @@ class PostgresArtifactStore:
         user_id: str | None = None,
     ) -> list[WorkflowRun]:
         """按当前工作空间和用户范围返回可见的运行记录。"""
-        await self._ensure_initialized()
         filters = [WorkflowRunORM.metadata_json["workspace_id"].as_string() == workspace_id]
         if user_id is not None:
             filters.append(WorkflowRunORM.metadata_json["user_id"].as_string() == user_id)
 
-        async with self.async_session() as session:
+        async def _operation(session: AsyncSession) -> list[WorkflowRun]:
             result = await session.execute(
                 select(WorkflowRunORM)
                 .where(and_(*filters))
@@ -561,25 +916,31 @@ class PostgresArtifactStore:
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
+        return await self._run_with_session(_operation)
+
     async def get_all_workflow_runs(self) -> list[WorkflowRun]:
         """获取所有工作流运行记录"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> list[WorkflowRun]:
             result = await session.execute(
                 select(WorkflowRunORM).order_by(WorkflowRunORM.started_at.desc())
             )
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
+        return await self._run_with_session(_operation)
+
     async def get_artifacts_by_workflow(self, workflow_run_id: str) -> list[Artifact]:
         """获取工作流的所有 Artifacts"""
-        await self._ensure_initialized()
-        async with self.async_session() as session:
+
+        async def _operation(session: AsyncSession) -> list[Artifact]:
             result = await session.execute(
                 select(ArtifactORM).where(ArtifactORM.workflow_run_id == workflow_run_id)
             )
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
+
+        return await self._run_with_session(_operation)
 
     async def get_workflow_context(
         self,
@@ -590,10 +951,9 @@ class PostgresArtifactStore:
         if not workflow_definition_id and not workflow_version_id:
             return None
 
-        await self._ensure_initialized()
         from models.workflow_orm import WorkflowDefinitionORM, WorkflowVersionORM
 
-        async with self.async_session() as session:
+        async def _operation(session: AsyncSession) -> dict | None:
             version = None
             definition = None
 
@@ -602,6 +962,8 @@ class PostgresArtifactStore:
                     select(WorkflowVersionORM).where(WorkflowVersionORM.id == workflow_version_id)
                 )
                 version = version_result.scalar_one_or_none()
+                if version is None:
+                    return None
 
             if workflow_definition_id:
                 definition_result = await session.execute(
@@ -610,16 +972,49 @@ class PostgresArtifactStore:
                     )
                 )
                 definition = definition_result.scalar_one_or_none()
+                if definition is None:
+                    return None
+
+            if definition is None and version is not None and version.workflow_id:
+                definition_result = await session.execute(
+                    select(WorkflowDefinitionORM).where(
+                        WorkflowDefinitionORM.id == version.workflow_id
+                    )
+                )
+                definition = definition_result.scalar_one_or_none()
+
+            if (
+                workflow_definition_id
+                and version is not None
+                and version.workflow_id != workflow_definition_id
+            ):
+                return None
+
+            if (
+                version is None
+                and not workflow_version_id
+                and definition is not None
+                and definition.published_version_id
+            ):
+                version_result = await session.execute(
+                    select(WorkflowVersionORM).where(
+                        WorkflowVersionORM.id == definition.published_version_id
+                    )
+                )
+                version = version_result.scalar_one_or_none()
 
             return {
-                "workflow_definition_id": workflow_definition_id,
-                "workflow_version_id": workflow_version_id,
+                "workflow_definition_id": workflow_definition_id
+                or getattr(version, "workflow_id", None),
+                "workflow_version_id": workflow_version_id or getattr(version, "id", None),
                 "definition_name": getattr(definition, "name", None),
                 "definition_description": getattr(definition, "description", None),
                 "version": getattr(version, "version", None),
                 "nodes": getattr(version, "nodes", None),
                 "edges": getattr(version, "edges", None),
             }
+
+        return await self._run_with_session(_operation)
 
 
 class PostgresGraphCheckpointSaver(BaseCheckpointSaver[str]):
@@ -867,6 +1262,14 @@ def get_postgres_store() -> PostgresArtifactStore:
     if _postgres_store is None:
         _postgres_store = PostgresArtifactStore()
     return _postgres_store
+
+
+async def dispose_postgres_store() -> None:
+    """若单例已创建，则主动释放其连接池。"""
+    global _postgres_store
+    if _postgres_store is None:
+        return
+    await _postgres_store.dispose()
 
 
 def get_postgres_checkpoint_saver() -> PostgresGraphCheckpointSaver:

@@ -9,6 +9,9 @@ import { apiUrl } from './api-config';
 
 const PREFERRED_WORKSPACE_STORAGE_KEY = 'promptchain:workspace_id';
 
+// 合并并发 401 触发的刷新请求，避免多个接口同时刷新 Access Token。
+let refreshTokenRequest: Promise<boolean> | null = null;
+
 export type UserStatus = 'active' | 'inactive' | 'suspended';
 export type WorkspaceAccessStatus = 'active' | 'suspended';
 export type Role = 'owner' | 'admin' | 'editor' | 'viewer';
@@ -22,7 +25,8 @@ export type Resource =
   | 'api_key'
   | 'member'
   | 'workspace'
-  | 'audit_log';
+  | 'audit_log'
+  | 'knowledge_base';
 
 export interface User {
   id: string;
@@ -99,18 +103,21 @@ export interface ConsoleRouteGuard {
   action?: Action;
 }
 
+// 前端权限表用于菜单显隐和交互兜底；最终授权仍以服务端 RBAC 为准。
 export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>> = {
   viewer: {
     workflow: ['read', 'execute'],
     workflow_run: ['read', 'create'],
     template: ['read'],
     workspace: ['read'],
+    knowledge_base: ['read'],
   },
   editor: {
     workflow: ['read', 'create', 'update', 'execute'],
     workflow_run: ['read', 'create'],
     template: ['read', 'create', 'update'],
     workspace: ['read'],
+    knowledge_base: ['read', 'create', 'update'],
   },
   admin: {
     workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
@@ -122,6 +129,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     member: ['read', 'create', 'update', 'delete', 'manage'],
     workspace: ['read', 'update', 'manage'],
     audit_log: ['read', 'export'],
+    knowledge_base: ['read', 'create', 'update', 'delete', 'manage'],
   },
   owner: {
     workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
@@ -133,15 +141,18 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     member: ['read', 'create', 'update', 'delete', 'manage'],
     workspace: ['read', 'update', 'delete', 'manage'],
     audit_log: ['read', 'export'],
+    knowledge_base: ['read', 'create', 'update', 'delete', 'manage'],
   },
 };
 
+// 控制台路由采用最长前缀匹配，确保更具体的页面先命中自己的权限规则。
 const CONSOLE_ROUTE_GUARDS: ConsoleRouteGuard[] = [
   { prefix: '/console/workflows/edit', resource: 'workflow', action: 'create' },
   { prefix: '/console/settings/members', resource: 'member', action: 'read' },
   { prefix: '/console/settings/models', resource: 'model_provider', action: 'read' },
   { prefix: '/console/settings/keys', resource: 'secret', action: 'read' },
   { prefix: '/console/settings/audit', resource: 'audit_log', action: 'read' },
+  { prefix: '/console/knowledge', resource: 'knowledge_base', action: 'read' },
   { prefix: '/console/runs', resource: 'workflow_run', action: 'read' },
   { prefix: '/console/workflows', resource: 'workflow', action: 'read' },
   { prefix: '/console/settings' },
@@ -149,6 +160,7 @@ const CONSOLE_ROUTE_GUARDS: ConsoleRouteGuard[] = [
 ];
 
 function normalizeAuthState(data: AuthResponse): AuthState {
+  // 将服务端选定的工作空间写入本地偏好，供后续刷新 Token 时恢复上下文。
   persistPreferredWorkspace(data.workspace?.id ?? null);
   return {
     user: data.user,
@@ -167,6 +179,10 @@ async function parseErrorMessage(response: Response, fallback: string): Promise<
   } catch {
     return fallback;
   }
+}
+
+interface AuthenticatedFetchOptions extends RequestInit {
+  skipAuthRefresh?: boolean;
 }
 
 function getPreferredWorkspace(): string | null {
@@ -241,18 +257,58 @@ export async function logout(): Promise<void> {
  * 刷新 Token
  */
 export async function refreshToken(): Promise<boolean> {
-  try {
-    const workspaceId = getPreferredWorkspace();
-    const response = await fetch(apiUrl('/auth/refresh'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ workspace_id: workspaceId }),
-    });
-    return response.ok;
-  } catch {
-    return false;
+  if (refreshTokenRequest) {
+    return refreshTokenRequest;
   }
+
+  // Refresh Token 存在 HttpOnly Cookie 中，前端只负责携带工作空间偏好。
+  refreshTokenRequest = (async () => {
+    try {
+      const workspaceId = getPreferredWorkspace();
+      const response = await fetch(apiUrl('/auth/refresh'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      refreshTokenRequest = null;
+    }
+  })();
+
+  return refreshTokenRequest;
+}
+
+/**
+ * 统一处理带 Cookie 的认证请求：Access Token 过期时自动刷新一次再重试。
+ */
+export async function authenticatedFetch(
+  input: string,
+  options: AuthenticatedFetchOptions = {},
+): Promise<Response> {
+  const { skipAuthRefresh = false, ...fetchOptions } = options;
+
+  const execute = () =>
+    fetch(input, {
+      credentials: 'include',
+      ...fetchOptions,
+    });
+
+  const response = await execute();
+  if (skipAuthRefresh || response.status !== 401) {
+    return response;
+  }
+
+  // 只刷新并重试一次，防止认证失效时形成无限请求循环。
+  const refreshed = await refreshToken();
+  if (!refreshed) {
+    return response;
+  }
+
+  return execute();
 }
 
 /**
@@ -260,24 +316,9 @@ export async function refreshToken(): Promise<boolean> {
  */
 export async function getCurrentUser(): Promise<AuthState | null> {
   try {
-    const response = await fetch(apiUrl('/me'), {
-      credentials: 'include',
-    });
+    const response = await authenticatedFetch(apiUrl('/me'));
 
     if (!response.ok) {
-      if (response.status === 401) {
-        const refreshed = await refreshToken();
-        if (refreshed) {
-          const retryResponse = await fetch(apiUrl('/me'), {
-            credentials: 'include',
-          });
-
-          if (retryResponse.ok) {
-            return normalizeAuthState((await retryResponse.json()) as AuthResponse);
-          }
-        }
-      }
-
       return null;
     }
 
@@ -291,10 +332,9 @@ export async function getCurrentUser(): Promise<AuthState | null> {
  * 切换工作空间
  */
 export async function switchWorkspace(workspaceId: string): Promise<void> {
-  const response = await fetch(apiUrl('/workspace-context/switch'), {
+  const response = await authenticatedFetch(apiUrl('/workspace-context/switch'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ workspace_id: workspaceId }),
   });
 
@@ -360,9 +400,7 @@ export async function resetPassword(token: string, password: string): Promise<{ 
  * 获取工作空间成员
  */
 export async function listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]> {
-  const response = await fetch(apiUrl(`/workspaces/${workspaceId}/members`), {
-    credentials: 'include',
-  });
+  const response = await authenticatedFetch(apiUrl(`/workspaces/${workspaceId}/members`));
 
   if (!response.ok) {
     throw new Error(await parseErrorMessage(response, '加载成员失败'));
@@ -379,10 +417,9 @@ export async function inviteWorkspaceMember(
   workspaceId: string,
   payload: InviteMemberRequest,
 ): Promise<{ message: string }> {
-  const response = await fetch(apiUrl(`/workspaces/${workspaceId}/invite`), {
+  const response = await authenticatedFetch(apiUrl(`/workspaces/${workspaceId}/invite`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(payload),
   });
 
@@ -394,16 +431,42 @@ export async function inviteWorkspaceMember(
 }
 
 /**
+ * 接受工作空间邀请
+ */
+export async function acceptWorkspaceInvite(
+  token: string,
+): Promise<{ message: string; workspace_id?: string }> {
+  const response = await authenticatedFetch(
+    apiUrl(`/workspaces/accept-invite?token=${encodeURIComponent(token)}`),
+    {
+      method: 'POST',
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, '接受邀请失败'));
+  }
+
+  const result = (await response.json()) as { message?: string; workspace_id?: string };
+  if (result.workspace_id) {
+    persistPreferredWorkspace(result.workspace_id);
+  }
+  return {
+    message: result.message ?? '您已成功加入工作空间。',
+    workspace_id: result.workspace_id,
+  };
+}
+
+/**
  * 修改成员角色
  */
 export async function updateWorkspaceMemberRole(
   membershipId: string,
   role: Exclude<Role, 'owner'>,
 ): Promise<{ message: string }> {
-  const response = await fetch(apiUrl(`/memberships/${membershipId}`), {
+  const response = await authenticatedFetch(apiUrl(`/memberships/${membershipId}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ role }),
   });
 
@@ -418,9 +481,8 @@ export async function updateWorkspaceMemberRole(
  * 移除成员
  */
 export async function removeWorkspaceMember(membershipId: string): Promise<{ message: string }> {
-  const response = await fetch(apiUrl(`/memberships/${membershipId}`), {
+  const response = await authenticatedFetch(apiUrl(`/memberships/${membershipId}`), {
     method: 'DELETE',
-    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -437,10 +499,9 @@ export async function updateWorkspaceMemberAccess(
   userId: string,
   status: WorkspaceAccessStatus,
 ): Promise<{ message: string; workspace_access?: WorkspaceAccessStatus }> {
-  const response = await fetch(apiUrl(`/admin/users/${userId}/status`), {
+  const response = await authenticatedFetch(apiUrl(`/admin/users/${userId}/status`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ status }),
   });
 
@@ -500,7 +561,7 @@ export function canAccessConsolePath(role: Role | null | undefined, pathname: st
     return pathname === '/console';
   }
 
-  // 寻找最精确匹配的路由守卫（最长前缀匹配）
+  // 寻找最精确匹配的路由守卫，避免 `/console/settings` 抢先覆盖子页面规则。
   const guard = CONSOLE_ROUTE_GUARDS
     .filter((item) => pathname.startsWith(item.prefix))
     .reduce<ConsoleRouteGuard | undefined>(

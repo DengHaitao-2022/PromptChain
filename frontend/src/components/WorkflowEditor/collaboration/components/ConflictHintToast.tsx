@@ -2,7 +2,7 @@
 
 import { useWorkflowContext } from '../../provider/WorkflowProvider';
 import { selectSelectedNode } from '../../store/selectors';
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import type { WebsocketProvider } from 'y-websocket';
 import { getRemoteSelections } from '../yjs/awareness';
 import { AlertCircle } from 'lucide-react';
@@ -18,31 +18,20 @@ interface ConflictHintToastProps {
 
 export function ConflictHintToast({ provider }: ConflictHintToastProps) {
     const selectedNode = useWorkflowContext(selectSelectedNode);
-    const [conflictUsers, setConflictUsers] = useState<string[]>([]);
-
-    useEffect(() => {
-        if (!provider || !selectedNode) {
-            setConflictUsers([]);
-            return;
-        }
-
-        const checkConflicts = () => {
-            if (!provider) return;
-            const localClientId = provider.awareness.clientID;
-            const selections = getRemoteSelections(localClientId);
-            const usersOnThisNode = selections.get(selectedNode.id) || [];
-            setConflictUsers(usersOnThisNode.map(u => u.name));
-        };
-
-        checkConflicts();
-        provider.awareness.on('change', checkConflicts);
-
-        return () => {
-            if (provider) {
-                provider.awareness.off('change', checkConflicts);
-            }
-        };
-    }, [provider, selectedNode]);
+    const conflictUsersText = useSyncExternalStore(
+        (onStoreChange) => {
+            if (!provider) return () => undefined;
+            provider.awareness.on('change', onStoreChange);
+            return () => provider.awareness.off('change', onStoreChange);
+        },
+        () => {
+            if (!provider || !selectedNode) return '';
+            const selections = getRemoteSelections(provider.awareness.clientID);
+            return (selections.get(selectedNode.id) || []).map((user) => user.name).join(',');
+        },
+        () => '',
+    );
+    const conflictUsers = conflictUsersText ? conflictUsersText.split(',') : [];
 
     if (conflictUsers.length === 0) return null;
 

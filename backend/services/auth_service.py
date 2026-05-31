@@ -17,7 +17,14 @@ from sqlalchemy import and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from core.time import utc_now_naive
+from core.config import get_settings
+from core.errors.codes import (
+    AUTH_ACCOUNT_SUSPENDED,
+    AUTH_LOGIN_LOCKED,
+    AUTH_REGISTRATION_CONFLICT,
+)
+from core.errors.exceptions import ApplicationError, DomainError
+from core.time import utc_now, utc_now_naive
 from models.admin_orm import LoginAttemptORM
 from models.auth_models import MemberRole, User, UserStatus, Workspace
 from models.auth_orm import MembershipORM, RefreshTokenORM, UserORM, WorkspaceORM
@@ -28,7 +35,7 @@ from models.auth_orm import MembershipORM, RefreshTokenORM, UserORM, WorkspaceOR
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT 配置
-DEBUG_MODE = os.getenv("DEBUG", "true").lower() == "true"
+DEBUG_MODE = get_settings().DEBUG
 ALLOW_INSECURE_JWT_SECRET = (
     os.getenv("ALLOW_INSECURE_JWT_SECRET", "true" if DEBUG_MODE else "false").lower() == "true"
 )
@@ -48,6 +55,16 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7  # Refresh Token 7天过期
 # 登录限流配置
 MAX_LOGIN_ATTEMPTS = 5  # 最大尝试次数
 LOGIN_LOCKOUT_MINUTES = 15  # 锁定时间（分钟）
+
+
+def normalize_email(email: str) -> str:
+    """统一邮箱存储和查询格式，避免大小写或首尾空格导致账号匹配失败。"""
+    return str(email).strip().lower()
+
+
+def user_email_matches(email: str):
+    """生成兼容历史大小写邮箱数据的查询条件。"""
+    return func.lower(UserORM.email) == normalize_email(email)
 
 
 # ==================== 密码处理 ====================
@@ -97,12 +114,13 @@ def create_access_token(
     Returns:
         JWT Access Token
     """
-    expire = utc_now_naive() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    issued_at = utc_now()
+    expire = issued_at + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": user_id,
         "type": "access",
         "exp": expire,
-        "iat": utc_now_naive(),
+        "iat": issued_at,
         "jti": str(uuid.uuid4()),  # Token 唯一标识
     }
     if workspace_id:
@@ -180,20 +198,28 @@ class AuthService:
             创建的用户
 
         Raises:
-            ValueError: 邮箱或用户名已存在
+            DomainError: 邮箱或用户名已存在
         """
+        email = normalize_email(email)
+
         # 检查邮箱是否已存在
-        result = await self.session.execute(select(UserORM).where(UserORM.email == email))
+        result = await self.session.execute(select(UserORM).where(user_email_matches(email)))
         if result.scalar_one_or_none():
-            raise ValueError("该邮箱已被注册")
+            raise DomainError(
+                code=AUTH_REGISTRATION_CONFLICT,
+                message="该邮箱已被注册",
+            )
 
         # 检查用户名是否已存在
         if username:
             result = await self.session.execute(select(UserORM).where(UserORM.username == username))
             if result.scalar_one_or_none():
-                raise ValueError("该用户名已被使用")
+                raise DomainError(
+                    code=AUTH_REGISTRATION_CONFLICT,
+                    message="该用户名已被使用",
+                )
 
-        # 创建用户和默认工作空间，尽量收敛到一次提交，避免只写入部分认证数据。
+        # 创建用户和默认工作空间；提交由注册用例统一控制，避免邮件失败后留下不可验证账号。
         user_id = str(uuid.uuid4())
         display_name_value = display_name or email.split("@")[0]
         user_kwargs: dict[str, Any] = {
@@ -213,7 +239,7 @@ class AuthService:
         # 创建默认工作空间
         await self._create_default_workspace(user_id, display_name_value)
 
-        await self.session.commit()
+        await self.session.flush()
 
         return User(
             id=user_id,
@@ -264,16 +290,22 @@ class AuthService:
             用户ORM对象或None
 
         Raises:
-            ValueError: 登录被锁定
+            ApplicationError: 登录被锁定
+            DomainError: 账号已停用
         """
+        email = normalize_email(email)
+
         # 检查登录限流
         if ip_address:
             is_locked = await self._check_login_lockout(email, ip_address)
             if is_locked:
-                raise ValueError("登录尝试次数过多，请稍后再试")
+                raise ApplicationError(
+                    code=AUTH_LOGIN_LOCKED,
+                    message="登录尝试次数过多，请稍后再试",
+                )
 
         # 查找用户
-        result = await self.session.execute(select(UserORM).where(UserORM.email == email))
+        result = await self.session.execute(select(UserORM).where(user_email_matches(email)))
         user = result.scalar_one_or_none()
 
         if not user:
@@ -287,7 +319,10 @@ class AuthService:
 
         # 检查用户状态
         if user.status == UserStatus.SUSPENDED.value:
-            raise ValueError("账号已被停用")
+            raise DomainError(
+                code=AUTH_ACCOUNT_SUSPENDED,
+                message="账号已被停用",
+            )
 
         # 记录成功登录
         await self._record_login_attempt(email, ip_address, success=True)
@@ -412,6 +447,12 @@ class AuthService:
     async def get_user_by_id(self, user_id: str) -> UserORM | None:
         """根据ID获取用户"""
         result = await self.session.execute(select(UserORM).where(UserORM.id == user_id))
+        return result.scalar_one_or_none()
+
+    async def get_user_by_email(self, email: str) -> UserORM | None:
+        """根据邮箱获取用户。"""
+        email = normalize_email(email)
+        result = await self.session.execute(select(UserORM).where(user_email_matches(email)))
         return result.scalar_one_or_none()
 
     async def get_user_workspaces(self, user_id: str) -> list[tuple[MembershipORM, WorkspaceORM]]:

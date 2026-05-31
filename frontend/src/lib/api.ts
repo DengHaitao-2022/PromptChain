@@ -5,6 +5,7 @@
  */
 
 import { apiUrl, serviceUrl } from './api-config';
+import { authenticatedFetch } from './auth';
 
 // 类型定义
 export type WorkflowStatus =
@@ -19,6 +20,219 @@ export type WorkflowStatus =
 export type ClarificationPriority = 'high' | 'medium' | 'low';
 export type FactCheckDecision = 'confirm' | 'use_suggestion' | 'manual';
 export type WorkflowGateType = 'clarification' | 'outline_approval' | 'fact_check';
+export type ApiErrorDomain =
+  | 'AUTH'
+  | 'WORKSPACE'
+  | 'WORKFLOW'
+  | 'TRACE'
+  | 'ADMIN'
+  | 'INFRA'
+  | 'COMMON'
+  | 'UNKNOWN';
+
+export type ApiErrorDetails = Record<string, unknown> | unknown[] | null;
+
+export interface ApiErrorOptions {
+  code: string;
+  message: string;
+  requestId: string | null;
+  details: ApiErrorDetails;
+  status: number;
+  cause?: unknown;
+}
+
+export class PromptChainApiError extends Error {
+  code: string;
+  requestId: string | null;
+  details: ApiErrorDetails;
+  status: number;
+  domain: ApiErrorDomain;
+  cause?: unknown;
+
+  constructor(options: ApiErrorOptions) {
+    super(options.message);
+    this.name = 'PromptChainApiError';
+    this.code = options.code;
+    this.requestId = options.requestId;
+    this.details = options.details;
+    this.status = options.status;
+    this.domain = getApiErrorDomain(options.code);
+    this.cause = options.cause;
+  }
+}
+
+export function getApiErrorDomain(code: string): ApiErrorDomain {
+  const prefix = code.split('_')[0];
+  if (
+    prefix === 'AUTH' ||
+    prefix === 'WORKSPACE' ||
+    prefix === 'WORKFLOW' ||
+    prefix === 'TRACE' ||
+    prefix === 'ADMIN' ||
+    prefix === 'INFRA' ||
+    prefix === 'COMMON'
+  ) {
+    return prefix;
+  }
+
+  return 'UNKNOWN';
+}
+
+export function isPromptChainApiError(error: unknown): error is PromptChainApiError {
+  return error instanceof PromptChainApiError;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function normalizeDetails(value: unknown, code: string): ApiErrorDetails {
+  if (code.startsWith('INFRA_')) {
+    // 基础设施 details 可能包含内部依赖信息，客户端只保留错误码作为稳定判断依据。
+    return null;
+  }
+
+  if (isRecord(value) || Array.isArray(value)) {
+    return value;
+  }
+
+  return null;
+}
+
+function legacyResultStatus(code: number): number {
+  if (code >= 50000) {
+    return 500;
+  }
+  if (code >= 40900) {
+    return 409;
+  }
+  if (code >= 40400) {
+    return 404;
+  }
+  if (code >= 40300) {
+    return 403;
+  }
+  if (code >= 40100) {
+    return 401;
+  }
+  return 400;
+}
+
+function createApiErrorFromEnvelope(
+  payload: Record<string, unknown>,
+  fallbackStatus: number
+): PromptChainApiError | null {
+  const code = asString(payload.code);
+  if (!code) {
+    return null;
+  }
+
+  return new PromptChainApiError({
+    code,
+    message: asString(payload.message) ?? code,
+    requestId: asString(payload.request_id) ?? asString(payload.requestId),
+    details: normalizeDetails(payload.details, code),
+    status:
+      typeof payload.status === 'number' && Number.isFinite(payload.status)
+        ? payload.status
+        : fallbackStatus,
+  });
+}
+
+function getRequestId(response: Response, payload: unknown): string | null {
+  if (isRecord(payload)) {
+    const requestId = asString(payload.request_id) ?? asString(payload.requestId);
+    if (requestId) {
+      return requestId;
+    }
+  }
+
+  return response.headers.get('x-request-id');
+}
+
+function getLegacyMessage(detail: unknown): string | null {
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    return '请求参数校验失败';
+  }
+
+  if (isRecord(detail)) {
+    return asString(detail.message) ?? asString(detail.detail);
+  }
+
+  return null;
+}
+
+async function readResponsePayload(response: Response): Promise<unknown> {
+  const contentType = response.headers.get('content-type') ?? '';
+
+  if (contentType.includes('application/json')) {
+    return response.json().catch(() => null);
+  }
+
+  const text = await response.text().catch(() => '');
+  return text.trim() ? text : null;
+}
+
+async function createApiError(response: Response): Promise<PromptChainApiError> {
+  const payload = await readResponsePayload(response);
+
+  if (isRecord(payload) && payload.success === false && typeof payload.code === 'string') {
+    const requestId = getRequestId(response, payload);
+    return (
+      createApiErrorFromEnvelope(
+        {
+          ...payload,
+          request_id: requestId,
+          status: response.status,
+        },
+        response.status
+      ) ??
+      new PromptChainApiError({
+        code: 'COMMON_HTTP_ERROR',
+        message: `HTTP ${response.status}`,
+        requestId,
+        details: null,
+        status: response.status,
+      })
+    );
+  }
+
+  const legacyDetail = isRecord(payload) ? payload.detail : null;
+  const legacyMessage =
+    (isRecord(payload) ? asString(payload.message) : null) ??
+    getLegacyMessage(legacyDetail) ??
+    (typeof payload === 'string' && payload.trim() ? payload : null) ??
+    `HTTP ${response.status}`;
+  const fallbackCode = response.status === 401 ? 'AUTH_UNAUTHENTICATED' : 'COMMON_HTTP_ERROR';
+  const code = isRecord(payload) ? asString(payload.code) ?? fallbackCode : fallbackCode;
+
+  return new PromptChainApiError({
+    code,
+    message: legacyMessage,
+    requestId: getRequestId(response, payload),
+    details: normalizeDetails(legacyDetail, code),
+    status: response.status,
+  });
+}
+
+function createNetworkApiError(error: unknown): PromptChainApiError {
+  return new PromptChainApiError({
+    code: 'INFRA_NETWORK_ERROR',
+    message: error instanceof Error && error.message ? error.message : '网络请求失败',
+    requestId: null,
+    details: null,
+    status: 0,
+    cause: error,
+  });
+}
 
 export interface WorkflowResponse {
   workflow_run_id: string;
@@ -61,6 +275,7 @@ export interface WorkflowGateState {
   answers?: Record<string, unknown> | null;
   opened_at?: string | null;
   handled_at?: string | null;
+  waiting_duration_ms?: number | null;
   resolution?: string | null;
 }
 
@@ -118,6 +333,109 @@ export interface FactCheckReport {
   high_risk_count: number;
 }
 
+export type KnowledgeScope = 'workspace' | 'personal' | 'run_upload';
+export type KnowledgeBaseStatus = 'active' | 'disabled' | 'archived';
+export type KnowledgeDocumentLifecycleStatus = 'active' | 'disabled' | 'archived';
+export type KnowledgeDocumentStatus = 'pending' | 'processing' | 'ready' | 'failed';
+export type RetrievalMode = 'vector' | 'keyword' | 'hybrid';
+
+export interface EvidenceChunk {
+  chunk_id: string;
+  document_id: string;
+  knowledge_base_id: string;
+  document_name: string;
+  scope: KnowledgeScope;
+  page_number?: number | null;
+  heading_path: string[];
+  score: number;
+  vector_score?: number | null;
+  keyword_score?: number | null;
+  rerank_score?: number | null;
+  content: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface EvidencePack {
+  query: string;
+  rewritten_queries: string[];
+  scopes: KnowledgeScope[];
+  chunks: EvidenceChunk[];
+  conflicts: Array<{
+    topic: string;
+    chunk_ids: string[];
+    reason: string;
+  }>;
+  unverified_points: string[];
+  retrieval_mode: RetrievalMode;
+  generated_at: string;
+}
+
+export interface RetrievalConfig {
+  enabled: boolean;
+  use_workspace_kb: boolean;
+  use_personal_kb: boolean;
+  use_run_upload: boolean;
+  top_k: number;
+  min_score: number;
+  mode: RetrievalMode;
+  enable_query_rewrite: boolean;
+  enable_multi_query: boolean;
+  enable_rerank: boolean;
+  enable_context_compression: boolean;
+  enable_conflict_detection: boolean;
+}
+
+export interface KnowledgeBase {
+  id: string;
+  workspace_id: string;
+  owner_user_id?: string | null;
+  workflow_run_id?: string | null;
+  scope: KnowledgeScope;
+  name: string;
+  description?: string | null;
+  status: KnowledgeBaseStatus;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  kb_id: string;
+  workspace_id: string;
+  owner_user_id?: string | null;
+  workflow_run_id?: string | null;
+  file_name: string;
+  file_type: string;
+  storage_uri?: string | null;
+  checksum: string;
+  version: number;
+  status: KnowledgeDocumentLifecycleStatus;
+  parse_status: KnowledgeDocumentStatus;
+  index_status: KnowledgeDocumentStatus;
+  error_message?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeSearchRequest {
+  workspace_id?: string | null;
+  query: string;
+  scopes: KnowledgeScope[];
+  top_k?: number;
+  min_score?: number;
+  mode?: RetrievalMode;
+  filters?: Record<string, unknown>;
+  enable_query_rewrite?: boolean;
+  enable_multi_query?: boolean;
+  enable_rerank?: boolean;
+  enable_context_compression?: boolean;
+  enable_conflict_detection?: boolean;
+  workflow_run_id?: string | null;
+  node_run_id?: string | null;
+}
+
 export interface WorkflowTrace {
   workflow: Record<string, unknown>;
   nodes: Record<string, unknown>[];
@@ -130,20 +448,72 @@ export interface WorkflowEventSnapshot {
   trace: WorkflowTrace;
 }
 
+export interface WorkflowTokenEvent {
+  workflow_run_id: string;
+  node: string;
+  section_id?: string;
+  section_title?: string;
+  delta: string;
+  mode?: 'generate' | 'refine' | string;
+  timestamp?: string;
+}
+
+export interface WorkflowSectionEvent {
+  workflow_run_id: string;
+  node: string;
+  section_id: string;
+  section_title?: string;
+  content_length?: number;
+  mode?: 'generate' | 'refine' | string;
+  timestamp?: string;
+}
+
+export interface WorkflowStreamErrorEvent {
+  workflow_run_id: string;
+  node: string;
+  section_id?: string;
+  section_title?: string;
+  detail: string;
+  mode?: 'generate' | 'refine' | string;
+  timestamp?: string;
+}
+
+export interface WorkflowAppErrorEvent {
+  success?: false;
+  code: string;
+  message: string;
+  request_id?: string | null;
+  requestId?: string | null;
+  details?: ApiErrorDetails;
+  data?: null;
+  status?: number;
+  workflow_run_id?: string;
+}
+
 export interface WorkflowEventHandlers {
   onSnapshot?: (snapshot: WorkflowEventSnapshot) => void;
   onDone?: (payload: { workflow_run_id?: string; status?: WorkflowStatus | string }) => void;
   onError?: (error: Error) => void;
   onHeartbeat?: () => void;
+  onToken?: (event: WorkflowTokenEvent) => void;
+  onSectionStarted?: (event: WorkflowSectionEvent) => void;
+  onSectionCompleted?: (event: WorkflowSectionEvent) => void;
+  onStreamError?: (event: WorkflowStreamErrorEvent) => void;
 }
 
 export interface TimelineEvent {
   timestamp: string;
   event: string;
   node?: string;
+  node_run_id?: string;
   artifact_id?: string;
   model?: string;
   tokens?: number;
+  duration_ms?: number;
+  status?: string;
+  current_node?: string;
+  gate_type?: WorkflowGateType;
+  questions?: WorkflowGateQuestion[];
 }
 
 export interface WorkflowConnectedEvent {
@@ -210,6 +580,8 @@ export interface ModelProviderSummary {
 export interface StartWorkflowOptions {
   modelProviderId?: string;
   modelName?: string;
+  retrievalConfig?: RetrievalConfig;
+  runUploadFiles?: File[];
 }
 
 export interface WorkflowRunSummary {
@@ -221,6 +593,42 @@ export interface WorkflowRunSummary {
   started_at: string;
   completed_at: string | null;
   total_duration_ms: number | null;
+}
+
+export interface RerunOption {
+  node_name: string;
+  node_run_id: string;
+  status?: string;
+  completed_at?: string | null;
+  output_artifacts?: Record<string, unknown>[];
+  can_rerun: boolean;
+}
+
+export interface RerunHistoryItem {
+  id: string;
+  workflow_name?: string;
+  status?: WorkflowStatus | string;
+  user_input?: string;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  metadata?: {
+    is_rerun?: boolean;
+    original_workflow_run_id?: string;
+    rerun_from_node?: string;
+    rerun_reason?: string;
+    rerun_at?: string;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+}
+
+export interface RerunResponse {
+  original_workflow_run_id: string;
+  new_workflow_run_id: string;
+  rerun_from_node: string;
+  status: WorkflowStatus | string;
+  state: WorkflowResponse['state'];
 }
 
 export type AuditOutcome = 'success' | 'failure' | 'unknown';
@@ -282,21 +690,49 @@ async function request<T>(
 ): Promise<T> {
   const url = apiUrl(endpoint);
 
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    credentials: 'include',
-    ...options,
-  });
+  let response: Response;
+  try {
+    response = await authenticatedFetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    });
+  } catch (error) {
+    throw createNetworkApiError(error);
+  }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw await createApiError(response);
   }
 
   return response.json();
+}
+
+async function requestBlob(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<Blob> {
+  const url = apiUrl(endpoint);
+
+  let response: Response;
+  try {
+    response = await authenticatedFetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+      },
+    });
+  } catch (error) {
+    throw createNetworkApiError(error);
+  }
+
+  if (!response.ok) {
+    throw await createApiError(response);
+  }
+
+  return response.blob();
 }
 
 // 统一 Result 包装类型
@@ -314,11 +750,24 @@ async function requestResult<T>(
   const result = await request<ApiResult<T>>(endpoint, options);
 
   if (result.code !== 0) {
-    throw new Error(result.message || 'Request failed');
+    const code = `COMMON_RESULT_${result.code}`;
+    throw new PromptChainApiError({
+      code,
+      message: result.message || '请求失败',
+      requestId: null,
+      details: normalizeDetails(result.data, code),
+      status: legacyResultStatus(result.code),
+    });
   }
 
   if (result.data == null) {
-    throw new Error(result.message || 'Request returned empty data');
+    throw new PromptChainApiError({
+      code: 'COMMON_EMPTY_DATA',
+      message: result.message || '响应数据为空',
+      requestId: null,
+      details: null,
+      status: 200,
+    });
   }
 
   return result.data;
@@ -364,8 +813,42 @@ export const workflowApi = {
     workflowDefinitionId?: string,
     workflowVersionId?: string,
     options: StartWorkflowOptions = {}
-  ) =>
-    request<WorkflowResponse>('/workflow/start', {
+  ) => {
+    if (options.runUploadFiles?.length) {
+      const formData = new FormData();
+      formData.append('user_input', userInput);
+      if (workflowDefinitionId) {
+        formData.append('workflow_definition_id', workflowDefinitionId);
+      }
+      if (workflowVersionId) {
+        formData.append('workflow_version_id', workflowVersionId);
+      }
+      if (options.modelProviderId) {
+        formData.append('model_provider_id', options.modelProviderId);
+      }
+      if (options.modelName) {
+        formData.append('model_name', options.modelName);
+      }
+      if (options.retrievalConfig) {
+        formData.append('retrieval_config', JSON.stringify(options.retrievalConfig));
+      }
+      for (const file of options.runUploadFiles) {
+        formData.append('files', file);
+      }
+
+      return authenticatedFetch(apiUrl('/workflow/start-with-uploads'), {
+        method: 'POST',
+        body: formData,
+      }).then(async (response) => {
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+          throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+        return response.json() as Promise<WorkflowResponse>;
+      });
+    }
+
+    return request<WorkflowResponse>('/workflow/start', {
       method: 'POST',
       body: JSON.stringify({
         user_input: userInput,
@@ -373,11 +856,13 @@ export const workflowApi = {
         workflow_version_id: workflowVersionId,
         model_provider_id: options.modelProviderId,
         model_name: options.modelName,
+        retrieval_config: options.retrievalConfig,
       }),
-    }),
+    });
+  },
 
   // 获取运行记录列表
-  getRuns: () => request<{ data: { runs: WorkflowRunSummary[] } }>('/workflow/runs'),
+  getRuns: () => request<{ runs: WorkflowRunSummary[] }>('/workflow/runs'),
 
   // 获取工作流状态
   getStatus: (workflowRunId: string) =>
@@ -421,6 +906,54 @@ export const workflowApi = {
 
     source.addEventListener('heartbeat', () => {
       handlers.onHeartbeat?.();
+    });
+
+    source.addEventListener('token', (event) => {
+      const payload = parsePayload<WorkflowTokenEvent>(event as MessageEvent<string>);
+      if (payload) {
+        handlers.onToken?.(payload);
+      }
+    });
+
+    source.addEventListener('section_started', (event) => {
+      const payload = parsePayload<WorkflowSectionEvent>(event as MessageEvent<string>);
+      if (payload) {
+        handlers.onSectionStarted?.(payload);
+      }
+    });
+
+    source.addEventListener('section_completed', (event) => {
+      const payload = parsePayload<WorkflowSectionEvent>(event as MessageEvent<string>);
+      if (payload) {
+        handlers.onSectionCompleted?.(payload);
+      }
+    });
+
+    source.addEventListener('stream_error', (event) => {
+      const payload = parsePayload<WorkflowStreamErrorEvent>(event as MessageEvent<string>);
+      if (payload) {
+        handlers.onStreamError?.(payload);
+      }
+    });
+
+    source.addEventListener('app_error', (event) => {
+      const payload = parsePayload<WorkflowAppErrorEvent>(event as MessageEvent<string>);
+      if (!payload || !isRecord(payload)) {
+        return;
+      }
+
+      const errorPayload: Record<string, unknown> = payload;
+      const apiError =
+        createApiErrorFromEnvelope(errorPayload, payload.status ?? 500) ??
+        new PromptChainApiError({
+          code: 'COMMON_HTTP_ERROR',
+          message: '工作流实时连接返回错误',
+          requestId: null,
+          details: null,
+          status: 500,
+        });
+      handlers.onError?.(apiError);
+      source.close();
     });
 
     source.addEventListener('error', () => {
@@ -484,8 +1017,14 @@ export const workflowApi = {
 
   // 获取重跑选项
   getRerunOptions: (workflowRunId: string) =>
-    request<{ options: Record<string, unknown>[] }>(
+    request<{ options: RerunOption[] }>(
       `/workflow/${workflowRunId}/rerun-options`
+    ),
+
+  // 获取重跑历史
+  getRerunHistory: (workflowRunId: string) =>
+    request<{ history: RerunHistoryItem[] }>(
+      `/workflow/${workflowRunId}/rerun-history`
     ),
 
   // 执行重跑
@@ -495,7 +1034,7 @@ export const workflowApi = {
     updatedInput?: Record<string, unknown>,
     reason?: string
   ) =>
-    request<Record<string, unknown>>(`/workflow/${workflowRunId}/rerun`, {
+    request<RerunResponse>(`/workflow/${workflowRunId}/rerun`, {
       method: 'POST',
       body: JSON.stringify({
         from_node: fromNode,
@@ -503,6 +1042,9 @@ export const workflowApi = {
         reason,
       }),
     }),
+
+  exportDocx: (workflowRunId: string) =>
+    requestBlob(`/workflow/${workflowRunId}/exports/docx`),
 };
 
 // Trace API
@@ -544,6 +1086,92 @@ export const auditLogApi = {
   },
 };
 
+// 知识库 API
+export const knowledgeApi = {
+  list: (workspaceId: string, scopes?: KnowledgeScope[]) => {
+    const params = new URLSearchParams();
+    if (scopes?.length) {
+      params.set('scopes', scopes.join(','));
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return request<{ knowledge_bases: KnowledgeBase[] }>(
+      `/workspaces/${workspaceId}/knowledge-bases${suffix}`
+    );
+  },
+
+  create: (
+    workspaceId: string,
+    body: { name: string; description?: string | null; scope: KnowledgeScope }
+  ) =>
+    request<KnowledgeBase>(`/workspaces/${workspaceId}/knowledge-bases`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  update: (
+    knowledgeBaseId: string,
+    body: { name?: string; description?: string | null; status?: KnowledgeBaseStatus }
+  ) =>
+    request<KnowledgeBase>(`/knowledge-bases/${knowledgeBaseId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  delete: (knowledgeBaseId: string) =>
+    request<{ message: string }>(`/knowledge-bases/${knowledgeBaseId}`, {
+      method: 'DELETE',
+    }),
+
+  listDocuments: (knowledgeBaseId: string) =>
+    request<{ documents: KnowledgeDocument[] }>(
+      `/knowledge-bases/${knowledgeBaseId}/documents`
+    ),
+
+  uploadDocument: (knowledgeBaseId: string, file: File, metadata?: Record<string, unknown>) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (metadata) {
+      formData.append('metadata_json', JSON.stringify(metadata));
+    }
+
+    return authenticatedFetch(apiUrl(`/knowledge-bases/${knowledgeBaseId}/documents`), {
+      method: 'POST',
+      body: formData,
+    }).then(async (response) => {
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(error.detail || `HTTP ${response.status}`);
+      }
+      return response.json() as Promise<KnowledgeDocument>;
+    });
+  },
+
+  deleteDocument: (documentId: string) =>
+    request<{ message: string }>(`/documents/${documentId}`, {
+      method: 'DELETE',
+    }),
+
+  reindexDocument: (documentId: string) =>
+    request<KnowledgeDocument>(`/documents/${documentId}/reindex`, {
+      method: 'POST',
+    }),
+
+  updateDocument: (documentId: string, body: { status: KnowledgeDocumentLifecycleStatus }) =>
+    request<KnowledgeDocument>(`/documents/${documentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  search: (body: KnowledgeSearchRequest) =>
+    request<{ evidence_pack: EvidencePack; retrieval_log_id?: string | null }>(
+      '/knowledge/search',
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }
+    ),
+};
+
 // Artifact API
 export const artifactApi = {
   // 获取 Artifact
@@ -564,10 +1192,11 @@ export const healthCheck = () =>
       'Content-Type': 'application/json',
     },
     credentials: 'include',
+  }).catch((error) => {
+    throw createNetworkApiError(error);
   }).then(async (response) => {
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new Error(error.detail || `HTTP ${response.status}`);
+      throw await createApiError(response);
     }
 
     return response.json() as Promise<{ status: string; service: string; version: string }>;

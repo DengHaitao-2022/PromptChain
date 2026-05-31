@@ -5,15 +5,28 @@
 """
 
 import asyncio
+import inspect
 import json
 import logging
+import time
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 import routes.workflow_helpers as workflow_helpers
+from core.errors.codes import (
+    WORKFLOW_GATE_CONFLICT,
+    WORKFLOW_NOT_FOUND,
+    WORKFLOW_STATE_CONFLICT,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.context import resolve_request_id
+from core.errors.exceptions import ApplicationError, DomainError, PromptChainError
+from core.errors.mapping import map_exception
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
+from models.knowledge import RetrievalConfig
 from routes.workflow_helpers import (
     _GATE_STATUSES,
     ApproveFactCheckRequest,
@@ -28,21 +41,24 @@ from routes.workflow_helpers import (
     _assert_status,
     _build_workflow_response,
     _build_workflow_run_list_response,
-    _ensure_workflow_metadata,
     _get_workflow_run_if_exists,
     _is_admin_role,
     _load_runtime_context,
     _normalize_status,
     _normalize_trace_payload,
-    _now_iso,
     _simplify_state,
 )
 from services.audit_log_service import AuditLogService
+from services.workflow_event_bus import get_workflow_event_bus
+from services.workflow_export_service import build_docx, build_workflow_export_payload
 
 # 由 app.py 统一补齐 /api 前缀，这里只保留资源级前缀，避免重复拼接
 router = APIRouter(prefix="/workflow", tags=["workflow"])
 logger = logging.getLogger(__name__)
 INTERNAL_SERVER_ERROR = "Internal server error"
+MAX_RUN_UPLOAD_FILES = 5
+MAX_RUN_UPLOAD_BYTES = 20 * 1024 * 1024
+UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 
 def _format_sse_event(event: str, data: dict, event_id: str | None = None) -> str:
@@ -54,6 +70,26 @@ def _format_sse_event(event: str, data: dict, event_id: str | None = None) -> st
     for line in payload.splitlines() or [""]:
         lines.append(f"data: {line}")
     return "\n".join(lines) + "\n\n"
+
+
+def _format_sse_app_error_event(
+    exc: Exception,
+    *,
+    request: Request,
+    workflow_run_id: str,
+) -> str:
+    """复用统一错误映射输出 SSE 应用错误，避免使用 EventSource 保留的 error 事件名。"""
+
+    mapped = map_exception(
+        exc,
+        request_id=resolve_request_id(request),
+        path=str(request.url.path),
+        method=request.method,
+    )
+    payload = mapped.envelope.model_dump(mode="json")
+    payload["status"] = mapped.http_status
+    payload["workflow_run_id"] = workflow_run_id
+    return _format_sse_event("app_error", payload)
 
 
 async def _build_workflow_event_snapshot(workflow_run_id: str) -> dict:
@@ -103,7 +139,10 @@ async def _audit_actor_context(request: Request, workflow_run) -> tuple[str, str
     metadata = workflow_helpers._ensure_workflow_metadata(workflow_run) if workflow_run else {}
     workspace_id = metadata.get("workspace_id") or user.get("workspace_id")
     if not user_id or not workspace_id:
-        raise HTTPException(status_code=400, detail="缺少审计所需的用户或工作空间上下文")
+        raise ApplicationError(
+            code=WORKSPACE_CONTEXT_REQUIRED,
+            message="缺少审计所需的用户或工作空间上下文",
+        )
     return user_id, workspace_id
 
 
@@ -132,6 +171,114 @@ async def _record_workflow_audit(
         await session.commit()
 
 
+async def _start_workflow_run(
+    request: Request,
+    body: StartWorkflowRequest,
+    *,
+    run_upload_documents: list[dict] | None = None,
+) -> WorkflowResponse:
+    """启动工作流的共享实现，JSON 与带上传文件入口保持一致。"""
+    from graph import get_workflow
+
+    user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
+        request, "workflow", "execute"
+    )
+    workflow = get_workflow()
+    start_kwargs = {
+        "workflow_definition_id": body.workflow_definition_id,
+        "workflow_version_id": body.workflow_version_id,
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "model_provider_id": body.model_provider_id,
+        "model_name": body.model_name,
+        "retrieval_config": body.retrieval_config,
+        "run_upload_documents": run_upload_documents,
+    }
+    supported_parameters = set(inspect.signature(workflow.start).parameters)
+    compatible_kwargs = {
+        key: value for key, value in start_kwargs.items() if key in supported_parameters
+    }
+    result = await workflow.start(body.user_input, **compatible_kwargs)
+    workflow_run = await _get_workflow_run_if_exists(result["workflow_run_id"])
+    workflow_run = (
+        await workflow_helpers.annotate_workflow_run_ownership(
+            result["workflow_run_id"],
+            user_id,
+            workspace_id,
+        )
+        or workflow_run
+    )
+    status = _normalize_status(result["status"])
+    await _record_workflow_audit(
+        request,
+        actor_user_id=user_id,
+        workspace_id=workspace_id,
+        action=AuditAction.WORKFLOW_RUN,
+        workflow_run_id=result["workflow_run_id"],
+        detail={
+            "workflow_definition_id": body.workflow_definition_id,
+            "workflow_version_id": body.workflow_version_id,
+            "retrieval_enabled": (
+                body.retrieval_config.enabled if body.retrieval_config else False
+            ),
+            "run_upload_document_count": len(run_upload_documents or []),
+            "input_length": len(body.user_input),
+            "status": status,
+        },
+        workflow_run=workflow_run,
+    )
+    return _build_workflow_response(
+        workflow_run_id=result["workflow_run_id"],
+        status=status,
+        state=result["state"],
+        workflow_run=workflow_run,
+    )
+
+
+def _parse_retrieval_config_json(raw_config: str | None) -> RetrievalConfig | None:
+    """解析 multipart 表单中的检索配置。"""
+    if not raw_config:
+        return None
+    try:
+        parsed = json.loads(raw_config)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="retrieval_config 不是合法 JSON") from exc
+    try:
+        return RetrievalConfig.model_validate(parsed)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="retrieval_config 字段不合法") from exc
+
+
+async def _read_run_upload_documents(files: list[UploadFile] | None) -> list[dict]:
+    """读取本次运行上传文件，并在进入图执行前完成大小与数量校验。"""
+    uploads = files or []
+    if len(uploads) > MAX_RUN_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=413, detail=f"本次运行最多上传 {MAX_RUN_UPLOAD_FILES} 个文件"
+        )
+
+    documents: list[dict] = []
+    total_bytes = 0
+    for upload in uploads:
+        chunks: list[bytes] = []
+        while chunk := await upload.read(UPLOAD_CHUNK_SIZE):
+            total_bytes += len(chunk)
+            if total_bytes > MAX_RUN_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="本次运行上传资料总大小超过 20MB")
+            chunks.append(chunk)
+        content = b"".join(chunks)
+        if not content:
+            continue
+        documents.append(
+            {
+                "file_name": upload.filename or "untitled.txt",
+                "content": content,
+                "metadata": {"source": "run_upload"},
+            }
+        )
+    return documents
+
+
 @router.post("/start", response_model=WorkflowResponse)
 async def start_workflow(request: Request, body: StartWorkflowRequest):
     """
@@ -141,56 +288,52 @@ async def start_workflow(request: Request, body: StartWorkflowRequest):
     - needs_clarification: 需要澄清信息
     - awaiting_outline_approval: 等待提纲审批
     """
-    from graph import get_workflow
-
     try:
-        user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
-            request, "workflow", "execute"
-        )
-        workflow = get_workflow()
-        result = await workflow.start(
-            body.user_input,
-            workflow_definition_id=body.workflow_definition_id,
-            workflow_version_id=body.workflow_version_id,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            model_provider_id=body.model_provider_id,
-            model_name=body.model_name,
-        )
-        workflow_run = await _get_workflow_run_if_exists(result["workflow_run_id"])
-        workflow_run = (
-            await workflow_helpers.annotate_workflow_run_ownership(
-                result["workflow_run_id"],
-                user_id,
-                workspace_id,
-            )
-            or workflow_run
-        )
-        status = _normalize_status(result["status"])
-        await _record_workflow_audit(
-            request,
-            actor_user_id=user_id,
-            workspace_id=workspace_id,
-            action=AuditAction.WORKFLOW_RUN,
-            workflow_run_id=result["workflow_run_id"],
-            detail={
-                "workflow_definition_id": body.workflow_definition_id,
-                "workflow_version_id": body.workflow_version_id,
-                "input_length": len(body.user_input),
-                "status": status,
-            },
-            workflow_run=workflow_run,
-        )
-        return _build_workflow_response(
-            workflow_run_id=result["workflow_run_id"],
-            status=status,
-            state=result["state"],
-            workflow_run=workflow_run,
-        )
+        return await _start_workflow_run(request, body)
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("启动工作流失败")
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+
+
+@router.post("/start-with-uploads", response_model=WorkflowResponse)
+async def start_workflow_with_uploads(
+    request: Request,
+    user_input: str = Form(...),
+    workflow_definition_id: str | None = Form(None),
+    workflow_version_id: str | None = Form(None),
+    model_provider_id: str | None = Form(None),
+    model_name: str | None = Form(None),
+    retrieval_config: str | None = Form(None),
+    files: list[UploadFile] | None = File(None),
+) -> WorkflowResponse:
+    """启动工作流并先索引本次运行上传资料。"""
+    try:
+        documents = await _read_run_upload_documents(files)
+        config = _parse_retrieval_config_json(retrieval_config)
+        if documents:
+            base_config = config or RetrievalConfig()
+            config = base_config.model_copy(update={"enabled": True, "use_run_upload": True})
+        body = StartWorkflowRequest(
+            user_input=user_input,
+            workflow_definition_id=workflow_definition_id,
+            workflow_version_id=workflow_version_id,
+            model_provider_id=model_provider_id,
+            model_name=model_name,
+            retrieval_config=config,
+        )
+        return await _start_workflow_run(request, body, run_upload_documents=documents)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("启动带运行资料的工作流失败")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 
@@ -201,17 +344,20 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
         access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
-        store, workflow, workflow_run, graph_state, status = await _load_runtime_context(
+        _, workflow, workflow_run, graph_state, status = await _load_runtime_context(
             workflow_run_id
         )
 
         if status in _GATE_STATUSES:
-            raise HTTPException(
-                status_code=409,
-                detail="当前工作流正在等待人工 Gate，请使用对应审批接口继续。",
+            raise DomainError(
+                code=WORKFLOW_GATE_CONFLICT,
+                message="当前工作流正在等待人工 Gate，请使用对应审批接口继续。",
             )
         if status in {"completed", "failed"}:
-            raise HTTPException(status_code=409, detail="当前工作流已结束，无法暂停。")
+            raise DomainError(
+                code=WORKFLOW_STATE_CONFLICT,
+                message="当前工作流已结束，无法暂停。",
+            )
         if status == "paused":
             return _build_workflow_response(
                 workflow_run_id=workflow_run_id,
@@ -226,18 +372,6 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
         )
 
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
-        metadata = _ensure_workflow_metadata(refreshed_workflow_run)
-        previous_pause = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
-        paused_at = previous_pause.get("paused_at")
-        if paused_at is None or previous_pause.get("resumed_at") is not None:
-            paused_at = _now_iso()
-        metadata["pause"] = {
-            "reason": body.reason,
-            "paused_at": paused_at,
-            "resumed_at": None,
-            "source": "user",
-        }
-        await store.update_workflow_run(refreshed_workflow_run)
         actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
         await _record_workflow_audit(
             request,
@@ -254,6 +388,8 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except ValueError as e:
@@ -270,30 +406,24 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
         access_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
-        store, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
+        _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
         from routes.workflow_helpers import _get_workflow_run_status
 
         raw_status = _get_workflow_run_status(workflow_run)
 
         if status in _GATE_STATUSES:
-            raise HTTPException(
-                status_code=409,
-                detail="当前工作流处于 Gate 等待态，请使用澄清或审批接口继续。",
+            raise DomainError(
+                code=WORKFLOW_GATE_CONFLICT,
+                message="当前工作流处于 Gate 等待态，请使用澄清或审批接口继续。",
             )
         if status != "paused" and raw_status != "paused":
-            raise HTTPException(status_code=409, detail="当前工作流未处于手动暂停状态。")
+            raise DomainError(
+                code=WORKFLOW_STATE_CONFLICT,
+                message="当前工作流未处于手动暂停状态。",
+            )
 
         result = await workflow.resume_paused(workflow_run_id)
         refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
-        metadata = _ensure_workflow_metadata(refreshed_workflow_run)
-        previous_pause = metadata.get("pause") if isinstance(metadata.get("pause"), dict) else {}
-        metadata["pause"] = {
-            "reason": previous_pause.get("reason"),
-            "paused_at": previous_pause.get("paused_at") or _now_iso(),
-            "resumed_at": _now_iso(),
-            "source": previous_pause.get("source") or "user",
-        }
-        await store.update_workflow_run(refreshed_workflow_run)
         actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
         await _record_workflow_audit(
             request,
@@ -311,6 +441,8 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except ValueError as e:
@@ -369,6 +501,8 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -413,6 +547,8 @@ async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRe
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -460,6 +596,8 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
             state=result["state"],
             workflow_run=refreshed_workflow_run,
         )
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -486,6 +624,8 @@ async def list_workflow_runs(request: Request):
             user_id=visible_user_id,
         )
         return _build_workflow_run_list_response(workflow_runs)
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -497,58 +637,92 @@ async def list_workflow_runs(request: Request):
 async def stream_workflow_events(workflow_run_id: str, request: Request):
     """通过 SSE 向详情页推送运行状态和 trace 快照。"""
     await workflow_helpers.require_workflow_run_access(request, workflow_run_id)
+    event_bus = get_workflow_event_bus()
+    event_queue = event_bus.subscribe(workflow_run_id)
 
     async def event_stream():
         last_payload_signature: str | None = None
         event_index = 0
         heartbeat_ticks = 0
+        next_snapshot_at = time.monotonic()
 
-        while not await request.is_disconnected():
-            try:
-                snapshot = await _build_workflow_event_snapshot(workflow_run_id)
-            except HTTPException as exc:
-                yield _format_sse_event(
-                    "error",
-                    {"detail": exc.detail, "status_code": exc.status_code},
-                )
-                break
-            except Exception:
-                logger.exception("工作流 SSE 快照生成失败: workflow_run_id=%s", workflow_run_id)
-                yield _format_sse_event(
-                    "error",
-                    {"detail": INTERNAL_SERVER_ERROR},
-                )
-                break
+        try:
+            while not await request.is_disconnected():
+                # 先按固定节奏发送 snapshot，避免高频 token 事件把快照饿死。
+                if time.monotonic() >= next_snapshot_at:
+                    try:
+                        snapshot = await _build_workflow_event_snapshot(workflow_run_id)
+                    except PromptChainError as exc:
+                        yield _format_sse_app_error_event(
+                            exc,
+                            request=request,
+                            workflow_run_id=workflow_run_id,
+                        )
+                        break
+                    except HTTPException as exc:
+                        yield _format_sse_app_error_event(
+                            exc,
+                            request=request,
+                            workflow_run_id=workflow_run_id,
+                        )
+                        break
+                    except Exception as exc:
+                        logger.exception(
+                            "工作流 SSE 快照生成失败: workflow_run_id=%s", workflow_run_id
+                        )
+                        yield _format_sse_app_error_event(
+                            exc,
+                            request=request,
+                            workflow_run_id=workflow_run_id,
+                        )
+                        break
 
-            signature = json.dumps(snapshot, sort_keys=True, default=str)
-            if signature != last_payload_signature:
-                event_index += 1
-                heartbeat_ticks = 0
-                last_payload_signature = signature
-                yield _format_sse_event("snapshot", snapshot, event_id=str(event_index))
-            else:
-                heartbeat_ticks += 1
-                if heartbeat_ticks >= 10:
-                    heartbeat_ticks = 0
-                    yield _format_sse_event(
-                        "heartbeat",
-                        {"workflow_run_id": workflow_run_id},
-                        event_id=f"{event_index}:heartbeat",
-                    )
+                    signature = json.dumps(snapshot, sort_keys=True, default=str)
+                    if signature != last_payload_signature:
+                        event_index += 1
+                        heartbeat_ticks = 0
+                        last_payload_signature = signature
+                        yield _format_sse_event("snapshot", snapshot, event_id=str(event_index))
+                    else:
+                        heartbeat_ticks += 1
+                        if heartbeat_ticks >= 10:
+                            heartbeat_ticks = 0
+                            yield _format_sse_event(
+                                "heartbeat",
+                                {"workflow_run_id": workflow_run_id},
+                                event_id=f"{event_index}:heartbeat",
+                            )
 
-            workflow_payload = snapshot.get("workflow", {})
-            if workflow_payload.get("status") in {"completed", "failed"}:
-                yield _format_sse_event(
-                    "done",
-                    {
-                        "workflow_run_id": workflow_run_id,
-                        "status": workflow_payload.get("status"),
-                    },
-                    event_id=f"{event_index}:done",
-                )
-                break
+                    workflow_payload = snapshot.get("workflow", {})
+                    if workflow_payload.get("status") in {"completed", "failed"}:
+                        yield _format_sse_event(
+                            "done",
+                            {
+                                "workflow_run_id": workflow_run_id,
+                                "status": workflow_payload.get("status"),
+                            },
+                            event_id=f"{event_index}:done",
+                        )
+                        break
 
-            await asyncio.sleep(1)
+                    next_snapshot_at = time.monotonic() + 1.0
+                    continue
+
+                # 在两次 snapshot 之间，优先把节点级增量事件透传给前端。
+                timeout = max(next_snapshot_at - time.monotonic(), 0.05)
+                try:
+                    event = await asyncio.wait_for(event_queue.get(), timeout=timeout)
+                except TimeoutError:
+                    continue
+
+                payload = {
+                    "workflow_run_id": event.workflow_run_id,
+                    "timestamp": event.timestamp,
+                    **event.data,
+                }
+                yield _format_sse_event(event.type, payload, event_id=event.event_id)
+        finally:
+            event_bus.unsubscribe(workflow_run_id, event_queue)
 
     return StreamingResponse(
         event_stream(),
@@ -584,6 +758,8 @@ async def get_rerun_options(workflow_run_id: str, request: Request):
         rerun_service = get_rerun_service()
         options = await rerun_service.get_rerun_options(workflow_run_id)
         return {"options": options}
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
@@ -616,16 +792,34 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
         )
 
         # 2. 创建新的 WorkflowRun
+        updated_user_input = None
+        if body.updated_input and isinstance(body.updated_input.get("user_input"), str):
+            updated_user_input = body.updated_input["user_input"]
+
         new_workflow_run = await rerun_service.create_rerun_workflow(
-            workflow_run_id, body.from_node, body.reason or ""
+            workflow_run_id,
+            body.from_node,
+            body.reason or "",
+            updated_user_input=updated_user_input,
         )
         await workflow_helpers.annotate_workflow_run_ownership(
             new_workflow_run.id, user_id, workspace_id
         )
 
-        # 3. 使用工作流执行器恢复执行
+        # 3. 像 start/resume 一样走后台调度，避免重跑请求被节点执行时间阻塞。
         workflow = get_workflow()
-        result = await workflow.resume(new_workflow_run.id, preserved_state)
+        if hasattr(workflow, "start_rerun_from_node"):
+            result = await workflow.start_rerun_from_node(
+                new_workflow_run.id,
+                from_node=body.from_node,
+                preserved_state=preserved_state,
+            )
+        else:
+            result = await workflow.rerun_from_node(
+                new_workflow_run.id,
+                from_node=body.from_node,
+                preserved_state=preserved_state,
+            )
 
         simplified_state = _simplify_state(result["state"])
         refreshed_new_workflow_run = (
@@ -653,6 +847,8 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
             "status": result["status"],
             "state": simplified_state,
         }
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except ValueError as e:
@@ -672,8 +868,67 @@ async def get_rerun_history(workflow_run_id: str, request: Request):
         rerun_service = get_rerun_service()
         history = await rerun_service.get_rerun_history(workflow_run_id)
         return {"history": history}
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("获取重跑历史失败: workflow_run_id=%s", workflow_run_id)
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+
+
+@router.get("/{workflow_run_id}/exports/docx")
+async def export_workflow_docx(workflow_run_id: str, request: Request):
+    """导出已完成工作流的最终产物 DOCX。"""
+    from services import get_trace_service
+
+    try:
+        await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow_run", action="export"
+        )
+        _, _, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
+
+        if status != "completed":
+            raise DomainError(
+                code=WORKFLOW_STATE_CONFLICT,
+                message="仅已完成的工作流支持导出 DOCX。",
+            )
+
+        trace = await get_trace_service().get_workflow_trace(workflow_run_id)
+        payload = build_workflow_export_payload(
+            graph_state,
+            trace,
+            workflow_name=getattr(workflow_run, "workflow_name", None),
+        )
+        if not payload.sections:
+            raise DomainError(
+                code=WORKFLOW_NOT_FOUND,
+                message="当前工作流没有可导出的最终产物。",
+            )
+
+        buffer = build_docx(payload)
+        filename = f"PromptChain-{workflow_run_id[:8]}-最终产物.docx"
+        encoded_filename = quote(filename)
+
+        return StreamingResponse(
+            buffer,
+            media_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="PromptChain-{workflow_run_id[:8]}.docx"; '
+                    f"filename*=UTF-8''{encoded_filename}"
+                )
+            },
+        )
+    except PromptChainError:
+        raise
+    except HTTPException:
+        raise
+    except ImportError as exc:
+        logger.exception("DOCX 导出依赖缺失: workflow_run_id=%s", workflow_run_id)
+        raise HTTPException(
+            status_code=500, detail="DOCX 导出依赖缺失，请先同步后端依赖。"
+        ) from exc
+    except Exception as exc:
+        logger.exception("导出 DOCX 失败: workflow_run_id=%s", workflow_run_id)
+        raise HTTPException(status_code=500, detail="导出 DOCX 失败。") from exc

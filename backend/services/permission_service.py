@@ -6,10 +6,16 @@
 
 from typing import Literal
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from core.errors.codes import (
+    AUTH_UNAUTHENTICATED,
+    WORKSPACE_ACCESS_DENIED,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from db.postgres_store import get_postgres_store
 from models.auth_models import MemberRole
 from models.auth_orm import MembershipORM
@@ -27,6 +33,7 @@ RESOURCES = [
     "member",  # 成员管理
     "workspace",  # 工作空间设置
     "audit_log",  # 审计日志
+    "knowledge_base",  # 知识库
 ]
 
 # 动作类型
@@ -53,6 +60,7 @@ ROLE_PERMISSIONS: dict[MemberRole, dict[str, list[str]]] = {
         "member": [],
         "workspace": ["read"],
         "audit_log": [],
+        "knowledge_base": ["read"],
     },
     MemberRole.EDITOR: {
         "workflow": ["read", "create", "update", "execute"],
@@ -64,6 +72,7 @@ ROLE_PERMISSIONS: dict[MemberRole, dict[str, list[str]]] = {
         "member": [],
         "workspace": ["read"],
         "audit_log": [],
+        "knowledge_base": ["read", "create", "update"],
     },
     MemberRole.ADMIN: {
         "workflow": ["read", "create", "update", "delete", "execute", "export", "manage"],
@@ -75,6 +84,7 @@ ROLE_PERMISSIONS: dict[MemberRole, dict[str, list[str]]] = {
         "member": ["read", "create", "update", "delete", "manage"],
         "workspace": ["read", "update", "manage"],
         "audit_log": ["read", "export"],
+        "knowledge_base": ["read", "create", "update", "delete", "manage"],
     },
     MemberRole.OWNER: {
         "workflow": ["read", "create", "update", "delete", "execute", "export", "manage"],
@@ -86,6 +96,7 @@ ROLE_PERMISSIONS: dict[MemberRole, dict[str, list[str]]] = {
         "member": ["read", "create", "update", "delete", "manage"],
         "workspace": ["read", "update", "delete", "manage"],
         "audit_log": ["read", "export"],
+        "knowledge_base": ["read", "create", "update", "delete", "manage"],
     },
 }
 
@@ -107,6 +118,7 @@ PermissionResource = Literal[
     "member",
     "workspace",
     "audit_log",
+    "knowledge_base",
 ]
 
 PermissionAction = Literal[
@@ -269,15 +281,21 @@ class PermissionService:
             用户角色
 
         Raises:
-            HTTPException: 无权限时抛出 403
+            DomainError: 无权限时抛出统一权限错误
         """
         role = await self.get_user_role_in_workspace(user_id, workspace_id)
 
         if not role:
-            raise HTTPException(status_code=403, detail="您不是该工作空间的成员")
+            raise DomainError(
+                code=WORKSPACE_ACCESS_DENIED,
+                message="您不是该工作空间的成员",
+            )
 
         if not check_permission(role, resource, action):
-            raise HTTPException(status_code=403, detail=f"您没有 {resource}.{action} 的权限")
+            raise DomainError(
+                code=WORKSPACE_ACCESS_DENIED,
+                message=f"您没有 {resource}.{action} 的权限",
+            )
 
         return role
 
@@ -339,8 +357,16 @@ def require_permission_dependency(resource: str, action: str):
         user_id = getattr(request.state, "user_id", None)
         workspace_id = getattr(request.state, "workspace_id", None)
 
-        if not user_id or not workspace_id:
-            raise HTTPException(status_code=401, detail="未登录")
+        if not user_id:
+            raise ApplicationError(
+                code=AUTH_UNAUTHENTICATED,
+                message="未登录",
+            )
+        if not workspace_id:
+            raise ApplicationError(
+                code=WORKSPACE_CONTEXT_REQUIRED,
+                message="请先选择工作空间",
+            )
 
         store = get_postgres_store()
 

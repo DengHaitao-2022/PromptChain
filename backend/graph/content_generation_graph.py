@@ -19,6 +19,8 @@ from graph.conditions import (  # noqa: F401
     should_clarify,
     should_proceed_after_fact_check,
     should_regenerate_outline,
+    should_run_fact_check,
+    should_run_self_refine,
 )
 from graph.executor import (  # noqa: F401
     ContentGenerationWorkflow,

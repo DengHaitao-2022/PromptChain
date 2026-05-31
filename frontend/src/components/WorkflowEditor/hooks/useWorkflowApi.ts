@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { apiUrl } from '@/lib/api-config';
+import { authenticatedFetch } from '@/lib/auth';
 
 // ==================== 类型定义 ====================
 
@@ -63,6 +64,50 @@ export interface CompileResult {
   errors: string[];
 }
 
+interface ApiError extends Error {
+  code?: number | string;
+  data?: unknown;
+  details?: unknown;
+  status?: number;
+  requestId?: string | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function createRequestError(payload: unknown, status: number): ApiError {
+  const message = isRecord(payload) && typeof payload.message === 'string'
+    ? payload.message
+    : isRecord(payload) && typeof payload.detail === 'string'
+      ? payload.detail
+      : `HTTP ${status}`;
+  const error = new Error(message) as ApiError;
+  error.status = status;
+
+  if (!isRecord(payload)) {
+    return error;
+  }
+
+  if (typeof payload.code === 'number') {
+    error.code = payload.code;
+    error.data = payload.data;
+    return error;
+  }
+
+  if (typeof payload.code === 'string') {
+    error.code = payload.code === 'WORKFLOW_VALIDATION_FAILED' ? 40000 : payload.code;
+    error.details = payload.details;
+    error.requestId = typeof payload.request_id === 'string' ? payload.request_id : null;
+    if (payload.code === 'WORKFLOW_VALIDATION_FAILED' && isRecord(payload.details)) {
+      // 发布校验失败沿用旧编辑器读取的 data.validation 入口，避免丢失结构化校验结果。
+      error.data = payload.details;
+    }
+  }
+
+  return error;
+}
+
 // ==================== API 调用 Hook ====================
 
 export function useWorkflowApi() {
@@ -78,9 +123,8 @@ export function useWorkflowApi() {
     setError(null);
 
     try {
-      const response = await fetch(apiUrl(url), {
+      const response = await authenticatedFetch(apiUrl(url), {
         ...options,
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...options?.headers,
@@ -89,19 +133,15 @@ export function useWorkflowApi() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || errorData.message || `HTTP ${response.status}`);
+        throw createRequestError(errorData, response.status);
       }
 
       const result = await response.json();
       if (result.code !== undefined && result.code !== 200 && result.code !== 0) {
-          interface ApiError extends Error {
-              code?: number;
-              data?: unknown;
-          }
-          const error = new Error(result.message || '请求失败') as ApiError;
-          error.code = result.code;
-          error.data = result.data;
-          throw error;
+        const error = new Error(result.message || '请求失败') as ApiError;
+        error.code = result.code;
+        error.data = result.data;
+        throw error;
       }
       return result.data !== undefined ? result.data : result;
     } catch (err) {

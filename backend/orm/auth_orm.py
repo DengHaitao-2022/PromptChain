@@ -4,10 +4,10 @@
 从 Pydantic 模型独立出来，便于数据库迁移管理
 """
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
+# 使用现有的 Base
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
-# 使用现有的 Base
 from core.time import utc_now_naive
 from db.postgres_store import Base
 from models.auth_models import MemberRole, UserStatus
@@ -58,12 +58,16 @@ class WorkspaceORM(Base):
     secrets = relationship("SecretORM", back_populates="workspace", lazy="dynamic")
     api_keys = relationship("ApiKeyORM", back_populates="workspace", lazy="dynamic")
     audit_logs = relationship("AuditLogORM", back_populates="workspace", lazy="dynamic")
+    knowledge_bases = relationship("KnowledgeBaseORM", lazy="dynamic")
 
 
 class MembershipORM(Base):
     """成员关系 ORM 模型"""
 
     __tablename__ = "memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "workspace_id", name="uq_membership_user_workspace"),
+    )
 
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)

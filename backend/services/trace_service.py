@@ -11,9 +11,35 @@ Trace 回放服务
 import asyncio
 from datetime import UTC, datetime
 
-from core.time import to_utc_iso
-from models.artifact import Artifact, NodeRun, NodeRunStatus
+from core.time import normalize_api_datetime, to_utc_iso, to_utc_iso_or_none
+from models.artifact import Artifact, NodeRun, NodeRunStatus, WorkflowRun
 from services.artifact_store import ArtifactStore, get_artifact_store
+
+
+def _dump_workflow_run(workflow: WorkflowRun) -> dict:
+    """统一序列化 WorkflowRun，确保时间字段输出为 UTC ISO Z。"""
+    data = workflow.model_dump()
+    data["started_at"] = to_utc_iso_or_none(workflow.started_at)
+    data["completed_at"] = to_utc_iso_or_none(workflow.completed_at)
+    return normalize_api_datetime(data)
+
+
+def _dump_node_run(node: NodeRun) -> dict:
+    """统一序列化 NodeRun，确保节点和嵌套调用时间字段格式一致。"""
+    data = node.model_dump()
+    data["started_at"] = to_utc_iso_or_none(node.started_at)
+    data["completed_at"] = to_utc_iso_or_none(node.completed_at)
+    data["llm_calls"] = [normalize_api_datetime(call.model_dump()) for call in node.llm_calls]
+    if node.human_decision:
+        data["human_decision"] = normalize_api_datetime(node.human_decision.model_dump())
+    return normalize_api_datetime(data)
+
+
+def _dump_artifact(artifact: Artifact) -> dict:
+    """统一序列化 Artifact，避免 created_at 直接透出 naive UTC。"""
+    data = artifact.model_dump()
+    data["created_at"] = to_utc_iso_or_none(artifact.created_at)
+    return normalize_api_datetime(data)
 
 
 class TraceService:
@@ -63,9 +89,9 @@ class TraceService:
         timeline = self._build_timeline(nodes, artifacts)
 
         return {
-            "workflow": workflow.model_dump(),
-            "nodes": [n.model_dump() for n in nodes],
-            "artifacts": {k: v.model_dump() for k, v in artifacts.items()},
+            "workflow": _dump_workflow_run(workflow),
+            "nodes": [_dump_node_run(n) for n in nodes],
+            "artifacts": {k: _dump_artifact(v) for k, v in artifacts.items()},
             "timeline": timeline,
         }
 
@@ -133,6 +159,7 @@ class TraceService:
                         "timestamp": to_utc_iso(node.completed_at),
                         "event": "node_completed",
                         "node": node.node_name,
+                        "node_run_id": node.id,
                         "status": node.status.value,
                         "duration_ms": node.duration_ms,
                         "_sort_ts": node.completed_at,
@@ -167,7 +194,7 @@ class TraceService:
         input_results = await asyncio.gather(*input_tasks) if input_tasks else []
         for artifact in input_results:
             if artifact:
-                input_artifacts.append(artifact.model_dump())
+                input_artifacts.append(_dump_artifact(artifact))
 
         output_artifacts = []
         output_tasks = [self.store.get_artifact(aid) for aid in node.output_artifact_ids]
@@ -178,13 +205,13 @@ class TraceService:
                 history = await self.store.get_version_history(aid)
                 output_artifacts.append(
                     {
-                        **artifact.model_dump(),
-                        "version_history": [h.model_dump() for h in history],
+                        **_dump_artifact(artifact),
+                        "version_history": [_dump_artifact(h) for h in history],
                     }
                 )
 
         return {
-            "node": node.model_dump(),
+            "node": _dump_node_run(node),
             "input_artifacts": input_artifacts,
             "output_artifacts": output_artifacts,
         }
@@ -192,7 +219,7 @@ class TraceService:
     async def get_artifact_history(self, artifact_id: str) -> list[dict]:
         """获取 Artifact 的版本历史"""
         history = await self.store.get_version_history(artifact_id)
-        return [h.model_dump() for h in history]
+        return [_dump_artifact(h) for h in history]
 
     async def compare_artifact_versions(self, version_a_id: str, version_b_id: str) -> dict:
         """对比两个版本的差异"""
@@ -233,8 +260,14 @@ class TraceService:
         trace = await self.get_workflow_trace(workflow_run_id)
 
         options = []
+        rerunnable_statuses = {
+            NodeRunStatus.COMPLETED.value,
+            NodeRunStatus.INTERRUPTED.value,
+            NodeRunStatus.FAILED.value,
+        }
+
         for node in trace["nodes"]:
-            if node["status"] == NodeRunStatus.COMPLETED.value:
+            if node["status"] in rerunnable_statuses:
                 # 获取该节点的输出 Artifact
                 output_artifacts = [
                     trace["artifacts"][aid]
@@ -246,7 +279,8 @@ class TraceService:
                     {
                         "node_name": node["node_name"],
                         "node_run_id": node["id"],
-                        "completed_at": node["completed_at"],
+                        "status": node["status"],
+                        "completed_at": node.get("completed_at"),
                         "output_artifacts": output_artifacts,
                         "can_rerun": True,
                     }

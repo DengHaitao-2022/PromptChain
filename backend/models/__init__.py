@@ -16,6 +16,7 @@ from .admin_models import (
     DashboardStats,
     ModelProvider,
     ModelProviderCreate,
+    ModelProviderTestRequest,
     ModelProviderType,
     ModelProviderUpdate,
     Secret,
@@ -59,6 +60,22 @@ from .intent_card import (
     Tone,
     Uncertainty,
 )
+from .knowledge import (
+    EvidenceChunk,
+    EvidencePack,
+    KnowledgeBase,
+    KnowledgeBaseStatus,
+    KnowledgeChunk,
+    KnowledgeConflict,
+    KnowledgeDocument,
+    KnowledgeDocumentLifecycleStatus,
+    KnowledgeDocumentStatus,
+    KnowledgeScope,
+    KnowledgeSearchRequest,
+    KnowledgeSearchResponse,
+    RetrievalConfig,
+    RetrievalMode,
+)
 from .outline import (
     Outline,
     OutlineSection,
@@ -74,6 +91,9 @@ __all__ = [
     "WorkflowRunStatus",
     "LLMCallRecord",
     "HumanDecision",
+    "EvidencePack",
+    "EvidenceChunk",
+    "KnowledgeConflict",
     # intent_card
     "IntentCard",
     "Uncertainty",
@@ -82,6 +102,18 @@ __all__ = [
     # outline
     "Outline",
     "OutlineSection",
+    # knowledge
+    "KnowledgeScope",
+    "KnowledgeBaseStatus",
+    "KnowledgeDocumentLifecycleStatus",
+    "KnowledgeDocumentStatus",
+    "RetrievalMode",
+    "KnowledgeBase",
+    "KnowledgeDocument",
+    "KnowledgeChunk",
+    "KnowledgeSearchRequest",
+    "KnowledgeSearchResponse",
+    "RetrievalConfig",
     # fact_check
     "FactClaim",
     "VerificationResult",
@@ -104,6 +136,7 @@ __all__ = [
     # admin_models
     "ModelProvider",
     "ModelProviderCreate",
+    "ModelProviderTestRequest",
     "ModelProviderUpdate",
     "ModelProviderType",
     "Secret",

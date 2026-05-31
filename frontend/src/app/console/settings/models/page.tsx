@@ -5,9 +5,23 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bot, CheckCircle2, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import * as Dialog from '@radix-ui/react-dialog';
+import {
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  MinusCircle,
+  Pencil,
+  PlayCircle,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  XCircle,
+} from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiUrl } from '@/lib/api-config';
+import { authenticatedFetch } from '@/lib/auth';
 import { formatAppDate } from '@/lib/date-time';
 import styles from '../settings.module.css';
 
@@ -18,6 +32,7 @@ interface ModelProviderConfig {
   base_url?: string;
   model?: string;
   model_name?: string;
+  structured_output_method?: string;
   [key: string]: string | number | boolean | null | undefined;
 }
 
@@ -40,7 +55,39 @@ interface RuntimeModelInfo {
   source: string;
   provider_id: string | null;
   provider_name: string | null;
+  structured_output_method?: string | null;
 }
+
+type TestStepStatus = 'success' | 'warning' | 'failed' | 'skipped';
+
+interface ModelProviderTestStep {
+  name: string;
+  label: string;
+  status: TestStepStatus;
+  message: string;
+  duration_ms: number | null;
+  detail?: {
+    count?: number;
+    prompt_text?: string | null;
+    response_text?: string | null;
+    response_preview?: string | null;
+    sample?: string[];
+    status_code?: number;
+    [key: string]: string | number | string[] | null | undefined;
+  };
+}
+
+interface ModelProviderTestResult {
+  ok: boolean;
+  provider_id: string;
+  provider: string;
+  model: string | null;
+  models: string[];
+  steps: ModelProviderTestStep[];
+  duration_ms: number;
+}
+
+type StructuredOutputMethod = '' | 'auto' | 'json_schema' | 'json_mode' | 'function_calling';
 
 interface ModelProviderForm {
   provider: ProviderType;
@@ -48,6 +95,7 @@ interface ModelProviderForm {
   model: string;
   baseUrl: string;
   apiKey: string;
+  structuredOutputMethod: StructuredOutputMethod;
   description: string;
   enabled: boolean;
   setAsDefault: boolean;
@@ -81,6 +129,7 @@ function createEmptyForm(): ModelProviderForm {
     model: providerDefaultModels.openai,
     baseUrl: '',
     apiKey: '',
+    structuredOutputMethod: 'auto',
     description: '',
     enabled: true,
     setAsDefault: true,
@@ -96,7 +145,46 @@ function getProviderModel(provider: ModelProvider) {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString('zh-CN');
+  return formatAppDate(value);
+}
+
+function getTestStepClass(status: TestStepStatus) {
+  if (status === 'success') {
+    return styles.success;
+  }
+  if (status === 'warning') {
+    return styles.warning;
+  }
+  if (status === 'failed') {
+    return styles.error;
+  }
+  return styles.neutral;
+}
+
+function getTestStepLabel(status: TestStepStatus) {
+  if (status === 'success') {
+    return '通过';
+  }
+  if (status === 'warning') {
+    return '警告';
+  }
+  if (status === 'failed') {
+    return '失败';
+  }
+  return '跳过';
+}
+
+function TestStepIcon({ status }: { status: TestStepStatus }) {
+  if (status === 'success') {
+    return <CheckCircle2 size={14} strokeWidth={2} />;
+  }
+  if (status === 'warning') {
+    return <AlertCircle size={14} strokeWidth={2} />;
+  }
+  if (status === 'failed') {
+    return <XCircle size={14} strokeWidth={2} />;
+  }
+  return <MinusCircle size={14} strokeWidth={2} />;
 }
 
 async function readApiError(response: Response, fallback: string) {
@@ -116,9 +204,11 @@ export default function ModelsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
+  const [testingProviderId, setTestingProviderId] = useState<string | null>(null);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [formVisible, setFormVisible] = useState(false);
   const [form, setForm] = useState<ModelProviderForm>(createEmptyForm);
+  const [testResults, setTestResults] = useState<Record<string, ModelProviderTestResult>>({});
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
 
@@ -138,9 +228,7 @@ export default function ModelsPage() {
     setError('');
 
     try {
-      const response = await fetch(apiUrl('/admin/model-providers'), {
-        credentials: 'include',
-      });
+      const response = await authenticatedFetch(apiUrl('/admin/model-providers'));
       if (!response.ok) {
         throw new Error(await readApiError(response, '加载模型供应商失败'));
       }
@@ -152,9 +240,7 @@ export default function ModelsPage() {
       setProviders(data.providers || []);
       setSupportedProviders(data.supported_providers || providerOptions);
 
-      const runtimeResponse = await fetch(apiUrl('/admin/model-providers/runtime'), {
-        credentials: 'include',
-      });
+      const runtimeResponse = await authenticatedFetch(apiUrl('/admin/model-providers/runtime'));
       if (runtimeResponse.ok) {
         const runtimeData = (await runtimeResponse.json()) as {
           runtime?: RuntimeModelInfo;
@@ -204,6 +290,9 @@ export default function ModelsPage() {
       model: String(provider.config?.model || provider.config?.model_name || ''),
       baseUrl: String(provider.config?.base_url || ''),
       apiKey: '',
+      structuredOutputMethod: String(
+        provider.config?.structured_output_method || 'auto'
+      ) as StructuredOutputMethod,
       description: provider.description || '',
       enabled: provider.enabled,
       setAsDefault: provider.is_default,
@@ -233,6 +322,11 @@ export default function ModelsPage() {
     if (form.apiKey.trim()) {
       config.api_key = form.apiKey.trim();
     }
+    if (form.structuredOutputMethod && form.structuredOutputMethod !== 'auto') {
+      config.structured_output_method = form.structuredOutputMethod;
+    } else {
+      config.structured_output_method = 'auto';
+    }
     return config;
   }
 
@@ -257,7 +351,7 @@ export default function ModelsPage() {
     };
 
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         apiUrl(
           isEditing
             ? `/admin/model-providers/${editingProviderId}`
@@ -265,7 +359,6 @@ export default function ModelsPage() {
         ),
         {
           method: isEditing ? 'PATCH' : 'POST',
-          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         },
@@ -292,9 +385,8 @@ export default function ModelsPage() {
     setError('');
 
     try {
-      const response = await fetch(apiUrl(`/admin/model-providers/${provider.id}`), {
+      const response = await authenticatedFetch(apiUrl(`/admin/model-providers/${provider.id}`), {
         method: 'PATCH',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -321,9 +413,8 @@ export default function ModelsPage() {
     setError('');
 
     try {
-      const response = await fetch(apiUrl(`/admin/model-providers/${provider.id}`), {
+      const response = await authenticatedFetch(apiUrl(`/admin/model-providers/${provider.id}`), {
         method: 'DELETE',
-        credentials: 'include',
       });
       if (!response.ok) {
         throw new Error(await readApiError(response, '删除模型配置失败'));
@@ -334,6 +425,35 @@ export default function ModelsPage() {
       setError(deleteError instanceof Error ? deleteError.message : '删除模型配置失败');
     } finally {
       setPendingProviderId(null);
+    }
+  }
+
+  async function handleTestProvider(provider: ModelProvider) {
+    setTestingProviderId(provider.id);
+    setFeedback('');
+    setError('');
+
+    const selectedModel = String(provider.config?.model || provider.config?.model_name || '').trim();
+
+    try {
+      const response = await authenticatedFetch(apiUrl(`/admin/model-providers/${provider.id}/test`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: selectedModel || undefined,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await readApiError(response, '模型供应商测试失败'));
+      }
+
+      const data = (await response.json()) as ModelProviderTestResult;
+      setTestResults((current) => ({ ...current, [provider.id]: data }));
+      setFeedback(data.ok ? '模型供应商测试通过' : '模型供应商测试完成，请查看未通过步骤');
+    } catch (testError) {
+      setError(testError instanceof Error ? testError.message : '模型供应商测试失败');
+    } finally {
+      setTestingProviderId(null);
     }
   }
 
@@ -440,127 +560,159 @@ export default function ModelsPage() {
             <span className={styles.summaryLabel}>模型</span>
             <span className={styles.runtimeValue}>{runtime?.model || '未配置'}</span>
           </div>
+          {runtime?.structured_output_method ? (
+            <div className={styles.runtimeItem}>
+              <span className={styles.summaryLabel}>结构化输出</span>
+              <span className={styles.runtimeValue}>{runtime.structured_output_method}</span>
+            </div>
+          ) : null}
         </div>
       </section>
 
-      {formVisible && canManageProviders ? (
-        <section className={styles.section}>
-          <div className={styles.sectionHeader}>
-            <div className={styles.sectionHeaderStack}>
-              <h2 className={styles.sectionTitle}>{editingProviderId ? '编辑模型配置' : '添加模型供应商'}</h2>
-              <p className={styles.sectionDescription}>
+      <Dialog.Root modal={false} open={formVisible && canManageProviders} onOpenChange={(open) => {
+        if (!open) {
+          setFormVisible(false);
+          setEditingProviderId(null);
+          setForm(createEmptyForm());
+        }
+      }}>
+        <Dialog.Portal>
+          <Dialog.Content className={styles.dialogContent}>
+            <div className={styles.dialogHeader}>
+              <Dialog.Title className={styles.dialogTitle}>
+                {editingProviderId ? '编辑模型配置' : '添加模型供应商'}
+              </Dialog.Title>
+              <Dialog.Description className={styles.dialogDescription}>
                 密钥只会在提交时写入后端，页面不会回显已保存的密钥内容。
-              </p>
+              </Dialog.Description>
             </div>
-          </div>
 
-          <div className={styles.formGrid}>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>供应商</span>
-              <select
-                className={styles.select}
-                disabled={Boolean(editingProviderId)}
-                value={form.provider}
-                onChange={(event) => updateProvider(event.target.value as ProviderType)}
-              >
-                {providerOptions.map((provider) => (
-                  <option key={provider} value={provider}>
-                    {getProviderLabel(provider)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className={styles.dialogBody}>
+              <div className={styles.formGrid} style={{ gridTemplateColumns: '1fr' }}>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>供应商</span>
+                  <select
+                    className={styles.select}
+                    disabled={Boolean(editingProviderId)}
+                    value={form.provider}
+                    onChange={(event) => updateProvider(event.target.value as ProviderType)}
+                  >
+                    {providerOptions.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {getProviderLabel(provider)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>配置名称</span>
-              <input
-                className={styles.input}
-                value={form.name}
-                onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                placeholder="例如：生产内容生成默认模型"
-              />
-            </label>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>配置名称</span>
+                  <input
+                    className={styles.input}
+                    value={form.name}
+                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="例如：生产内容生成默认模型"
+                  />
+                </label>
 
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>模型名称</span>
-              <input
-                className={styles.input}
-                value={form.model}
-                onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))}
-                placeholder={providerDefaultModels[form.provider]}
-              />
-            </label>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>模型名称</span>
+                  <input
+                    className={styles.input}
+                    value={form.model}
+                    onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))}
+                    placeholder={providerDefaultModels[form.provider]}
+                  />
+                </label>
 
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Base URL</span>
-              <input
-                className={styles.input}
-                value={form.baseUrl}
-                onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))}
-                placeholder={form.provider === 'ollama' ? 'http://localhost:11434' : '默认留空'}
-              />
-            </label>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Base URL</span>
+                  <input
+                    className={styles.input}
+                    value={form.baseUrl}
+                    onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))}
+                    placeholder={form.provider === 'ollama' ? 'http://localhost:11434' : '默认留空'}
+                  />
+                </label>
 
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>API Key / Token</span>
-              <input
-                className={styles.input}
-                type="password"
-                value={form.apiKey}
-                onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))}
-                placeholder={editingProviderId ? '留空则沿用已保存密钥' : 'Ollama 可留空'}
-              />
-            </label>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>结构化输出模式</span>
+                  <select
+                    className={styles.select}
+                    value={form.structuredOutputMethod}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        structuredOutputMethod: event.target.value as StructuredOutputMethod,
+                      }))
+                    }
+                  >
+                    <option value="auto">自动选择</option>
+                    <option value="json_schema">json_schema：强 Schema，适合 OpenAI 官方</option>
+                    <option value="json_mode">json_mode：JSON Object，适合 HF Space 等兼容接口</option>
+                    <option value="function_calling">function_calling：函数调用兼容模式</option>
+                  </select>
+                </label>
 
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>说明</span>
-              <textarea
-                className={styles.textarea}
-                value={form.description}
-                onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-                placeholder="记录用途、配额、环境或使用边界"
-              />
-            </label>
-          </div>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>API Key / Token</span>
+                  <input
+                    className={styles.input}
+                    type="password"
+                    value={form.apiKey}
+                    onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))}
+                    placeholder={editingProviderId ? '留空则沿用已保存密钥' : 'Ollama 可留空'}
+                  />
+                </label>
 
-          <div className={styles.checkboxGrid}>
-            <label className={styles.checkboxRow}>
-              <input
-                checked={form.enabled}
-                type="checkbox"
-                onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
-              />
-              启用此配置
-            </label>
-            <label className={styles.checkboxRow}>
-              <input
-                checked={form.setAsDefault}
-                type="checkbox"
-                onChange={(event) => setForm((current) => ({ ...current, setAsDefault: event.target.checked }))}
-              />
-              设为工作空间运行默认
-            </label>
-          </div>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>说明</span>
+                  <textarea
+                    className={styles.textarea}
+                    value={form.description}
+                    onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="记录用途、配额、环境或使用边界"
+                  />
+                </label>
+              </div>
 
-          <div className={styles.sectionActions}>
-            <button className={styles.button} disabled={saving} onClick={() => void handleSubmit()} type="button">
-              {saving ? '保存中...' : editingProviderId ? '保存修改' : '创建配置'}
-            </button>
-            <button
-              className={`${styles.button} ${styles.buttonSecondary}`}
-              disabled={saving}
-              onClick={() => {
-                setFormVisible(false);
-                setEditingProviderId(null);
-                setForm(createEmptyForm());
-              }}
-              type="button"
-            >
-              取消
-            </button>
-          </div>
-        </section>
-      ) : null}
+              <div className={styles.checkboxGrid} style={{ marginTop: '24px' }}>
+                <label className={styles.checkboxRow}>
+                  <input
+                    checked={form.enabled}
+                    type="checkbox"
+                    onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
+                  />
+                  启用此配置
+                </label>
+                <label className={styles.checkboxRow}>
+                  <input
+                    checked={form.setAsDefault}
+                    type="checkbox"
+                    onChange={(event) => setForm((current) => ({ ...current, setAsDefault: event.target.checked }))}
+                  />
+                  设为工作空间运行默认
+                </label>
+              </div>
+            </div>
+
+            <div className={styles.dialogFooter}>
+              <Dialog.Close asChild>
+                <button
+                  className={`${styles.button} ${styles.buttonSecondary}`}
+                  disabled={saving}
+                  type="button"
+                >
+                  取消
+                </button>
+              </Dialog.Close>
+              <button className={styles.button} disabled={saving} onClick={() => void handleSubmit()} type="button">
+                {saving ? '保存中...' : editingProviderId ? '保存修改' : '创建配置'}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <section className={styles.section}>
         <div className={styles.sectionHeader}>
@@ -580,6 +732,8 @@ export default function ModelsPage() {
           <div className={styles.moduleGrid}>
             {providers.map((provider) => {
               const pending = pendingProviderId === provider.id;
+              const testing = testingProviderId === provider.id;
+              const testResult = testResults[provider.id];
               return (
                 <article key={provider.id} className={styles.moduleCard}>
                   <div className={styles.moduleIcon}>
@@ -612,6 +766,11 @@ export default function ModelsPage() {
                         {getProviderLabel(provider.provider)}
                       </span>
                       <span className={`${styles.pill} ${styles.neutral}`}>{getProviderModel(provider)}</span>
+                      {provider.config?.structured_output_method && provider.config.structured_output_method !== 'auto' ? (
+                        <span className={`${styles.pill} ${styles.neutral}`}>
+                          结构化输出：{provider.config.structured_output_method}
+                        </span>
+                      ) : null}
                       {provider.config?.base_url ? (
                         <span className={`${styles.pill} ${styles.neutral}`}>自定义 Base URL</span>
                       ) : null}
@@ -623,13 +782,77 @@ export default function ModelsPage() {
                       </span>
                     </div>
 
+                    {testResult ? (
+                      <div className={styles.testPanel} aria-live="polite">
+                        <div className={styles.testHeader}>
+                          <span className={styles.testTitle}>最近一次测试</span>
+                          <span className={`${styles.statusTag} ${testResult.ok ? styles.success : styles.warning}`}>
+                            {testResult.ok ? '全部通过' : '需要关注'}
+                          </span>
+                          <span className={`${styles.pill} ${styles.neutral}`}>{testResult.duration_ms} ms</span>
+                        </div>
+                        <div className={styles.testSteps}>
+                          {testResult.steps.map((step) => (
+                            <div key={step.name} className={styles.testStep}>
+                              <span className={`${styles.statusTag} ${getTestStepClass(step.status)}`}>
+                                <TestStepIcon status={step.status} />
+                                {getTestStepLabel(step.status)}
+                              </span>
+                              <div className={styles.testStepBody}>
+                                <span className={styles.testStepTitle}>
+                                  {step.label}
+                                  {typeof step.duration_ms === 'number' ? ` · ${step.duration_ms} ms` : ''}
+                                </span>
+                                <span className={styles.testStepMessage}>{step.message}</span>
+                                {step.name === 'short_prompt' && (step.detail?.prompt_text || step.detail?.response_text) ? (
+                                  <div className={styles.testIoGrid}>
+                                    {step.detail?.prompt_text ? (
+                                      <div className={styles.testIoBlock}>
+                                        <span className={styles.testIoLabel}>输入</span>
+                                        <span className={styles.testIoValue}>{step.detail.prompt_text}</span>
+                                      </div>
+                                    ) : null}
+                                    {step.detail?.response_text ? (
+                                      <div className={styles.testIoBlock}>
+                                        <span className={styles.testIoLabel}>输出</span>
+                                        <span className={styles.testIoValue}>{step.detail.response_text}</span>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                {step.detail?.response_preview && !step.detail?.response_text ? (
+                                  <span className={styles.testStepMeta}>
+                                    响应片段：{step.detail.response_preview}
+                                  </span>
+                                ) : null}
+                                {step.detail?.sample?.length ? (
+                                  <span className={styles.testStepMeta}>
+                                    模型样例：{step.detail.sample.slice(0, 5).join('、')}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
                     {canUpdateProviders || canDeleteProviders ? (
                       <div className={styles.actionsRow}>
                         {canUpdateProviders ? (
                           <>
                             <button
                               className={`${styles.button} ${styles.buttonSecondary} ${styles.buttonSmall}`}
-                              disabled={pending}
+                              disabled={pending || testing || !provider.runtime_supported}
+                              onClick={() => void handleTestProvider(provider)}
+                              type="button"
+                            >
+                              <PlayCircle size={14} strokeWidth={2} />
+                              {testing ? '测试中...' : '测试'}
+                            </button>
+                            <button
+                              className={`${styles.button} ${styles.buttonSecondary} ${styles.buttonSmall}`}
+                              disabled={pending || testing}
                               onClick={() => openEditForm(provider)}
                               type="button"
                             >
@@ -638,7 +861,7 @@ export default function ModelsPage() {
                             </button>
                             <button
                               className={`${styles.button} ${styles.buttonGhost} ${styles.buttonSmall}`}
-                              disabled={pending || provider.is_default || !provider.runtime_supported}
+                              disabled={pending || testing || provider.is_default || !provider.runtime_supported}
                               onClick={() =>
                                 void patchProvider(
                                   provider,
@@ -652,7 +875,7 @@ export default function ModelsPage() {
                             </button>
                             <button
                               className={`${styles.button} ${styles.buttonGhost} ${styles.buttonSmall}`}
-                              disabled={pending}
+                              disabled={pending || testing}
                               onClick={() =>
                                 void patchProvider(
                                   provider,
@@ -669,7 +892,7 @@ export default function ModelsPage() {
                         {canDeleteProviders ? (
                           <button
                             className={`${styles.button} ${styles.buttonDanger} ${styles.buttonSmall}`}
-                            disabled={pending}
+                            disabled={pending || testing}
                             onClick={() => void handleDelete(provider)}
                             type="button"
                           >

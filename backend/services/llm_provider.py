@@ -7,6 +7,7 @@ LLM Provider 抽象层
 - Ollama (本地模型)
 - Google (Gemini)
 - GitHub Models (GitHub Copilot)
+- Fake (smoke 验收专用)
 """
 
 from __future__ import annotations
@@ -22,11 +23,13 @@ from sqlalchemy.future import select
 
 from core.config import get_settings
 from services.secret_crypto import decrypt_config_value
+from services.structured_output_prompt import build_structured_chat_prompt
 
 DEFAULT_PROVIDER_NAME = "openai"
 DEFAULT_FALLBACK_MODEL = "gpt-4o"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference"
+INTERNAL_PROVIDER_NAMES = {"fake"}
 
 
 def _read_env(name: str) -> str:
@@ -193,6 +196,18 @@ class GitHubProvider(LLMProvider):
         )
 
 
+class FakeProvider(LLMProvider):
+    """Smoke 验收专用 provider；必须显式选择，不参与生产 provider 回退。"""
+
+    def get_default_model_name(self) -> str:
+        return self.registration.default_model_name
+
+    def get_model(self, model_name: str | None = None, **kwargs) -> BaseChatModel:
+        from services.fake_llm_provider import FakeSmokeChatModel
+
+        return FakeSmokeChatModel(model_name=self.get_default_model_name())
+
+
 @dataclass(frozen=True)
 class ProviderRegistration:
     """Provider registry 的最小元数据。"""
@@ -214,6 +229,16 @@ class RuntimeModelConfig:
     provider_id: str | None = None
     provider_name: str | None = None
     source: str = "environment"
+    structured_output_method: str | None = None
+
+
+@dataclass(frozen=True)
+class StructuredLLMRuntime:
+    """结构化输出运行时信息。"""
+
+    llm: Any
+    runtime_config: RuntimeModelConfig
+    effective_method: str | None
 
 
 # 统一 registry 只声明支持列表与默认元数据，避免分支判断散落到 helper 中。
@@ -247,6 +272,11 @@ PROVIDER_REGISTRY: dict[str, ProviderRegistration] = {
         default_model_name="openai/gpt-4.1",
         credential_env="GITHUB_MODEL_TOKEN",
     ),
+    "fake": ProviderRegistration(
+        name="fake",
+        provider_class=FakeProvider,
+        default_model_name="fake-smoke-model",
+    ),
 }
 
 
@@ -259,7 +289,7 @@ class LLMProviderFactory:
     @classmethod
     def get_supported_provider_names(cls) -> list[str]:
         """返回当前支持的 provider 名称列表。"""
-        return list(cls._registry.keys())
+        return [name for name in cls._registry if name not in INTERNAL_PROVIDER_NAMES]
 
     @classmethod
     def get_registration(cls, provider_name: str | None = None) -> ProviderRegistration:
@@ -297,6 +327,8 @@ class LLMProviderFactory:
             return model_name
 
         registration = cls.get_registration(provider_name)
+        if registration.name in INTERNAL_PROVIDER_NAMES:
+            return registration.default_model_name
         return _resolve_model_override() or registration.default_model_name
 
     @classmethod
@@ -329,6 +361,7 @@ class LLMProviderFactory:
 
 _MODEL_CONFIG_KEYS = ("model", "model_name")
 _BASE_URL_CONFIG_KEYS = ("base_url", "endpoint", "api_base")
+_STRUCTURED_OUTPUT_METHOD_KEYS = ("structured_output_method", "response_format_method")
 _CREDENTIAL_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "openai": ("api_key", "openai_api_key"),
     "anthropic": ("api_key", "anthropic_api_key"),
@@ -336,6 +369,8 @@ _CREDENTIAL_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "github": ("api_key", "github_model_token", "token"),
 }
 _RUNTIME_DEFAULT_CONFIG_KEY = "_runtime_default"
+_ALLOWED_STRUCTURED_OUTPUT_METHODS = {"json_schema", "json_mode", "function_calling"}
+_OPENAI_COMPATIBLE_METHOD_PROVIDERS = {"openai", "github"}
 
 
 def _clean_config_value(value: Any) -> str | None:
@@ -362,6 +397,63 @@ def _is_runtime_default(config: dict[str, Any] | None) -> bool:
     return bool((config or {}).get(_RUNTIME_DEFAULT_CONFIG_KEY))
 
 
+def _normalize_structured_output_method(value: str | None) -> str | None:
+    """标准化结构化输出模式配置。"""
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def _supports_explicit_structured_output_method(runtime_config: RuntimeModelConfig) -> bool:
+    """当前仅对 langchain-openai 路径显式传 method，避免影响其它 provider。"""
+    return runtime_config.provider in _OPENAI_COMPATIBLE_METHOD_PROVIDERS
+
+
+def _resolve_effective_structured_output_method(
+    runtime_config: RuntimeModelConfig,
+    *,
+    method_override: str | None = None,
+) -> str | None:
+    """解析最终生效的结构化输出模式。"""
+    method = _normalize_structured_output_method(method_override)
+    if method is None:
+        method = _normalize_structured_output_method(runtime_config.structured_output_method)
+
+    if method == "auto":
+        method = None
+
+    if method is not None and method not in _ALLOWED_STRUCTURED_OUTPUT_METHODS:
+        supported = ", ".join(sorted(_ALLOWED_STRUCTURED_OUTPUT_METHODS))
+        raise ValueError(f"不支持的 structured_output_method: {method}，支持: {supported}")
+
+    if method is not None:
+        return method if _supports_explicit_structured_output_method(runtime_config) else None
+
+    base_url = (runtime_config.base_url or "").lower()
+    if _supports_explicit_structured_output_method(runtime_config) and "hf.space" in base_url:
+        return "json_mode"
+
+    return None
+
+
+def _bind_structured_output_model(
+    llm: BaseChatModel,
+    schema: type[BaseModel],
+    runtime_config: RuntimeModelConfig,
+    *,
+    method_override: str | None = None,
+):
+    """按运行时配置绑定结构化输出模式。"""
+    method = _resolve_effective_structured_output_method(
+        runtime_config,
+        method_override=method_override,
+    )
+    if method:
+        return llm.with_structured_output(schema, method=method, include_raw=True)
+    return llm.with_structured_output(schema, include_raw=True)
+
+
 def _build_environment_runtime_config(
     provider_name: str | None = None,
     model_name: str | None = None,
@@ -372,10 +464,14 @@ def _build_environment_runtime_config(
     base_url = _read_env("OLLAMA_BASE_URL") if registration.name == "ollama" else None
     if registration.name == "github":
         base_url = DEFAULT_GITHUB_MODELS_BASE_URL
+    if registration.name == "fake":
+        resolved_model = registration.default_model_name
+    else:
+        resolved_model = model_name or _resolve_model_override() or registration.default_model_name
 
     return RuntimeModelConfig(
         provider=registration.name,
-        model=model_name or _resolve_model_override() or registration.default_model_name,
+        model=resolved_model,
         credential=credential,
         base_url=base_url,
         source="environment",
@@ -406,6 +502,7 @@ def _build_workspace_runtime_config(provider_row: Any) -> RuntimeModelConfig:
         provider_id=provider_row.id,
         provider_name=provider_row.name,
         source="workspace",
+        structured_output_method=_pick_config_value(config, _STRUCTURED_OUTPUT_METHOD_KEYS),
     )
 
 
@@ -424,6 +521,7 @@ def _build_model_from_runtime_config(
             "api_key": runtime_config.credential,
             **kwargs,
         }
+        openai_kwargs.setdefault("stream_usage", True)
         if runtime_config.base_url:
             openai_kwargs["base_url"] = runtime_config.base_url
         return ChatOpenAI(**openai_kwargs)
@@ -455,12 +553,14 @@ def _build_model_from_runtime_config(
 
         if not runtime_config.credential:
             raise _build_missing_credential_error("github", "GITHUB_MODEL_TOKEN")
-        return ChatOpenAI(
-            model=runtime_config.model,
-            base_url=runtime_config.base_url or DEFAULT_GITHUB_MODELS_BASE_URL,
-            api_key=runtime_config.credential,
+        github_kwargs: dict[str, Any] = {
+            "model": runtime_config.model,
+            "base_url": runtime_config.base_url or DEFAULT_GITHUB_MODELS_BASE_URL,
+            "api_key": runtime_config.credential,
             **kwargs,
-        )
+        }
+        github_kwargs.setdefault("stream_usage", True)
+        return ChatOpenAI(**github_kwargs)
 
     if runtime_config.provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -471,6 +571,11 @@ def _build_model_from_runtime_config(
             **kwargs,
         )
 
+    if runtime_config.provider == "fake":
+        from services.fake_llm_provider import FakeSmokeChatModel
+
+        return FakeSmokeChatModel(model_name=runtime_config.model)
+
     raise _build_unsupported_provider_error(
         runtime_config.provider,
         LLMProviderFactory.get_supported_provider_names(),
@@ -479,12 +584,21 @@ def _build_model_from_runtime_config(
 
 def _runtime_config_to_info(runtime_config: RuntimeModelConfig) -> dict[str, Any]:
     """转换为可返回给前端或写入 LLMCallRecord 的脱敏读模型。"""
+    try:
+        effective_structured_output_method = _resolve_effective_structured_output_method(
+            runtime_config
+        )
+    except ValueError:
+        effective_structured_output_method = runtime_config.structured_output_method
+
     return {
         "provider": runtime_config.provider,
         "model": runtime_config.model,
         "source": runtime_config.source,
         "provider_id": runtime_config.provider_id,
         "provider_name": runtime_config.provider_name,
+        "structured_output_method": runtime_config.structured_output_method,
+        "effective_structured_output_method": effective_structured_output_method,
     }
 
 
@@ -492,10 +606,22 @@ async def get_workspace_runtime_model_config(
     workspace_id: str | None = None,
     model_name: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
 ) -> RuntimeModelConfig:
     """读取当前工作空间运行默认模型配置，缺省时回退到环境变量。"""
     if not workspace_id:
-        return _build_environment_runtime_config(model_name=model_name)
+        if model_provider_id:
+            raise ValueError("选择模型供应商配置需要工作空间上下文")
+        return _build_environment_runtime_config(
+            provider_name=model_provider_name,
+            model_name=model_name,
+        )
+
+    if model_provider_name and not model_provider_id:
+        return _build_environment_runtime_config(
+            provider_name=model_provider_name,
+            model_name=model_name,
+        )
 
     from db.postgres_store import get_postgres_store
     from models.admin_orm import ModelProviderORM
@@ -509,12 +635,15 @@ async def get_workspace_runtime_model_config(
                 select(ModelProviderORM).where(
                     ModelProviderORM.id == model_provider_id,
                     ModelProviderORM.workspace_id == workspace_id,
-                    ModelProviderORM.enabled.is_(True),
                 )
             )
             selected_provider = selected_result.scalar_one_or_none()
-            if selected_provider and selected_provider.provider not in supported_providers:
-                selected_provider = None
+            if selected_provider is None:
+                raise ValueError("模型供应商配置不存在或不属于当前工作空间")
+            if not selected_provider.enabled:
+                raise ValueError("模型供应商配置已停用，无法用于本次运行")
+            if selected_provider.provider not in supported_providers:
+                raise ValueError(f"模型供应商类型暂不支持: {selected_provider.provider}")
 
         result = await session.execute(
             select(ModelProviderORM)
@@ -524,13 +653,17 @@ async def get_workspace_runtime_model_config(
             )
             .order_by(desc(ModelProviderORM.updated_at), desc(ModelProviderORM.created_at))
         )
+        enabled_providers = list(result.scalars().all())
         providers = [
-            provider
-            for provider in result.scalars().all()
-            if provider.provider in supported_providers
+            provider for provider in enabled_providers if provider.provider in supported_providers
         ]
 
     if selected_provider is None and not providers:
+        if enabled_providers:
+            unsupported_types = sorted({str(provider.provider) for provider in enabled_providers})
+            raise ValueError(
+                "当前工作空间启用的模型供应商暂不支持运行: " + ", ".join(unsupported_types)
+            )
         return _build_environment_runtime_config(model_name=model_name)
 
     selected_provider = selected_provider or next(
@@ -547,6 +680,7 @@ async def get_workspace_runtime_model_config(
             provider_id=runtime_config.provider_id,
             provider_name=runtime_config.provider_name,
             source=runtime_config.source,
+            structured_output_method=runtime_config.structured_output_method,
         )
     return runtime_config
 
@@ -555,6 +689,7 @@ async def get_llm_for_workspace(
     workspace_id: str | None = None,
     model: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     **kwargs,
 ) -> BaseChatModel:
     """按工作空间动态配置获取 LLM；未配置时沿用环境变量。"""
@@ -562,6 +697,7 @@ async def get_llm_for_workspace(
         workspace_id,
         model,
         model_provider_id,
+        model_provider_name,
     )
     return _build_model_from_runtime_config(runtime_config, **kwargs)
 
@@ -571,22 +707,93 @@ async def get_structured_llm_for_workspace(
     workspace_id: str | None = None,
     model: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
+    *,
+    method_override: str | None = None,
     **kwargs,
 ) -> BaseChatModel:
     """按工作空间动态配置获取结构化输出 LLM。"""
+    runtime = await get_structured_llm_runtime_for_workspace(
+        schema,
+        workspace_id,
+        model,
+        model_provider_id,
+        model_provider_name,
+        method_override=method_override,
+        **kwargs,
+    )
+    return runtime.llm
+
+
+async def get_structured_llm_runtime_for_workspace(
+    schema: type[BaseModel],
+    workspace_id: str | None = None,
+    model: str | None = None,
+    model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
+    *,
+    method_override: str | None = None,
+    **kwargs,
+) -> StructuredLLMRuntime:
+    """按工作空间动态配置获取结构化输出 LLM 及最终生效模式。"""
     runtime_config = await get_workspace_runtime_model_config(
         workspace_id,
         model,
         model_provider_id,
+        model_provider_name,
     )
     llm = _build_model_from_runtime_config(runtime_config, **kwargs)
-    return llm.with_structured_output(schema)
+    effective_method = _resolve_effective_structured_output_method(
+        runtime_config,
+        method_override=method_override,
+    )
+    structured_llm = _bind_structured_output_model(
+        llm,
+        schema,
+        runtime_config,
+        method_override=method_override,
+    )
+    return StructuredLLMRuntime(
+        llm=structured_llm,
+        runtime_config=runtime_config,
+        effective_method=effective_method,
+    )
+
+
+async def build_structured_chain_for_workspace(
+    schema: type[BaseModel],
+    prompt_template: str,
+    workspace_id: str | None = None,
+    model: str | None = None,
+    model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
+    *,
+    method_override: str | None = None,
+    **kwargs,
+) -> tuple[Any, StructuredLLMRuntime]:
+    """按工作空间动态配置构建结构化输出 chain。"""
+    runtime = await get_structured_llm_runtime_for_workspace(
+        schema,
+        workspace_id,
+        model,
+        model_provider_id,
+        model_provider_name,
+        method_override=method_override,
+        **kwargs,
+    )
+    prompt = build_structured_chat_prompt(
+        prompt_template,
+        runtime.effective_method,
+        schema=schema,
+    )
+    return prompt | runtime.llm, runtime
 
 
 async def get_current_model_info_for_workspace(
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
     model: str | None = None,
+    model_provider_name: str | None = None,
 ) -> dict[str, Any]:
     """获取当前工作空间实际运行模型读模型，供 trace 和设置页展示。"""
     try:
@@ -595,14 +802,19 @@ async def get_current_model_info_for_workspace(
                 workspace_id,
                 model,
                 model_provider_id,
+                model_provider_name,
             )
         )
-    except Exception:
+    except Exception as exc:
+        if model_provider_id or model_provider_name:
+            raise ValueError(f"无法读取指定模型供应商配置: {exc}") from exc
         return {
             **get_current_model_info(),
             "source": "environment",
             "provider_id": None,
             "provider_name": None,
+            "structured_output_method": None,
+            "effective_structured_output_method": None,
         }
 
 

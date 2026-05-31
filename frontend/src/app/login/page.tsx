@@ -8,6 +8,20 @@ import { login } from '@/lib/auth';
 import { AuthShell } from '@/components/AuthShell/AuthShell';
 import styles from './login.module.css';
 
+function getSafeNextPath() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const nextPath = new URLSearchParams(window.location.search).get('next');
+  // 只允许站内相对路径跳转，避免登录后被外部地址劫持。
+  if (!nextPath || !nextPath.startsWith('/') || nextPath.startsWith('//')) {
+    return null;
+  }
+
+  return nextPath;
+}
+
 /**
  * 用户登录页。
  * 使用统一认证壳体承接首页延展出的视觉语言。
@@ -27,8 +41,9 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
+      // 登录接口只写入 HttpOnly Cookie，进入控制台后再由 AuthProvider 拉取用户上下文。
       await login({ email, password });
-      router.push('/console');
+      router.push(getSafeNextPath() || '/console');
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败，请检查邮箱和密码是否正确');
     } finally {

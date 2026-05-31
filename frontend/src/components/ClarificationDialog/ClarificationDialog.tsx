@@ -25,6 +25,13 @@ export function ClarificationDialog({
     const [focusedField, setFocusedField] = React.useState<string | null>(
         questions[0]?.field ?? null
     );
+    const firstTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+
+    React.useEffect(() => {
+        if (!isLoading) {
+            firstTextareaRef.current?.focus({ preventScroll: true });
+        }
+    }, [isLoading]);
 
     React.useEffect(() => {
         if (!questions.some((question) => question.field === focusedField)) {
@@ -172,6 +179,7 @@ export function ClarificationDialog({
                             </div>
 
                             <textarea
+                                ref={index === 0 ? firstTextareaRef : undefined}
                                 id={inputId}
                                 className={`${styles.answerInput} input textarea`}
                                 value={answers[question.field] || ''}

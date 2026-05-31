@@ -19,12 +19,13 @@ dependencies = [
     "langgraph>=0.2.0",
     # 数据库
     "aiosqlite>=0.19.0",
+    "alembic>=1.13.0",
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.29.0",
     "psycopg2-binary>=2.9.9",
+    "redis>=5.0.0",
     "greenlet>=3.0.0",
     # 验证与安全
-    "guardrails-ai>=0.5.0",
     # 认证与加密
     "python-jose>=3.3.0",
     "passlib>=1.7.4",
@@ -35,8 +36,12 @@ dependencies = [
     # 工具库
     "httpx>=0.26.0",
     "deepdiff>=6.7.0",
+    "python-docx>=1.2.0",
+    "pypdf>=6.4.0",
+    "pgvector>=0.4.1",
     "python-multipart>=0.0.6",
     "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
     "langchain-ollama>=1.0.1",
 ]
 

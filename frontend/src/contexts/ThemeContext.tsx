@@ -24,7 +24,6 @@ import {
   getSystemTheme,
   isThemePreference,
   persistThemePreference,
-  readResolvedThemeFromDocument,
   readStoredThemePreference,
   readThemePreferenceFromDocument,
   resolveThemePreference,
@@ -71,7 +70,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const storedPreference = readStoredThemePreference() ?? readThemePreferenceFromDocument();
-    syncTheme(storedPreference);
+    queueMicrotask(() => syncTheme(storedPreference));
 
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
       return;

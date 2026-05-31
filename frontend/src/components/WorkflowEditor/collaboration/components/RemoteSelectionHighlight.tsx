@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import type { WebsocketProvider } from 'y-websocket';
 import { getRemoteSelections, type UserPresence } from '../yjs/awareness';
@@ -16,30 +16,23 @@ interface RemoteSelectionHighlightProps {
 
 export function RemoteSelectionHighlight({ provider }: RemoteSelectionHighlightProps) {
     const { getNodes } = useReactFlow();
-    const [selections, setSelections] = useState<Map<string, UserPresence[]>>(new Map());
-
-    useEffect(() => {
-        if (!provider) {
-            setSelections(new Map());
-            return;
-        }
-
-        const updateSelections = () => {
-            if (!provider) return;
-            const localClientId = provider.awareness.clientID;
-            const newSelections = getRemoteSelections(localClientId);
-            setSelections(newSelections);
-        };
-
-        updateSelections();
-        provider.awareness.on('change', updateSelections);
-
-        return () => {
-            if (provider) {
-                provider.awareness.off('change', updateSelections);
-            }
-        };
-    }, [provider]);
+    const serializedSelections = useSyncExternalStore(
+        (onStoreChange) => {
+            if (!provider) return () => undefined;
+            provider.awareness.on('change', onStoreChange);
+            return () => provider.awareness.off('change', onStoreChange);
+        },
+        () => {
+            if (!provider) return '[]';
+            const selections = getRemoteSelections(provider.awareness.clientID);
+            return JSON.stringify(Array.from(selections.entries()));
+        },
+        () => '[]',
+    );
+    const selections = useMemo(
+        () => new Map(JSON.parse(serializedSelections) as [string, UserPresence[]][]),
+        [serializedSelections],
+    );
 
     if (selections.size === 0) {
         return null;

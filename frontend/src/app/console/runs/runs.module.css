@@ -420,10 +420,13 @@
   padding: 0 12px;
   border-radius: 999px;
   font-size: 0.76rem;
+  font-weight: 800;
   font-family: var(--font-mono);
+  line-height: 1;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .statusCompleted {
@@ -448,6 +451,30 @@
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.16);
   color: #ffd598;
+}
+
+:global(html[data-theme='light']) .statusCompleted {
+  border-color: rgba(22, 101, 52, 0.2);
+  background: rgba(22, 163, 74, 0.12);
+  color: #14532d;
+}
+
+:global(html[data-theme='light']) .statusFailed {
+  border-color: rgba(153, 27, 27, 0.2);
+  background: rgba(220, 38, 38, 0.1);
+  color: #991b1b;
+}
+
+:global(html[data-theme='light']) .statusRunning {
+  border-color: rgba(7, 89, 133, 0.22);
+  background: rgba(2, 132, 199, 0.12);
+  color: #075985;
+}
+
+:global(html[data-theme='light']) .statusWaiting {
+  border-color: rgba(146, 64, 14, 0.22);
+  background: rgba(217, 119, 6, 0.12);
+  color: #92400e;
 }
 
 .runMetaGrid {

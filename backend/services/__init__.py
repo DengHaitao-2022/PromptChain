@@ -27,16 +27,31 @@ from .llm_provider import (
     LLMProviderFactory,
     OllamaProvider,
     OpenAIProvider,
+    StructuredLLMRuntime,
+    build_structured_chain_for_workspace,
     get_current_model_info,
     get_current_model_info_for_workspace,
     get_llm,
     get_llm_for_workspace,
     get_structured_llm,
     get_structured_llm_for_workspace,
+    get_structured_llm_runtime_for_workspace,
 )
 from .llm_retry import invoke_with_llm_retry
+from .llm_usage import (
+    ensure_usage_metadata,
+    estimate_tokens,
+    extract_usage_metadata,
+    invoke_structured_with_usage,
+)
 from .rerun_service import RerunService, get_rerun_service
 from .trace_service import TraceService, get_trace_service
+from .workflow_event_bus import (
+    WorkflowEventBus,
+    WorkflowStreamEvent,
+    dispose_workflow_event_bus,
+    get_workflow_event_bus,
+)
 
 __all__ = [
     # artifact_store
@@ -55,10 +70,13 @@ __all__ = [
     "GoogleProvider",
     "GitHubProvider",
     "OllamaProvider",
+    "StructuredLLMRuntime",
+    "build_structured_chain_for_workspace",
     "get_llm",
     "get_llm_for_workspace",
     "get_structured_llm",
     "get_structured_llm_for_workspace",
+    "get_structured_llm_runtime_for_workspace",
     "get_current_model_info",
     "get_current_model_info_for_workspace",
     "format_workflow_error",
@@ -66,10 +84,19 @@ __all__ = [
     "is_retryable_llm_error",
     "is_llm_service_error",
     "invoke_with_llm_retry",
+    "extract_usage_metadata",
+    "ensure_usage_metadata",
+    "estimate_tokens",
+    "invoke_structured_with_usage",
     # rerun_service
     "RerunService",
     "get_rerun_service",
     # trace_service
     "TraceService",
     "get_trace_service",
+    # workflow_event_bus
+    "WorkflowEventBus",
+    "WorkflowStreamEvent",
+    "dispose_workflow_event_bus",
+    "get_workflow_event_bus",
 ]

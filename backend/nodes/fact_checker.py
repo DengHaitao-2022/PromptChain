@@ -16,6 +16,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from core.time import utc_now_iso, utc_now_naive
+from graph.runtime_plan import runtime_feature_enabled
 from models import (
     ArtifactType,
     FactCheckReport,
@@ -27,10 +28,13 @@ from models import (
     VerificationResult,
 )
 from services import (
+    build_structured_chain_for_workspace,
+    ensure_usage_metadata,
+    extract_usage_metadata,
     get_artifact_store,
     get_current_model_info_for_workspace,
     get_llm_for_workspace,
-    get_structured_llm_for_workspace,
+    invoke_structured_with_usage,
     invoke_with_llm_retry,
 )
 
@@ -79,10 +83,14 @@ EXECUTE_VERIFICATION_PROMPT = """请回答以下问题。
 ## 问题
 {question}
 
+## Evidence Artifact
+{evidence_context}
+
 ## 要求
-1. 仅基于你的知识库回答
+1. 如果 Evidence Artifact 提供了相关内容，必须优先基于证据回答
 2. 如果不确定，请明确表示
 3. 提供尽可能准确的答案
+4. 如果证据不足，请直接说明“当前证据不足”
 
 请直接回答问题。"""
 
@@ -201,6 +209,38 @@ def _build_failed_correction_message(failed_corrections: dict[str, dict[str, str
     return ", ".join(parts)
 
 
+def _format_evidence_context(state: dict, *, max_chunks: int = 10) -> str:
+    """为事实核查准备证据上下文。"""
+    evidence_pack = state.get("evidence_pack")
+    if not evidence_pack:
+        return "未启用知识库或未检索到可用证据。"
+
+    chunks = getattr(evidence_pack, "chunks", None)
+    if chunks is None and isinstance(evidence_pack, dict):
+        chunks = evidence_pack.get("chunks")
+    if not chunks:
+        unverified = getattr(evidence_pack, "unverified_points", None)
+        if unverified is None and isinstance(evidence_pack, dict):
+            unverified = evidence_pack.get("unverified_points")
+        if unverified:
+            return f"未检索到足够证据；需标记未验证点：{', '.join(map(str, unverified))}"
+        return "未启用知识库或未检索到可用证据。"
+
+    lines: list[str] = []
+    for index, chunk in enumerate(chunks[:max_chunks], start=1):
+        document_name = getattr(chunk, "document_name", None)
+        content = getattr(chunk, "content", None)
+        score = getattr(chunk, "score", None)
+        if isinstance(chunk, dict):
+            document_name = chunk.get("document_name")
+            content = chunk.get("content")
+            score = chunk.get("score")
+        if not content:
+            continue
+        lines.append(f"[{index}] 来源：{document_name or '未知文档'}；分数：{score}\n{content}")
+    return "\n\n".join(lines) if lines else "未启用知识库或未检索到可用证据。"
+
+
 def _mark_result_resolved(result: VerificationResult) -> None:
     result.is_verified = True
     result.risk_level = "low"
@@ -258,35 +298,44 @@ async def extract_fact_claims(
     section_id: str,
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     model_name: str | None = None,
-) -> list[FactClaim]:
+) -> tuple[list[FactClaim], dict[str, int]]:
     """
     步骤1：从内容中提取事实性声明
     """
-    llm = await get_structured_llm_for_workspace(
+    chain, _structured_runtime = await build_structured_chain_for_workspace(
         ClaimList,
+        EXTRACT_CLAIMS_PROMPT,
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
+        model_provider_name=model_provider_name,
     )
-    prompt = ChatPromptTemplate.from_template(EXTRACT_CLAIMS_PROMPT)
-    chain = prompt | llm
 
-    result: ClaimList = await invoke_with_llm_retry(lambda: chain.ainvoke({"content": content}))
+    result, usage = await invoke_with_llm_retry(
+        lambda: invoke_structured_with_usage(chain, {"content": content})
+    )
 
     # 为每个claim设置section_id
     for claim in result.claims:
         claim.section_id = section_id
 
-    return result.claims
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=content,
+        completion_text=str(result.model_dump()),
+    )
+    return result.claims, usage
 
 
 async def generate_verification_question(
     claim: FactClaim,
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     model_name: str | None = None,
-) -> str:
+) -> tuple[str, dict[str, int]]:
     """
     步骤2：为声明生成验证问题
     """
@@ -294,6 +343,7 @@ async def generate_verification_question(
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
+        model_provider_name=model_provider_name,
         temperature=0.3,
     )
     prompt = ChatPromptTemplate.from_template(GENERATE_VERIFICATION_QUESTIONS_PROMPT)
@@ -303,15 +353,23 @@ async def generate_verification_question(
         lambda: chain.ainvoke({"claim_text": claim.text, "claim_category": claim.category})
     )
 
-    return result.content.strip()
+    question = result.content.strip()
+    usage = ensure_usage_metadata(
+        extract_usage_metadata(result),
+        prompt_text=claim.text,
+        completion_text=question,
+    )
+    return question, usage
 
 
 async def execute_verification(
     question: str,
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     model_name: str | None = None,
-) -> str:
+    evidence_context: str | None = None,
+) -> tuple[str, dict[str, int]]:
     """
     步骤3：独立回答验证问题（Factored模式）
 
@@ -321,14 +379,28 @@ async def execute_verification(
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
+        model_provider_name=model_provider_name,
         temperature=0.2,
     )  # 低温度以获得更确定的答案
     prompt = ChatPromptTemplate.from_template(EXECUTE_VERIFICATION_PROMPT)
     chain = prompt | llm
 
-    result = await invoke_with_llm_retry(lambda: chain.ainvoke({"question": question}))
+    result = await invoke_with_llm_retry(
+        lambda: chain.ainvoke(
+            {
+                "question": question,
+                "evidence_context": evidence_context or "未启用知识库或未检索到可用证据。",
+            }
+        )
+    )
 
-    return result.content.strip()
+    answer = result.content.strip()
+    usage = ensure_usage_metadata(
+        extract_usage_metadata(result),
+        prompt_text=question,
+        completion_text=answer,
+    )
+    return answer, usage
 
 
 async def evaluate_claim_accuracy(
@@ -337,38 +409,48 @@ async def evaluate_claim_accuracy(
     verification_answer: str,
     workspace_id: str | None = None,
     model_provider_id: str | None = None,
+    model_provider_name: str | None = None,
     model_name: str | None = None,
-) -> VerificationResult:
+) -> tuple[VerificationResult, dict[str, int]]:
     """
     步骤4：评估声明准确性
     """
-    llm = await get_structured_llm_for_workspace(
+    chain, _structured_runtime = await build_structured_chain_for_workspace(
         VerificationEvaluation,
+        EVALUATE_CLAIM_PROMPT,
         workspace_id,
         model=model_name,
         model_provider_id=model_provider_id,
+        model_provider_name=model_provider_name,
     )
-    prompt = ChatPromptTemplate.from_template(EVALUATE_CLAIM_PROMPT)
-    chain = prompt | llm
 
-    evaluation: VerificationEvaluation = await invoke_with_llm_retry(
-        lambda: chain.ainvoke(
+    evaluation, usage = await invoke_with_llm_retry(
+        lambda: invoke_structured_with_usage(
+            chain,
             {
                 "claim_text": claim.text,
                 "verification_question": verification_question,
                 "verification_answer": verification_answer,
-            }
+            },
         )
     )
 
-    return VerificationResult(
-        claim_id=claim.id,
-        is_verified=evaluation.is_verified,
-        confidence=evaluation.confidence,
-        risk_level=evaluation.risk_level,
-        suggested_correction=evaluation.suggested_correction,
-        verification_question=verification_question,
-        verification_answer=verification_answer,
+    usage = ensure_usage_metadata(
+        usage,
+        prompt_text=f"{claim.text}\n{verification_question}\n{verification_answer}",
+        completion_text=str(evaluation.model_dump()),
+    )
+    return (
+        VerificationResult(
+            claim_id=claim.id,
+            is_verified=evaluation.is_verified,
+            confidence=evaluation.confidence,
+            risk_level=evaluation.risk_level,
+            suggested_correction=evaluation.suggested_correction,
+            verification_question=verification_question,
+            verification_answer=verification_answer,
+        ),
+        usage,
     )
 
 
@@ -393,6 +475,7 @@ async def check_facts(state: dict) -> dict:
     workflow_run_id = state["workflow_run_id"]
     workspace_id = state.get("workspace_id")
     model_provider_id = state.get("model_provider_id")
+    model_provider_name = state.get("model_provider_name")
     model_name = state.get("model_name")
     store = get_artifact_store()
 
@@ -407,6 +490,7 @@ async def check_facts(state: dict) -> dict:
             artifact_id
             for artifact_id in [
                 state.get("final_content_artifact_id"),
+                state.get("evidence_artifact_id"),
                 *list(state.get("section_artifact_ids", {}).values()),
             ]
             if artifact_id
@@ -417,16 +501,18 @@ async def check_facts(state: dict) -> dict:
     try:
         all_claims: list[FactClaim] = []
         all_results: list[VerificationResult] = []
+        evidence_context = _format_evidence_context(state)
 
         # 遍历每个章节提取并验证事实声明
         for section_id, content in content_dict.items():
             # 步骤1：提取事实声明
             start_time = utc_now_naive()
-            claims = await extract_fact_claims(
+            claims, usage = await extract_fact_claims(
                 content,
                 section_id,
                 workspace_id,
                 model_provider_id,
+                model_provider_name,
                 model_name,
             )
             end_time = utc_now_naive()
@@ -437,11 +523,15 @@ async def check_facts(state: dict) -> dict:
             model_info = await get_current_model_info_for_workspace(
                 workspace_id,
                 model_provider_id=model_provider_id,
+                model_provider_name=model_provider_name,
                 model=model_name,
             )
             llm_call = LLMCallRecord(
                 model=model_info["model"],
                 provider=model_info["provider"],
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+                total_tokens=usage["total_tokens"],
                 latency_ms=int((end_time - start_time).total_seconds() * 1000),
                 prompt_preview=f"Extract claims from section {section_id}",
                 response_preview=f"Found {len(claims)} claims",
@@ -452,28 +542,32 @@ async def check_facts(state: dict) -> dict:
             for claim in claims:
                 # 步骤2：生成验证问题
                 start_time = utc_now_naive()
-                question = await generate_verification_question(
+                question, question_usage = await generate_verification_question(
                     claim,
                     workspace_id,
                     model_provider_id,
+                    model_provider_name,
                     model_name,
                 )
 
                 # 步骤3：独立执行验证
-                answer = await execute_verification(
+                answer, answer_usage = await execute_verification(
                     question,
                     workspace_id,
                     model_provider_id,
+                    model_provider_name,
                     model_name,
+                    evidence_context,
                 )
 
                 # 步骤4：评估准确性
-                result = await evaluate_claim_accuracy(
+                result, evaluation_usage = await evaluate_claim_accuracy(
                     claim,
                     question,
                     answer,
                     workspace_id,
                     model_provider_id,
+                    model_provider_name,
                     model_name,
                 )
                 end_time = utc_now_naive()
@@ -484,11 +578,27 @@ async def check_facts(state: dict) -> dict:
                 model_info = await get_current_model_info_for_workspace(
                     workspace_id,
                     model_provider_id=model_provider_id,
+                    model_provider_name=model_provider_name,
                     model=model_name,
                 )
                 llm_call = LLMCallRecord(
                     model=model_info["model"],
                     provider=model_info["provider"],
+                    prompt_tokens=(
+                        question_usage["prompt_tokens"]
+                        + answer_usage["prompt_tokens"]
+                        + evaluation_usage["prompt_tokens"]
+                    ),
+                    completion_tokens=(
+                        question_usage["completion_tokens"]
+                        + answer_usage["completion_tokens"]
+                        + evaluation_usage["completion_tokens"]
+                    ),
+                    total_tokens=(
+                        question_usage["total_tokens"]
+                        + answer_usage["total_tokens"]
+                        + evaluation_usage["total_tokens"]
+                    ),
                     latency_ms=int((end_time - start_time).total_seconds() * 1000),
                     prompt_preview=f"Verify: {claim.text[:50]}...",
                     response_preview=f"Verified: {result.is_verified}, Risk: {result.risk_level}",
@@ -498,6 +608,12 @@ async def check_facts(state: dict) -> dict:
         # 生成报告
         report = FactCheckReport(claims=all_claims, results=all_results)
         report.compute_stats()
+        fact_check_gate_enabled = runtime_feature_enabled(
+            state,
+            "fact_check_gate",
+            default=True,
+        )
+        awaiting_approval = report.has_high_risk_items() and fact_check_gate_enabled
 
         # 创建 Artifact
         artifact = await store.create_artifact(
@@ -507,14 +623,17 @@ async def check_facts(state: dict) -> dict:
             node_run_id=node_run.id,
             metadata={
                 "high_risk_count": report.high_risk_count,
-                "awaiting_approval": report.has_high_risk_items(),
+                "awaiting_approval": awaiting_approval,
                 "source_final_content_artifact_id": state.get("final_content_artifact_id"),
+                "evidence_artifact_id": state.get("evidence_artifact_id"),
+                "knowledge_conflicts": state.get("knowledge_conflicts", []),
+                "unverified_points": state.get("unverified_points", []),
             },
         )
         node_run.output_artifact_ids.append(artifact.id)
 
-        # 如果有高风险项，标记为需要用户确认
-        if report.has_high_risk_items():
+        # 只有发布图启用了事实核查 Gate 时，高风险项才会暂停等待用户确认。
+        if awaiting_approval:
             gate_opened_at = _now_iso()
             await _update_gate_metadata(
                 store,

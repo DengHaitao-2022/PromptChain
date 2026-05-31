@@ -9,9 +9,8 @@
 
 import json
 
-from langchain_core.prompts import ChatPromptTemplate
-
 from core.time import utc_now_iso, utc_now_naive
+from graph.runtime_plan import runtime_feature_enabled
 from models import (
     ArtifactType,
     HumanDecision,
@@ -22,9 +21,11 @@ from models import (
     Outline,
 )
 from services import (
+    build_structured_chain_for_workspace,
+    ensure_usage_metadata,
     get_artifact_store,
     get_current_model_info_for_workspace,
-    get_structured_llm_for_workspace,
+    invoke_structured_with_usage,
     invoke_with_llm_retry,
 )
 
@@ -39,6 +40,9 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 必须包含: {must_include}
 禁止内容: {must_exclude}
 
+## 可用证据
+{evidence_context}
+
 ## 要求
 1. 提纲应包含3-7个主要章节
 2. 每个章节应有明确的目标和字数分配
@@ -46,6 +50,7 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 4. 确保覆盖所有"必须包含"的项目
 5. 避免"禁止内容"中的项目
 6. 总字数分配应接近目标字数
+7. 如果存在可用证据，优先围绕证据组织章节；证据不足的主题不要虚构来源
 
 ## 输出格式
 请生成完整的提纲结构，包括：
@@ -53,6 +58,38 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 - abstract: 概述/导语（50-100字的内容摘要）
 - sections: 章节列表，每个章节包含 id, title, summary, target_words
 - total_target_words: 总目标字数"""
+
+
+def _format_evidence_context(state: dict, *, max_chunks: int = 6) -> str:
+    """把 EvidencePack 压缩成适合写入 prompt 的上下文。"""
+    evidence_pack = state.get("evidence_pack")
+    if not evidence_pack:
+        return "未启用知识库或未检索到可用证据。"
+
+    chunks = getattr(evidence_pack, "chunks", None)
+    if chunks is None and isinstance(evidence_pack, dict):
+        chunks = evidence_pack.get("chunks")
+    if not chunks:
+        unverified = getattr(evidence_pack, "unverified_points", None)
+        if unverified is None and isinstance(evidence_pack, dict):
+            unverified = evidence_pack.get("unverified_points")
+        if unverified:
+            return f"未检索到足够证据；需标记未验证点：{', '.join(map(str, unverified))}"
+        return "未启用知识库或未检索到可用证据。"
+
+    lines: list[str] = []
+    for index, chunk in enumerate(chunks[:max_chunks], start=1):
+        document_name = getattr(chunk, "document_name", None)
+        content = getattr(chunk, "content", None)
+        score = getattr(chunk, "score", None)
+        if isinstance(chunk, dict):
+            document_name = chunk.get("document_name")
+            content = chunk.get("content")
+            score = chunk.get("score")
+        if not content:
+            continue
+        lines.append(f"[{index}] 来源：{document_name or '未知文档'}；分数：{score}\n{content}")
+    return "\n\n".join(lines) if lines else "未启用知识库或未检索到可用证据。"
 
 
 def _now_iso() -> str:
@@ -103,8 +140,10 @@ async def generate_outline(state: dict) -> dict:
     workflow_run_id = state["workflow_run_id"]
     workspace_id = state.get("workspace_id")
     model_provider_id = state.get("model_provider_id")
+    model_provider_name = state.get("model_provider_name")
     model_name = state.get("model_name")
     outline_feedback = state.get("outline_feedback", "")
+    rerun_instruction = state.get("rerun_instruction", "")
     store = get_artifact_store()
 
     # 创建节点运行记录
@@ -115,7 +154,12 @@ async def generate_outline(state: dict) -> dict:
         started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
-            artifact_id for artifact_id in [state.get("intent_card_artifact_id")] if artifact_id
+            artifact_id
+            for artifact_id in [
+                state.get("intent_card_artifact_id"),
+                state.get("evidence_artifact_id"),
+            ]
+            if artifact_id
         ],
     )
     await store.create_node_run(node_run)
@@ -125,20 +169,23 @@ async def generate_outline(state: dict) -> dict:
         prompt_template = OUTLINE_GENERATION_PROMPT
         if outline_feedback:
             prompt_template += f"\n\n## 用户反馈（请根据此反馈调整提纲）\n{outline_feedback}"
+        if rerun_instruction:
+            prompt_template += f"\n\n## 重跑修订要求\n{rerun_instruction}"
 
-        llm = await get_structured_llm_for_workspace(
+        chain, _structured_runtime = await build_structured_chain_for_workspace(
             Outline,
+            prompt_template,
             workspace_id,
             model=model_name,
             model_provider_id=model_provider_id,
+            model_provider_name=model_provider_name,
         )
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-        chain = prompt | llm
 
         # 调用 LLM
         start_time = utc_now_naive()
-        outline: Outline = await invoke_with_llm_retry(
-            lambda: chain.ainvoke(
+        outline, usage = await invoke_with_llm_retry(
+            lambda: invoke_structured_with_usage(
+                chain,
                 {
                     "goal": intent_card.goal,
                     "topic": intent_card.topic,
@@ -147,25 +194,37 @@ async def generate_outline(state: dict) -> dict:
                     "length": intent_card.length,
                     "must_include": ", ".join(intent_card.must_include) or "无特殊要求",
                     "must_exclude": ", ".join(intent_card.must_exclude) or "无",
-                }
+                    "evidence_context": _format_evidence_context(state),
+                },
             )
         )
         end_time = utc_now_naive()
+        usage = ensure_usage_metadata(
+            usage,
+            prompt_text=intent_card.topic,
+            completion_text=outline.title,
+        )
 
         # 记录 LLM 调用（动态获取模型配置）
         model_info = await get_current_model_info_for_workspace(
             workspace_id,
             model_provider_id=model_provider_id,
+            model_provider_name=model_provider_name,
             model=model_name,
         )
         llm_call = LLMCallRecord(
             model=model_info["model"],
             provider=model_info["provider"],
+            prompt_tokens=usage["prompt_tokens"],
+            completion_tokens=usage["completion_tokens"],
+            total_tokens=usage["total_tokens"],
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
             prompt_preview=intent_card.topic[:100],
             response_preview=outline.title[:100],
         )
         node_run.llm_calls.append(llm_call)
+
+        outline_gate_enabled = runtime_feature_enabled(state, "outline_gate", default=True)
 
         # 创建 Artifact
         parent_artifact_id = state.get("outline_artifact_id")  # 如果是重新生成
@@ -177,10 +236,29 @@ async def generate_outline(state: dict) -> dict:
             parent_version_id=parent_artifact_id,
             metadata={
                 "feedback": outline_feedback,
+                "rerun_instruction": rerun_instruction,
+                "evidence_artifact_id": state.get("evidence_artifact_id"),
                 "section_count": len(outline.get_flat_sections()),
-                "awaiting_approval": True,
+                "awaiting_approval": outline_gate_enabled,
             },
         )
+
+        node_run.output_artifact_ids.append(artifact.id)
+        if not outline_gate_enabled:
+            await _update_gate_metadata(store, workflow_run_id, None)
+            node_run.complete(NodeRunStatus.COMPLETED)
+            await store.update_node_run(node_run)
+
+            return {
+                **state,
+                "outline": outline,
+                "outline_artifact_id": artifact.id,
+                "outline_node_run_id": node_run.id,
+                "awaiting_outline_approval": False,
+                "outline_approved": True,
+                "user_decision": None,
+                "outline_feedback": None,  # 清除反馈
+            }
 
         gate_opened_at = _now_iso()
         await _update_gate_metadata(
@@ -198,7 +276,6 @@ async def generate_outline(state: dict) -> dict:
         )
 
         # 更新节点运行记录（标记为中断，等待用户确认）
-        node_run.output_artifact_ids.append(artifact.id)
         node_run.complete(NodeRunStatus.INTERRUPTED)
         await store.update_node_run(node_run)
 

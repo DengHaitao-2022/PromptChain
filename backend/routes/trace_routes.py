@@ -9,6 +9,9 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 import routes.workflow_helpers as workflow_helpers
+from core.errors.codes import COMMON_INTERNAL_ERROR, TRACE_RESOURCE_NOT_FOUND
+from core.errors.exceptions import DomainError, InfrastructureError, PromptChainError
+from core.time import normalize_api_datetime
 from routes.workflow_helpers import (
     _extract_workflow_status,
     _get_graph_state,
@@ -34,7 +37,7 @@ async def get_workflow_trace(workflow_run_id: str, request: Request):
         store = get_artifact_store()
         workflow_run = await store.get_workflow_run(workflow_run_id)
         if not workflow_run:
-            raise ValueError(f"WorkflowRun not found: {workflow_run_id}")
+            raise DomainError(code=TRACE_RESOURCE_NOT_FOUND, message="工作流追踪资源不存在")
 
         workflow = get_workflow()
         graph_state = await _get_graph_state(workflow, workflow_run_id)
@@ -47,12 +50,14 @@ async def get_workflow_trace(workflow_run_id: str, request: Request):
             status=status,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise DomainError(code=TRACE_RESOURCE_NOT_FOUND, message=str(e)) from e
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("获取工作流追踪失败: workflow_run_id=%s", workflow_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+        raise InfrastructureError(code=COMMON_INTERNAL_ERROR, cause=exc) from exc
 
 
 @router.get("/trace/node/{node_run_id}")
@@ -66,19 +71,21 @@ async def get_node_detail(node_run_id: str, request: Request):
         detail = await trace_service.get_node_detail(node_run_id)
         return detail
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise DomainError(code=TRACE_RESOURCE_NOT_FOUND, message=str(e)) from e
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("获取节点详情失败: node_run_id=%s", node_run_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+        raise InfrastructureError(code=COMMON_INTERNAL_ERROR, cause=exc) from exc
 
 
 @router.get("/artifact/{artifact_id}")
 async def get_artifact(artifact_id: str, request: Request):
     """获取 Artifact 详情"""
     artifact = await workflow_helpers.require_artifact_access(request, artifact_id)
-    return artifact.model_dump()
+    return normalize_api_datetime(artifact.model_dump())
 
 
 @router.get("/artifact/{artifact_id}/history")
@@ -91,8 +98,10 @@ async def get_artifact_history(artifact_id: str, request: Request):
         trace_service = get_trace_service()
         history = await trace_service.get_artifact_history(artifact_id)
         return history
+    except PromptChainError:
+        raise
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("获取 Artifact 历史失败: artifact_id=%s", artifact_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+        raise InfrastructureError(code=COMMON_INTERNAL_ERROR, cause=exc) from exc

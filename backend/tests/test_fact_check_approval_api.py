@@ -48,6 +48,22 @@ class _FakeWorkflow:
             },
         }
 
+    async def approve_fact_check(
+        self,
+        workflow_run_id: str,
+        decisions: dict,
+        manual_corrections: dict,
+    ):
+        return {
+            "workflow_run_id": workflow_run_id,
+            "status": "running",
+            "state": {
+                "awaiting_fact_check_approval": False,
+                "fact_check_decisions": decisions,
+                "manual_corrections": manual_corrections,
+            },
+        }
+
     def _get_workflow_status(self, state: dict):
         return (
             "awaiting_fact_check_approval"

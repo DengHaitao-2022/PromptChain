@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import routes.workflow_helpers as workflow_helpers
+from core.errors.codes import AUTH_UNAUTHENTICATED, WORKFLOW_NOT_FOUND, WORKSPACE_ACCESS_DENIED
 from core.time import to_utc_iso
 from main import app
 from routes.auth_routes import ACCESS_TOKEN_COOKIE
@@ -195,7 +196,13 @@ class _FakeRerunService:
     ):
         return updated_input or {}
 
-    async def create_rerun_workflow(self, workflow_run_id: str, from_node: str, reason: str = ""):
+    async def create_rerun_workflow(
+        self,
+        workflow_run_id: str,
+        from_node: str,
+        reason: str = "",
+        updated_user_input: str | None = None,
+    ):
         return self.store.workflow_runs["wf-rerun"]
 
     async def get_rerun_history(self, workflow_run_id: str):
@@ -226,6 +233,10 @@ class _FakeWorkflow:
         user_input: str,
         workflow_definition_id: str | None = None,
         workflow_version_id: str | None = None,
+        workspace_id: str | None = None,
+        user_id: str | None = None,
+        model_provider_id: str | None = None,
+        model_name: str | None = None,
     ):
         return {
             "workflow_run_id": "wf-new",
@@ -238,6 +249,22 @@ class _FakeWorkflow:
 
     async def resume_paused(self, workflow_run_id: str):
         return {"workflow_run_id": workflow_run_id, "status": "running", "state": {}}
+
+    async def rerun_from_node(
+        self,
+        workflow_run_id: str,
+        *,
+        from_node: str,
+        preserved_state: dict,
+    ):
+        return {
+            "workflow_run_id": workflow_run_id,
+            "status": "running",
+            "state": {
+                **preserved_state,
+                "rerun_from_node": from_node,
+            },
+        }
 
     async def resume(self, workflow_run_id: str, user_input: dict):
         return {"workflow_run_id": workflow_run_id, "status": "running", "state": user_input}
@@ -264,10 +291,15 @@ def _make_client(user_id: str | None = None, workspace_id: str | None = None) ->
 
 def _install_runtime_fakes(monkeypatch, store: _FakeStore | None = None) -> _FakeStore:
     fake_store = store or _FakeStore()
+
+    async def _skip_workflow_audit(*args, **kwargs):
+        return None
+
     monkeypatch.setattr("services.get_artifact_store", lambda: fake_store)
     monkeypatch.setattr("services.get_trace_service", lambda: _FakeTraceService())
     monkeypatch.setattr("services.get_rerun_service", lambda: _FakeRerunService(fake_store))
     monkeypatch.setattr("graph.get_workflow", lambda: _FakeWorkflow(fake_store))
+    monkeypatch.setattr("routes.workflow_routes._record_workflow_audit", _skip_workflow_audit)
     return fake_store
 
 
@@ -312,6 +344,10 @@ def test_runtime_and_trace_routes_require_authentication(
     )
 
     assert response.status_code == 401
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == AUTH_UNAUTHENTICATED
+    assert body["request_id"]
 
 
 def test_start_workflow_persists_runtime_ownership(monkeypatch):
@@ -346,7 +382,7 @@ def test_runs_list_returns_current_user_visible_runs(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert [run["id"] for run in body["runs"]] == ["wf-124", "wf-123"]
-    assert set(body["runs"][0].keys()) == {
+    assert {
         "id",
         "workflow_name",
         "status",
@@ -355,7 +391,15 @@ def test_runs_list_returns_current_user_visible_runs(monkeypatch):
         "started_at",
         "completed_at",
         "total_duration_ms",
-    }
+    }.issubset(body["runs"][0].keys())
+    assert {
+        "workflow_definition_id",
+        "workflow_version_id",
+        "runtime_plan",
+        "runtime_progress",
+        "gate",
+        "pause",
+    }.issubset(body["runs"][0].keys())
 
 
 def test_runs_list_admin_scope_still_excludes_foreign_workspace(monkeypatch):
@@ -392,7 +436,11 @@ def test_workflow_status_rejects_foreign_workspace(monkeypatch):
     response = client.get("/api/workflow/wf-foreign")
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "您无权访问该工作空间中的任务"
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == WORKSPACE_ACCESS_DENIED
+    assert body["message"] == "您无权访问该工作空间中的任务"
+    assert body["request_id"]
 
 
 def test_trace_rejects_foreign_workspace(monkeypatch):
@@ -408,7 +456,11 @@ def test_trace_rejects_foreign_workspace(monkeypatch):
     response = client.get("/api/trace/wf-foreign")
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "您无权访问该工作空间中的任务"
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == WORKSPACE_ACCESS_DENIED
+    assert body["message"] == "您无权访问该工作空间中的任务"
+    assert body["request_id"]
 
 
 def test_trace_node_returns_404_for_missing_resource(monkeypatch):
@@ -424,7 +476,11 @@ def test_trace_node_returns_404_for_missing_resource(monkeypatch):
     response = client.get("/api/trace/node/node-missing")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "NodeRun not found"
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == WORKFLOW_NOT_FOUND
+    assert body["message"] == "节点运行记录不存在"
+    assert body["request_id"]
 
 
 def test_artifact_history_rejects_foreign_workspace_without_wrapping_500(monkeypatch):
@@ -440,7 +496,11 @@ def test_artifact_history_rejects_foreign_workspace_without_wrapping_500(monkeyp
     response = client.get("/api/artifact/art-foreign/history")
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "您无权访问该工作空间中的任务"
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == WORKSPACE_ACCESS_DENIED
+    assert body["message"] == "您无权访问该工作空间中的任务"
+    assert body["request_id"]
 
 
 def test_rerun_persists_runtime_ownership(monkeypatch):

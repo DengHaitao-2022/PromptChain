@@ -4,10 +4,10 @@
 包含模型供应商配置、密钥管理、API Key、审计日志等 ORM 定义
 """
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Text
+# 使用现有的 Base
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import relationship
 
-# 使用现有的 Base
 from core.time import utc_now_naive
 from db.postgres_store import Base
 
@@ -24,7 +24,7 @@ class ModelProviderORM(Base):
     provider = Column(String(50), nullable=False)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
-    enabled = Column(Boolean, default=True)
+    enabled = Column(Boolean, nullable=False, default=True)
     config = Column(JSON, default=dict)  # 加密存储敏感配置
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
@@ -79,6 +79,8 @@ class AuditLogORM(Base):
     """审计日志 ORM 模型"""
 
     __tablename__ = "audit_logs"
+    # 记录现有目标查询索引，确保 ORM metadata 与 Alembic baseline 保持一致。
+    __table_args__ = (Index("ix_audit_logs_target", "target_type", "target_id"),)
 
     id = Column(String(36), primary_key=True)
     event_id = Column(String(64), nullable=True, index=True)
@@ -117,5 +119,5 @@ class LoginAttemptORM(Base):
     id = Column(String(36), primary_key=True)
     email = Column(String(255), nullable=False, index=True)
     ip_address = Column(String(50), nullable=False, index=True)
-    success = Column(Boolean, default=False)
+    success = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=utc_now_naive, index=True)

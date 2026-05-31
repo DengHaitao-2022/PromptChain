@@ -10,17 +10,24 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import and_, desc, func
 from sqlalchemy.future import select
 
+from core.errors.codes import (
+    ADMIN_RESOURCE_NOT_FOUND,
+    COMMON_BAD_REQUEST,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from core.time import app_day_start_as_utc_naive, utc_now_naive
 from db.postgres_store import get_postgres_store
 from models.admin_models import (
     ApiKeyCreate,
     AuditAction,
     ModelProviderCreate,
+    ModelProviderTestRequest,
     ModelProviderUpdate,
     SecretCreate,
 )
@@ -33,8 +40,10 @@ from services.llm_provider import (
     LLMProviderFactory,
     get_current_model_info_for_workspace,
 )
+from services.model_provider_tester import test_model_provider
 from services.permission_service import (
     PermissionService,
+    check_permission,
     resolve_membership_role,
     serialize_membership_role,
 )
@@ -60,12 +69,18 @@ _RUNTIME_DEFAULT_CONFIG_KEY = "_runtime_default"
 _SENSITIVE_CONFIG_KEYWORDS = ("key", "secret", "token", "credential", "password")
 
 
+def _secret_display_suffix(value: str) -> str:
+    """密钥列表只展示不可还原的尾部提示，短密钥不暴露原文。"""
+
+    return value[-4:] if len(value) >= 4 else "*" * len(value)
+
+
 async def get_workspace_id_from_request(request: Request) -> str:
     """从请求中获取当前工作空间ID"""
     payload = await get_current_user(request)
     workspace_id = payload.get("workspace_id")
     if not workspace_id:
-        raise HTTPException(status_code=400, detail="请先选择工作空间")
+        raise ApplicationError(code=WORKSPACE_CONTEXT_REQUIRED, message="请先选择工作空间")
     return workspace_id
 
 
@@ -205,23 +220,31 @@ async def get_dashboard(request: Request):
 
     store = get_postgres_store()
     async with store.async_session() as session:
-        # Dashboard 属于管理后台资源，普通成员不应访问。
         permission_service = PermissionService(session)
-        await permission_service.require_permission(user_id, workspace_id, "member", "read")
+        role = await permission_service.require_permission(
+            user_id,
+            workspace_id,
+            "workflow_run",
+            "read",
+        )
 
         # 获取统计数据（使用现有的 workflow_runs 表）
         from db.postgres_store import WorkflowRunORM
         from models.artifact import WorkflowRunStatus
 
         today = app_day_start_as_utc_naive()
-        workspace_filter = WorkflowRunORM.metadata_json["workspace_id"].as_string() == workspace_id
+        filters = [WorkflowRunORM.metadata_json["workspace_id"].as_string() == workspace_id]
+        can_read_members = check_permission(role, "member", "read")
+        if not can_read_members:
+            # 普通成员只能看到自己的运行数据，避免控制台首页泄露工作空间全量运行态。
+            filters.append(WorkflowRunORM.metadata_json["user_id"].as_string() == user_id)
 
         # 今日运行次数
         result = await session.execute(
             select(func.count(WorkflowRunORM.id)).where(
                 and_(
                     WorkflowRunORM.started_at >= today,
-                    workspace_filter,
+                    *filters,
                 )
             )
         )
@@ -233,7 +256,7 @@ async def get_dashboard(request: Request):
                 and_(
                     WorkflowRunORM.started_at >= today,
                     WorkflowRunORM.status == WorkflowRunStatus.COMPLETED.value,
-                    workspace_filter,
+                    *filters,
                 )
             )
         )
@@ -245,7 +268,7 @@ async def get_dashboard(request: Request):
                 and_(
                     WorkflowRunORM.started_at >= today,
                     WorkflowRunORM.status == WorkflowRunStatus.FAILED.value,
-                    workspace_filter,
+                    *filters,
                 )
             )
         )
@@ -257,28 +280,30 @@ async def get_dashboard(request: Request):
                 and_(
                     WorkflowRunORM.started_at >= today,
                     WorkflowRunORM.total_duration_ms.isnot(None),
-                    workspace_filter,
+                    *filters,
                 )
             )
         )
         today_avg_duration = result.scalar() or 0
 
         # 总运行次数
-        result = await session.execute(
-            select(func.count(WorkflowRunORM.id)).where(workspace_filter)
-        )
+        result = await session.execute(select(func.count(WorkflowRunORM.id)).where(and_(*filters)))
         total_runs = result.scalar() or 0
 
         # 成员数量
-        result = await session.execute(
-            select(func.count(MembershipORM.id)).where(MembershipORM.workspace_id == workspace_id)
-        )
-        total_members = result.scalar() or 0
+        total_members = None
+        if can_read_members:
+            result = await session.execute(
+                select(func.count(MembershipORM.id)).where(
+                    MembershipORM.workspace_id == workspace_id
+                )
+            )
+            total_members = result.scalar() or 0
 
         # 最近运行
         result = await session.execute(
             select(WorkflowRunORM)
-            .where(workspace_filter)
+            .where(and_(*filters))
             .order_by(desc(WorkflowRunORM.started_at))
             .limit(10)
         )
@@ -315,7 +340,10 @@ async def update_user_status(request: Request, target_user_id: str, body: Update
     这里的“停用”只影响当前工作空间，不会修改全局用户账号状态。
     """
     if body.status not in {UserStatus.ACTIVE, UserStatus.SUSPENDED}:
-        raise HTTPException(status_code=400, detail="仅支持启用或暂停当前工作空间访问")
+        raise ApplicationError(
+            code=COMMON_BAD_REQUEST,
+            message="仅支持启用或暂停当前工作空间访问",
+        )
 
     payload = await get_current_user(request)
     user_id = payload["sub"]
@@ -337,19 +365,23 @@ async def update_user_status(request: Request, target_user_id: str, body: Update
         row = result.one_or_none()
 
         if not row:
-            raise HTTPException(status_code=404, detail="目标用户不在当前工作空间")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="目标用户不在当前工作空间")
 
         membership, user = row
 
         if target_user_id == user_id:
-            raise HTTPException(status_code=400, detail="不能修改自己的工作空间访问状态")
+            raise ApplicationError(
+                code=COMMON_BAD_REQUEST, message="不能修改自己的工作空间访问状态"
+            )
 
         current_role, is_suspended = resolve_membership_role(membership.role)
         if not current_role:
-            raise HTTPException(status_code=400, detail="成员角色状态无效")
+            raise ApplicationError(code=COMMON_BAD_REQUEST, message="成员角色状态无效")
 
         if current_role.value == "owner":
-            raise HTTPException(status_code=400, detail="不能修改拥有者的工作空间访问状态")
+            raise ApplicationError(
+                code=COMMON_BAD_REQUEST, message="不能修改拥有者的工作空间访问状态"
+            )
 
         if body.status == UserStatus.SUSPENDED and is_suspended:
             return {
@@ -547,7 +579,7 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
         provider = result.scalar_one_or_none()
 
         if not provider:
-            raise HTTPException(status_code=404, detail="模型供应商配置不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="模型供应商配置不存在")
 
         if body.name is not None:
             provider.name = body.name
@@ -611,6 +643,48 @@ async def update_model_provider(request: Request, provider_id: str, body: ModelP
         }
 
 
+@router.post("/admin/model-providers/{provider_id}/test")
+async def test_model_provider_config(
+    request: Request,
+    provider_id: str,
+    body: ModelProviderTestRequest,
+):
+    """测试模型供应商配置，按静态校验、连通性、凭证、模型列表和短 Prompt 分步返回。"""
+    payload = await get_current_user(request)
+    user_id = payload["sub"]
+    workspace_id = await get_workspace_id_from_request(request)
+
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        permission_service = PermissionService(session)
+        # 测试会使用已保存密钥并可能产生模型调用费用，因此要求具备更新权限。
+        await permission_service.require_permission(
+            user_id,
+            workspace_id,
+            "model_provider",
+            "update",
+        )
+
+        result = await session.execute(
+            select(ModelProviderORM).where(
+                and_(
+                    ModelProviderORM.id == provider_id,
+                    ModelProviderORM.workspace_id == workspace_id,
+                )
+            )
+        )
+        provider = result.scalar_one_or_none()
+
+        if not provider:
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="模型供应商配置不存在")
+
+        return await test_model_provider(
+            provider,
+            selected_model=body.model,
+            prompt=body.prompt,
+        )
+
+
 @router.delete("/admin/model-providers/{provider_id}")
 async def delete_model_provider(request: Request, provider_id: str):
     """
@@ -639,7 +713,7 @@ async def delete_model_provider(request: Request, provider_id: str):
         provider = result.scalar_one_or_none()
 
         if not provider:
-            raise HTTPException(status_code=404, detail="模型供应商配置不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="模型供应商配置不存在")
 
         await log_audit(
             session,
@@ -681,7 +755,9 @@ async def list_secrets(request: Request):
         await permission_service.require_permission(user_id, workspace_id, "secret", "read")
 
         result = await session.execute(
-            select(SecretORM).where(SecretORM.workspace_id == workspace_id)
+            select(SecretORM)
+            .where(SecretORM.workspace_id == workspace_id)
+            .order_by(desc(SecretORM.created_at))
         )
         secrets_list = result.scalars().all()
 
@@ -715,7 +791,7 @@ async def create_secret(request: Request, body: SecretCreate):
 
         # 加密存储
         ciphertext = encrypt_secret(body.value)
-        last4 = body.value[-4:] if len(body.value) >= 4 else body.value
+        last4 = _secret_display_suffix(body.value)
 
         secret = SecretORM(
             id=str(uuid.uuid4()),
@@ -767,7 +843,7 @@ async def delete_secret(request: Request, secret_id: str):
         secret = result.scalar_one_or_none()
 
         if not secret:
-            raise HTTPException(status_code=404, detail="密钥不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="密钥不存在")
 
         await log_audit(
             session,
@@ -805,7 +881,9 @@ async def list_api_keys(request: Request):
         await permission_service.require_permission(user_id, workspace_id, "api_key", "read")
 
         result = await session.execute(
-            select(ApiKeyORM).where(ApiKeyORM.workspace_id == workspace_id)
+            select(ApiKeyORM)
+            .where(ApiKeyORM.workspace_id == workspace_id)
+            .order_by(desc(ApiKeyORM.created_at))
         )
         keys = result.scalars().all()
 
@@ -849,7 +927,7 @@ async def create_api_key(request: Request, body: ApiKeyCreate):
         key_prefix = key_raw[:8] + "..." + key_raw[-4:]
 
         expires_at = None
-        if body.expires_in_days:
+        if body.expires_in_days is not None:
             expires_at = utc_now_naive() + timedelta(days=body.expires_in_days)
 
         api_key = ApiKeyORM(
@@ -918,7 +996,7 @@ async def revoke_api_key(request: Request, key_id: str):
         api_key = result.scalar_one_or_none()
 
         if not api_key:
-            raise HTTPException(status_code=404, detail="API Key 不存在")
+            raise DomainError(code=ADMIN_RESOURCE_NOT_FOUND, message="API Key 不存在")
 
         api_key.revoked_at = utc_now_naive()
 

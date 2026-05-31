@@ -105,6 +105,13 @@ class ModelProviderUpdate(BaseModel):
     )
 
 
+class ModelProviderTestRequest(BaseModel):
+    """模型供应商连通性测试请求"""
+
+    model: str | None = Field(default=None, max_length=256, description="可选的短 Prompt 测试模型")
+    prompt: str | None = Field(default=None, max_length=500, description="可选的短 Prompt 内容")
+
+
 class ModelProvider(ModelProviderBase):
     """模型供应商完整模型"""
 
@@ -183,7 +190,11 @@ class ApiKeyBase(BaseModel):
 class ApiKeyCreate(ApiKeyBase):
     """创建 API Key"""
 
-    expires_in_days: int | None = Field(None, description="有效期（天），不填则永不过期")
+    expires_in_days: int | None = Field(
+        None,
+        ge=1,
+        description="有效期（天），不填则永不过期",
+    )
 
 
 class ApiKey(ApiKeyBase):

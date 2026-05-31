@@ -37,6 +37,7 @@ export default function RootLayout({
           id="promptchain-theme-init"
           dangerouslySetInnerHTML={{ __html: buildThemeInitScript() }}
         />
+        {/* 主题上下文放在根布局，确保公开页与控制台共享同一套 design token 状态。 */}
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

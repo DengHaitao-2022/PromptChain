@@ -8,7 +8,17 @@
 'use client';
 
 import { useCallback } from 'react';
-import { ReactFlow, Background, Controls, MiniMap, BackgroundVariant, Panel, type Node } from '@xyflow/react';
+import {
+    ReactFlow,
+    Background,
+    Controls,
+    MiniMap,
+    BackgroundVariant,
+    Panel,
+    useReactFlow,
+    type Edge,
+    type Node,
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import { useWorkflowContext } from './provider/WorkflowProvider';
@@ -32,6 +42,7 @@ import type { WorkflowEditorProps } from './index';
 
 export function WorkflowEditorShell({
 workflowId,
+initialSnapshotKey,
 initialNodes,
 initialEdges,
 name,
@@ -52,7 +63,13 @@ const selectedNode = useWorkflowContext(selectSelectedNode);
 const readOnly = useWorkflowContext(selectReadOnly);
 
     const actions = useWorkflowActions();
-    const { status: yjsStatus, provider: yjsProvider } = useYjsBindings(workflowId, initialNodes, initialEdges);
+    const { screenToFlowPosition } = useReactFlow();
+    const { status: yjsStatus, provider: yjsProvider } = useYjsBindings(
+        workflowId,
+        initialNodes,
+        initialEdges,
+        initialSnapshotKey,
+    );
 
     const busy = Boolean(
         actionState?.isSaving || actionState?.isValidating || actionState?.isPublishing,
@@ -88,13 +105,14 @@ const readOnly = useWorkflowContext(selectReadOnly);
                 return;
             }
 
-            const position = {
-                x: event.clientX - 250,
-                y: event.clientY - 100,
-            };
+            const position = screenToFlowPosition({
+                x: event.clientX,
+                y: event.clientY,
+            });
 
+            const nodeId = globalThis.crypto.randomUUID();
             const newNode: Node = {
-                id: `${type}-${Date.now()}`,
+                id: `${type}-${nodeId}`,
                 type,
                 position,
                 initialWidth: WORKFLOW_NODE_CARD_WIDTH,
@@ -107,7 +125,7 @@ const readOnly = useWorkflowContext(selectReadOnly);
 
             actions.addNode(newNode);
         },
-        [readOnly, actions],
+        [readOnly, screenToFlowPosition, actions],
     );
 
     const onDragOver = useCallback((event: React.DragEvent) => {
@@ -236,7 +254,7 @@ const readOnly = useWorkflowContext(selectReadOnly);
             )}
 
             <div className={styles.editorContainer}>
-                <NodeLibrary />
+                <NodeLibrary readOnly={readOnly} />
 
                 <div className={styles.canvas}>
                     <ReactFlow
@@ -253,6 +271,9 @@ const readOnly = useWorkflowContext(selectReadOnly);
                         fitView
                         snapToGrid
                         snapGrid={[15, 15]}
+                        connectionRadius={40}
+                        nodesDraggable={!readOnly}
+                        nodesConnectable={!readOnly}
                     >
                         <Background
                             variant={BackgroundVariant.Dots}
