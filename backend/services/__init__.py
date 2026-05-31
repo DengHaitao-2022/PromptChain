@@ -13,6 +13,11 @@ from db.postgres_store import (
 
 from .artifact_store import ArtifactStore, get_artifact_store
 from .audit_log_service import AuditLogService
+from .autonomous_agent_evaluation import AgentEvaluator, AgentReflector, MemoryManager
+from .autonomous_agent_planner import AutonomousPlanner, GoalInterpreter
+from .autonomous_agent_runtime import AutonomousAgentRuntime
+from .autonomous_agent_store import AutonomousAgentStore
+from .autonomous_agent_tools import ToolExecutor, ToolRegistry, build_default_tool_registry
 from .llm_errors import (
     format_workflow_error,
     is_llm_rate_limit_error,
@@ -57,6 +62,16 @@ __all__ = [
     # artifact_store
     "ArtifactStore",
     "AuditLogService",
+    "AutonomousAgentStore",
+    "AutonomousAgentRuntime",
+    "AutonomousPlanner",
+    "GoalInterpreter",
+    "AgentEvaluator",
+    "AgentReflector",
+    "MemoryManager",
+    "ToolRegistry",
+    "ToolExecutor",
+    "build_default_tool_registry",
     "PostgresArtifactStore",
     "PostgresGraphCheckpointSaver",
     "get_artifact_store",

@@ -584,6 +584,10 @@ class PostgresArtifactStore:
             await self.init_db()
             self._initialized = True
 
+    async def ensure_initialized(self) -> None:
+        """公开的运行态表初始化入口，供直接使用 async_session 的路由调用。"""
+        await self._ensure_initialized()
+
     async def init_db(self):
         """初始化数据库表。
 
@@ -594,6 +598,7 @@ class PostgresArtifactStore:
             "models.admin_orm",
             "models.workflow_orm",
             "orm.knowledge_orm",
+            "orm.autonomous_agent_orm",
         ):
             importlib.import_module(module_name)
 

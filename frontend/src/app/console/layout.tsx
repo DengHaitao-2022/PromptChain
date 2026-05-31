@@ -66,6 +66,13 @@ const NAV_ITEMS: NavItem[] = [
     resource: 'knowledge_base',
     action: 'read',
   },
+  {
+    label: '自主 Agent',
+    href: '/console/agents',
+    icon: Bot,
+    resource: 'workflow_run',
+    action: 'read',
+  },
 ];
 
 const SETTINGS_ITEMS: NavItem[] = [

@@ -1,0 +1,581 @@
+"""Autonomous Agent 工具注册与执行。"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from core.time import utc_now_naive
+from models.artifact import ArtifactType
+from models.autonomous_agent import (
+    AgentStep,
+    ToolCall,
+    ToolCallStatus,
+    ToolDefinition,
+    ToolRiskLevel,
+)
+from models.knowledge import KnowledgeScope, KnowledgeSearchRequest
+from services.artifact_store import ArtifactStore
+from services.autonomous_agent_store import AutonomousAgentStore
+from services.knowledge_service import KnowledgeService
+
+ToolHandler = Callable[[dict[str, Any], AgentStep | None], Awaitable[dict[str, Any]]]
+
+
+def _optional_str(value: Any) -> str | None:
+    """将可选 payload 字段归一为字符串。"""
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+async def _collect_artifact_evidence(
+    *,
+    artifact_store: ArtifactStore,
+    workspace_id: str,
+    user_id: str | None,
+    workflow_run_id: str | None,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """收集当前运行和历史运行的 Artifact 线索，供长程上下文复用。"""
+    workflow_ids = [workflow_run_id] if workflow_run_id else []
+    try:
+        workflow_runs = await artifact_store.list_workflow_runs(
+            workspace_id=workspace_id,
+            user_id=user_id,
+        )
+        workflow_ids.extend(run.id for run in workflow_runs[:limit] if run.id not in workflow_ids)
+    except Exception:
+        # ArtifactStore 可能是测试内存实现或外部存储异常；证据检索失败不应中断 Agent。
+        workflow_ids = [item for item in workflow_ids if item]
+
+    evidence: list[dict[str, Any]] = []
+    for current_workflow_id in workflow_ids:
+        if not current_workflow_id:
+            continue
+        try:
+            artifacts = await artifact_store.get_artifacts_by_workflow(current_workflow_id)
+        except Exception:
+            continue
+        for artifact in artifacts[-limit:]:
+            evidence.append(
+                {
+                    "artifact_id": artifact.id,
+                    "workflow_run_id": artifact.workflow_run_id,
+                    "node_run_id": artifact.node_run_id,
+                    "type": artifact.type.value,
+                    "version": artifact.version,
+                    "content_preview": _preview(artifact.content),
+                    "metadata": artifact.metadata,
+                }
+            )
+            if len(evidence) >= limit:
+                return evidence
+    return evidence
+
+
+async def _collect_trace_evidence(
+    *,
+    artifact_store: ArtifactStore,
+    workspace_id: str,
+    user_id: str | None,
+    workflow_run_id: str | None,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """收集 NodeRun/Trace 线索，帮助 Agent 理解历史执行路径。"""
+    workflow_ids = [workflow_run_id] if workflow_run_id else []
+    try:
+        workflow_runs = await artifact_store.list_workflow_runs(
+            workspace_id=workspace_id,
+            user_id=user_id,
+        )
+        workflow_ids.extend(run.id for run in workflow_runs[:limit] if run.id not in workflow_ids)
+    except Exception:
+        workflow_ids = [item for item in workflow_ids if item]
+
+    evidence: list[dict[str, Any]] = []
+    for current_workflow_id in workflow_ids:
+        if not current_workflow_id:
+            continue
+        try:
+            node_runs = await artifact_store.get_node_runs_by_workflow(current_workflow_id)
+        except Exception:
+            continue
+        for node_run in node_runs[-limit:]:
+            evidence.append(
+                {
+                    "node_run_id": node_run.id,
+                    "workflow_run_id": node_run.workflow_run_id,
+                    "node_name": node_run.node_name,
+                    "node_type": node_run.node_type,
+                    "status": node_run.status.value,
+                    "duration_ms": node_run.duration_ms,
+                    "error_message": node_run.error_message,
+                    "output_artifact_ids": node_run.output_artifact_ids,
+                }
+            )
+            if len(evidence) >= limit:
+                return evidence
+    return evidence
+
+
+async def _collect_tool_evidence(
+    *,
+    agent_store: AutonomousAgentStore,
+    run_id: str | None,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """收集当前 AgentRun 的工具调用证据。"""
+    if not run_id:
+        return []
+    try:
+        tool_calls = await agent_store.list_tool_calls(run_id)
+    except Exception:
+        return []
+    return [
+        {
+            "tool_call_id": call.id,
+            "tool_name": call.tool_name,
+            "status": call.status.value,
+            "risk_level": call.risk_level.value,
+            "latency_ms": call.latency_ms,
+            "error_message": call.error_message,
+            "output_preview": _preview(call.output),
+        }
+        for call in tool_calls[-limit:]
+    ]
+
+
+async def _retrieve_knowledge_evidence(
+    *,
+    agent_store: AutonomousAgentStore,
+    workspace_id: str,
+    user_id: str | None,
+    workflow_run_id: str | None,
+    node_run_id: str | None,
+    query: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """复用知识库检索能力，失败时返回可审计错误而不中断主循环。"""
+    if not user_id:
+        return None, "缺少 user_id，已跳过知识库检索"
+    if not query.strip():
+        return None, "缺少 query，已跳过知识库检索"
+    try:
+        response = await KnowledgeService(agent_store.session).search(
+            request=KnowledgeSearchRequest(
+                query=query,
+                scopes=[
+                    KnowledgeScope.WORKSPACE,
+                    KnowledgeScope.PERSONAL,
+                    KnowledgeScope.RUN_UPLOAD,
+                ],
+                top_k=5,
+                min_score=0.1,
+                workflow_run_id=workflow_run_id,
+                node_run_id=node_run_id,
+            ),
+            workspace_id=workspace_id,
+            user_id=user_id,
+        )
+        return response.model_dump(mode="json"), None
+    except (SQLAlchemyError, ValueError) as exc:
+        return None, str(exc)
+
+
+def _preview(value: Any, *, limit: int = 480) -> str:
+    """把结构化证据压缩为短预览，避免工具输出过大。"""
+    text = str(value)
+    return text if len(text) <= limit else f"{text[:limit]}..."
+
+
+class ToolRegistry:
+    """统一工具注册中心。"""
+
+    def __init__(self):
+        self._definitions: dict[str, ToolDefinition] = {}
+        self._handlers: dict[str, ToolHandler] = {}
+
+    def register(self, definition: ToolDefinition, handler: ToolHandler) -> None:
+        """注册工具定义和执行器。"""
+        self._definitions[definition.name] = definition
+        self._handlers[definition.name] = handler
+
+    def get(self, name: str) -> ToolDefinition:
+        """读取工具定义。"""
+        if name not in self._definitions:
+            raise ValueError(f"未注册工具: {name}")
+        return self._definitions[name]
+
+    def list_definitions(self) -> list[ToolDefinition]:
+        """列出所有工具定义。"""
+        return sorted(self._definitions.values(), key=lambda item: item.name)
+
+    async def call(
+        self, name: str, payload: dict[str, Any], step: AgentStep | None
+    ) -> dict[str, Any]:
+        """执行工具。"""
+        if name not in self._handlers:
+            raise ValueError(f"未注册工具执行器: {name}")
+        return await self._handlers[name](payload, step)
+
+
+class ToolExecutor:
+    """负责工具参数校验、风险 Gate、执行和审计。"""
+
+    def __init__(
+        self,
+        *,
+        registry: ToolRegistry,
+        store: AutonomousAgentStore,
+        risk_gate_threshold: ToolRiskLevel = ToolRiskLevel.MEDIUM,
+    ):
+        self.registry = registry
+        self.store = store
+        self.risk_gate_threshold = risk_gate_threshold
+
+    async def execute(
+        self,
+        *,
+        run_id: str,
+        tool_name: str,
+        payload: dict[str, Any],
+        step: AgentStep | None = None,
+        force: bool = False,
+        allowed_permissions: set[str] | None = None,
+    ) -> ToolCall:
+        """执行工具并写入 ToolCall。"""
+        definition = self.registry.get(tool_name)
+        tool_call = ToolCall(
+            run_id=run_id,
+            step_id=step.id if step else None,
+            tool_name=tool_name,
+            input=payload,
+            status=ToolCallStatus.PENDING,
+            risk_level=definition.risk_level,
+            metadata={
+                "permission": definition.permission,
+                "idempotent": definition.idempotent,
+            },
+        )
+        await self.store.create_tool_call(tool_call)
+
+        permission_error = self._validate_permission(definition, allowed_permissions)
+        if permission_error:
+            tool_call.status = ToolCallStatus.FAILED
+            tool_call.error_message = permission_error
+            tool_call.output = {"error": permission_error}
+            tool_call.completed_at = utc_now_naive()
+            await self.store.update_tool_call(tool_call)
+            return tool_call
+
+        validation_error = self._validate_payload(definition, payload)
+        if validation_error:
+            tool_call.status = ToolCallStatus.FAILED
+            tool_call.error_message = validation_error
+            tool_call.output = {"error": validation_error}
+            tool_call.completed_at = utc_now_naive()
+            await self.store.update_tool_call(tool_call)
+            return tool_call
+
+        if self._requires_gate(definition.risk_level) and not force:
+            tool_call.status = ToolCallStatus.AWAITING_GATE
+            tool_call.output = {
+                "gate_required": True,
+                "reason": f"工具 {tool_name} 风险等级为 {definition.risk_level.value}",
+            }
+            tool_call.completed_at = utc_now_naive()
+            await self.store.update_tool_call(tool_call)
+            return tool_call
+
+        return await self._run_tool_call(tool_call, step)
+
+    async def approve_and_execute(
+        self,
+        *,
+        tool_call: ToolCall,
+        step: AgentStep | None = None,
+        allowed_permissions: set[str] | None = None,
+    ) -> ToolCall:
+        """执行已经通过 Gate 审批的工具调用，并复用原审计记录。"""
+        if tool_call.status != ToolCallStatus.AWAITING_GATE:
+            raise ValueError("工具调用不处于 Gate 等待状态")
+        definition = self.registry.get(tool_call.tool_name)
+        permission_error = self._validate_permission(definition, allowed_permissions)
+        if permission_error:
+            tool_call.status = ToolCallStatus.FAILED
+            tool_call.error_message = permission_error
+            tool_call.output = {"error": permission_error}
+            tool_call.completed_at = utc_now_naive()
+            await self.store.update_tool_call(tool_call)
+            return tool_call
+        return await self._run_tool_call(tool_call, step)
+
+    async def _run_tool_call(self, tool_call: ToolCall, step: AgentStep | None) -> ToolCall:
+        """执行工具并更新同一条 ToolCall 审计记录。"""
+        started = time.perf_counter()
+        tool_call.status = ToolCallStatus.RUNNING
+        await self.store.update_tool_call(tool_call)
+        try:
+            tool_call.output = await self.registry.call(tool_call.tool_name, tool_call.input, step)
+            tool_call.status = ToolCallStatus.COMPLETED
+        except Exception as exc:
+            tool_call.status = ToolCallStatus.FAILED
+            tool_call.error_message = str(exc)
+            tool_call.output = {"error": str(exc)}
+        finally:
+            tool_call.latency_ms = int((time.perf_counter() - started) * 1000)
+            if not tool_call.cost:
+                tool_call.cost = {"amount": 1.0, "unit": "tool_call"}
+            tool_call.completed_at = utc_now_naive()
+            await self.store.update_tool_call(tool_call)
+        return tool_call
+
+    def _validate_permission(
+        self,
+        definition: ToolDefinition,
+        allowed_permissions: set[str] | None,
+    ) -> str | None:
+        """校验工具声明权限；未提供 actor 权限时保持内部测试/离线运行兼容。"""
+        if allowed_permissions is None:
+            return None
+        if definition.permission not in allowed_permissions:
+            return f"工具 {definition.name} 需要权限 {definition.permission}"
+        return None
+
+    def _validate_payload(self, definition: ToolDefinition, payload: dict[str, Any]) -> str | None:
+        """按工具声明的最小 JSON Schema 校验必填字段。"""
+        required = definition.input_schema.get("required", [])
+        if not isinstance(required, list):
+            return "工具 input_schema.required 必须是数组"
+        missing = [
+            field for field in required if field not in payload or payload.get(field) in (None, "")
+        ]
+        if missing:
+            return f"工具 {definition.name} 缺少必填参数: {', '.join(missing)}"
+        return None
+
+    def _requires_gate(self, risk_level: ToolRiskLevel) -> bool:
+        order = {
+            ToolRiskLevel.LOW: 0,
+            ToolRiskLevel.MEDIUM: 1,
+            ToolRiskLevel.HIGH: 2,
+            ToolRiskLevel.CRITICAL: 3,
+        }
+        return order[risk_level] >= order[self.risk_gate_threshold]
+
+
+def build_default_tool_registry(
+    *,
+    artifact_store: ArtifactStore,
+    agent_store: AutonomousAgentStore,
+) -> ToolRegistry:
+    """注册 Issue #15 要求的首批工具。"""
+    registry = ToolRegistry()
+
+    async def retrieve_memory(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
+        workspace_id = payload.get("workspace_id")
+        query = payload.get("query") or ""
+        if not workspace_id:
+            return {
+                "memories": [],
+                "knowledge_evidence": None,
+                "artifact_evidence": [],
+                "trace_evidence": [],
+                "tool_evidence": [],
+                "reason": "缺少 workspace_id",
+            }
+        memories = await agent_store.search_memories(workspace_id, query, limit=8)
+        artifact_evidence = await _collect_artifact_evidence(
+            artifact_store=artifact_store,
+            workspace_id=str(workspace_id),
+            user_id=_optional_str(payload.get("user_id")),
+            workflow_run_id=_optional_str(payload.get("workflow_run_id")),
+        )
+        trace_evidence = await _collect_trace_evidence(
+            artifact_store=artifact_store,
+            workspace_id=str(workspace_id),
+            user_id=_optional_str(payload.get("user_id")),
+            workflow_run_id=_optional_str(payload.get("workflow_run_id")),
+        )
+        tool_evidence = await _collect_tool_evidence(
+            agent_store=agent_store,
+            run_id=_optional_str(payload.get("workflow_run_id")),
+        )
+        knowledge_evidence, knowledge_error = await _retrieve_knowledge_evidence(
+            agent_store=agent_store,
+            workspace_id=str(workspace_id),
+            user_id=_optional_str(payload.get("user_id")),
+            workflow_run_id=_optional_str(payload.get("workflow_run_id")),
+            node_run_id=_optional_str(payload.get("node_run_id")),
+            query=str(query),
+        )
+        return {
+            "memories": [memory.model_dump(mode="json") for memory in memories],
+            "knowledge_evidence": knowledge_evidence,
+            "knowledge_error": knowledge_error,
+            "artifact_evidence": artifact_evidence,
+            "trace_evidence": trace_evidence,
+            "tool_evidence": tool_evidence,
+        }
+
+    async def read_artifact(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
+        artifact_id = payload.get("artifact_id")
+        if artifact_id:
+            artifact = await artifact_store.get_artifact(str(artifact_id))
+            return {"artifact": artifact.model_dump(mode="json") if artifact else None}
+        workflow_run_id = payload.get("workflow_run_id")
+        if workflow_run_id:
+            artifacts = await artifact_store.get_artifacts_by_workflow(str(workflow_run_id))
+            return {
+                "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
+                "artifact_count": len(artifacts),
+            }
+        return {
+            "artifact": None,
+            "note": "未提供 artifact_id，当前步骤将基于目标和记忆继续执行。",
+        }
+
+    async def write_artifact(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
+        if step is None:
+            raise ValueError("write_artifact 需要关联 AgentStep")
+        content = payload.get("content") or {}
+        artifact = await artifact_store.create_artifact(
+            artifact_type=ArtifactType.FINAL_CONTENT,
+            content=content,
+            workflow_run_id=payload.get("workflow_run_id") or step.run_id,
+            node_run_id=payload.get("node_run_id") or step.id,
+            metadata={
+                "source": "autonomous_agent",
+                "agent_run_id": step.run_id,
+                "agent_step_id": step.id,
+                **(payload.get("metadata") or {}),
+            },
+        )
+        return {"artifact": artifact.model_dump(mode="json")}
+
+    async def rollback_artifact(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
+        if step is None:
+            raise ValueError("rollback_artifact 需要关联 AgentStep")
+        artifact_id = payload.get("artifact_id")
+        if not artifact_id:
+            raise ValueError("rollback_artifact 缺少 artifact_id")
+        source_artifact = await artifact_store.get_artifact(str(artifact_id))
+        if source_artifact is None:
+            raise ValueError("待回滚 Artifact 不存在")
+        rollback_artifact = await artifact_store.create_artifact(
+            artifact_type=source_artifact.type,
+            content=source_artifact.content,
+            workflow_run_id=payload.get("workflow_run_id") or step.run_id,
+            node_run_id=step.id,
+            parent_version_id=source_artifact.id,
+            metadata={
+                "source": "autonomous_agent_rollback",
+                "agent_run_id": step.run_id,
+                "agent_step_id": step.id,
+                "rollback_from_artifact_id": source_artifact.id,
+                **(payload.get("metadata") or {}),
+            },
+        )
+        return {
+            "artifact": rollback_artifact.model_dump(mode="json"),
+            "rolled_back_from": source_artifact.id,
+        }
+
+    async def fact_check(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
+        text = str(payload.get("text") or "")
+        risky_terms = ["绝对", "唯一", "保证", "100%", "从不"]
+        findings = [
+            {"term": term, "risk": "medium", "suggestion": "改为更可验证的限定表述"}
+            for term in risky_terms
+            if term in text
+        ]
+        return {
+            "passed": not findings,
+            "findings": findings,
+            "checked_length": len(text),
+        }
+
+    async def export_docx(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
+        return {
+            "export_ready": True,
+            "format": "docx",
+            "artifact_id": payload.get("artifact_id"),
+            "note": "DOCX 导出复用现有 /api/workflow/{id}/exports/docx 能力。",
+        }
+
+    registry.register(
+        ToolDefinition(
+            name="retrieve_memory",
+            description="检索当前工作空间的 Agent 长期记忆。",
+            input_schema={"type": "object", "required": ["workspace_id", "query"]},
+            output_schema={"type": "object", "properties": {"memories": {"type": "array"}}},
+            risk_level=ToolRiskLevel.LOW,
+            permission="workflow_run:read",
+            idempotent=True,
+        ),
+        retrieve_memory,
+    )
+    registry.register(
+        ToolDefinition(
+            name="read_artifact",
+            description="读取历史 Artifact 作为执行证据。",
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+            risk_level=ToolRiskLevel.LOW,
+            permission="workflow_run:read",
+            idempotent=True,
+        ),
+        read_artifact,
+    )
+    registry.register(
+        ToolDefinition(
+            name="write_artifact",
+            description="写入版本化 Artifact。",
+            input_schema={"type": "object", "required": ["content"]},
+            output_schema={"type": "object"},
+            risk_level=ToolRiskLevel.LOW,
+            permission="workflow:execute",
+            idempotent=False,
+        ),
+        write_artifact,
+    )
+    registry.register(
+        ToolDefinition(
+            name="rollback_artifact",
+            description="从指定 Artifact 版本创建新的回滚版本。",
+            input_schema={"type": "object", "required": ["artifact_id"]},
+            output_schema={"type": "object"},
+            risk_level=ToolRiskLevel.MEDIUM,
+            permission="workflow:execute",
+            idempotent=False,
+        ),
+        rollback_artifact,
+    )
+    registry.register(
+        ToolDefinition(
+            name="fact_check",
+            description="对文本进行轻量事实风险核查。",
+            input_schema={"type": "object", "required": ["text"]},
+            output_schema={"type": "object"},
+            risk_level=ToolRiskLevel.LOW,
+            permission="workflow:execute",
+            idempotent=True,
+        ),
+        fact_check,
+    )
+    registry.register(
+        ToolDefinition(
+            name="export_docx",
+            description="准备 DOCX 导出任务。",
+            input_schema={"type": "object", "required": ["artifact_id"]},
+            output_schema={"type": "object"},
+            risk_level=ToolRiskLevel.MEDIUM,
+            permission="workflow_run:export",
+            idempotent=True,
+        ),
+        export_docx,
+    )
+    return registry

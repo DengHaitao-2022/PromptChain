@@ -78,6 +78,11 @@ def _register_routes(application: FastAPI) -> None:
         workflow_definition_router, prefix="/api", tags=["workflow-definition"]
     )
 
+    # Autonomous Agent 路由
+    from routes.agent_routes import router as agent_router
+
+    application.include_router(agent_router, prefix="/api", tags=["autonomous-agent"])
+
     # 版本管理路由
     from routes.workflow_version_routes import router as version_router
 

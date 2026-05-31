@@ -31,6 +31,7 @@ class ArtifactType(StrEnum):
     SECTION_CONTENT = "section_content"
     REFINEMENT_FEEDBACK = "refinement_feedback"
     FINAL_CONTENT = "final_content"
+    AGENT_PLAN = "agent_plan"
 
 
 class Artifact(BaseModel):
