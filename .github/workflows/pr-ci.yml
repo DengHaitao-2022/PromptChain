@@ -105,6 +105,13 @@ jobs:
         if: needs.changes.outputs.backend-python == 'true'
         run: uvx ruff==0.14.10 format backend --check --config backend/ruff.toml
 
+      - name: Pytest 检查
+        if: needs.changes.outputs.backend-python == 'true'
+        working-directory: backend
+        env:
+          ALLOW_INSECURE_JWT_SECRET: "true"
+        run: uv run pytest tests -q
+
       - name: 跳过 Ruff 检查说明
         if: needs.changes.outputs.backend-python != 'true'
         run: echo "本次 PR 未修改 backend/**/*.py，跳过后端 Ruff gate；基础设施配置检查仍会阻塞。"

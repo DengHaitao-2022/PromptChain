@@ -77,18 +77,23 @@ def _format_evidence_context(state: dict, *, max_chunks: int = 6) -> str:
             return f"未检索到足够证据；需标记未验证点：{', '.join(map(str, unverified))}"
         return "未启用知识库或未检索到可用证据。"
 
-    lines: list[str] = []
+    lines: list[str] = ["使用规则：工作空间资料是权威事实源，个人资料仅作为风格或补充材料。"]
     for index, chunk in enumerate(chunks[:max_chunks], start=1):
         document_name = getattr(chunk, "document_name", None)
         content = getattr(chunk, "content", None)
         score = getattr(chunk, "score", None)
+        scope = getattr(chunk, "scope", None)
         if isinstance(chunk, dict):
             document_name = chunk.get("document_name")
             content = chunk.get("content")
             score = chunk.get("score")
+            scope = chunk.get("scope")
         if not content:
             continue
-        lines.append(f"[{index}] 来源：{document_name or '未知文档'}；分数：{score}\n{content}")
+        scope_value = getattr(scope, "value", scope) or "unknown"
+        lines.append(
+            f"[{index}] scope={scope_value}；来源：{document_name or '未知文档'}；分数：{score}\n{content}"
+        )
     return "\n\n".join(lines) if lines else "未启用知识库或未检索到可用证据。"
 
 

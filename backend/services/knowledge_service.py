@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 import uuid
@@ -31,6 +32,11 @@ from models.knowledge import (
     KnowledgeScope,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    KnowledgeUsageStats,
+    RetrievalEvaluationRequest,
+    RetrievalEvaluationResponse,
+    RetrievalEvaluationResult,
+    RetrievalEvaluationSummary,
     RetrievalMode,
 )
 from orm.knowledge_orm import (
@@ -46,6 +52,9 @@ from services.permission_service import check_permission
 TOKEN_PATTERN = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 SUPPORTED_TEXT_TYPES = {"txt", "md", "markdown", "text"}
 SUPPORTED_DOCUMENT_TYPES = {*SUPPORTED_TEXT_TYPES, "docx", "pdf"}
+DOCX_ZIP_MAGIC = b"PK"
+PDF_MAGIC = b"%PDF"
+logger = logging.getLogger(__name__)
 
 
 def _normalize_file_type(file_name: str) -> str:
@@ -53,6 +62,29 @@ def _normalize_file_type(file_name: str) -> str:
     if suffix == "markdown":
         return "md"
     return suffix or "txt"
+
+
+def _validate_upload_content(file_type: str, content: bytes) -> None:
+    """在解析前做轻量上传安全检查，避免明显伪造文件进入索引流程。"""
+    settings = get_settings()
+    if not content:
+        raise ValueError("文档内容不能为空")
+    if len(content) > settings.KNOWLEDGE_MAX_UPLOAD_BYTES:
+        max_mb = settings.KNOWLEDGE_MAX_UPLOAD_BYTES / 1024 / 1024
+        raise ValueError(f"文档大小不能超过 {max_mb:.0f} MB")
+    if file_type == "pdf" and not content.startswith(PDF_MAGIC):
+        raise ValueError("PDF 文件格式校验失败")
+    if file_type == "docx" and not content.startswith(DOCX_ZIP_MAGIC):
+        raise ValueError("DOCX 文件格式校验失败")
+
+
+def validate_upload_file(file_name: str, content: bytes) -> str:
+    """统一校验知识库上传文件，并返回归一化后的文件类型。"""
+    file_type = _normalize_file_type(file_name)
+    if file_type not in SUPPORTED_DOCUMENT_TYPES:
+        raise ValueError(f"暂不支持的文档类型: {file_type}")
+    _validate_upload_content(file_type, content)
+    return file_type
 
 
 def _hash_content(content: bytes | str) -> str:
@@ -129,6 +161,7 @@ def _row_to_document(row: KnowledgeDocumentORM) -> KnowledgeDocument:
         parse_status=KnowledgeDocumentStatus(row.parse_status),
         index_status=KnowledgeDocumentStatus(row.index_status),
         error_message=row.error_message,
+        metadata=getattr(row, "metadata_json", None) or {},
         created_by=row.created_by,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -277,10 +310,20 @@ class EmbeddingProvider:
 
     def __init__(self):
         self.settings = get_settings()
+        self._last_provider_name = self.settings.KNOWLEDGE_EMBEDDING_PROVIDER
+        self._last_model_name = self.settings.KNOWLEDGE_EMBEDDING_MODEL
 
     @property
     def model_name(self) -> str:
         return self.settings.KNOWLEDGE_EMBEDDING_MODEL
+
+    @property
+    def effective_provider_name(self) -> str:
+        return self._last_provider_name
+
+    @property
+    def effective_model_name(self) -> str:
+        return self._last_model_name
 
     @property
     def dimension(self) -> int:
@@ -299,10 +342,19 @@ class EmbeddingProvider:
                     api_key=self.settings.OPENAI_API_KEY,
                     dimensions=self.dimension,
                 )
+                self._last_provider_name = "openai"
+                self._last_model_name = self.model_name
                 return await embeddings.aembed_documents(texts)
-            except Exception:
-                # 外部 embedding 暂不可用时回退本地向量，保证索引流程不中断。
-                return [self._hash_embedding(text) for text in texts]
+            except Exception as exc:
+                if not self.settings.KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH:
+                    raise RuntimeError(f"OpenAI embedding 调用失败: {exc}") from exc
+                logger.warning("OpenAI embedding 不可用，已回退本地 hash provider: %s", exc)
+                return self._embed_with_hash(texts)
+        return self._embed_with_hash(texts)
+
+    def _embed_with_hash(self, texts: list[str]) -> list[list[float]]:
+        self._last_provider_name = "hash"
+        self._last_model_name = "promptchain-hash-embedding-v1"
         return [self._hash_embedding(text) for text in texts]
 
     def _hash_embedding(self, text: str) -> list[float]:
@@ -315,6 +367,25 @@ class EmbeddingProvider:
             vector[index] += sign
         norm = math.sqrt(sum(value * value for value in vector)) or 1.0
         return [round(value / norm, 8) for value in vector]
+
+
+class RerankerProvider:
+    """Reranker provider 抽象，MVP 默认使用确定性启发式重排。"""
+
+    provider_name = "heuristic"
+
+    def rerank(self, query: str, candidates: list[_Candidate]) -> list[_Candidate]:
+        query_terms = set(_tokenize(query))
+        for candidate in candidates:
+            heading_terms = set(_tokenize(" ".join(candidate.chunk.heading_path or [])))
+            title_terms = set(_tokenize(candidate.document.file_name))
+            authority_boost = 0.04 if candidate.kb.scope == KnowledgeScope.WORKSPACE.value else 0.0
+            heading_boost = 0.03 if query_terms & heading_terms else 0.0
+            title_boost = 0.03 if query_terms & title_terms else 0.0
+            rerank_score = min(1.0, candidate.score + authority_boost + heading_boost + title_boost)
+            candidate.rerank_score = round(rerank_score, 4)
+            candidate.score = candidate.rerank_score
+        return candidates
 
 
 @dataclass
@@ -337,6 +408,7 @@ class KnowledgeService:
         self.parser = DocumentParser()
         self.chunker = Chunker()
         self.embedding_provider = EmbeddingProvider()
+        self.reranker_provider = RerankerProvider()
 
     def _ensure_kb_operation_allowed(
         self,
@@ -519,6 +591,7 @@ class KnowledgeService:
         file_name: str,
         content: bytes,
         metadata: dict[str, Any] | None = None,
+        index_immediately: bool = True,
     ) -> KnowledgeDocument:
         kb = await self.get_knowledge_base_for_action(
             kb_id=kb_id,
@@ -527,9 +600,8 @@ class KnowledgeService:
             role=role,
             action="update",
         )
-        file_type = _normalize_file_type(file_name)
-        if file_type not in SUPPORTED_DOCUMENT_TYPES:
-            raise ValueError(f"暂不支持的文档类型: {file_type}")
+        file_type = validate_upload_file(file_name, content)
+        await self._ensure_document_limit(kb_id=kb.id, file_name=file_name)
 
         document_id = str(uuid.uuid4())
         storage_uri = self._write_original_file(workspace_id, document_id, file_name, content)
@@ -556,42 +628,111 @@ class KnowledgeService:
             checksum=_hash_content(content),
             version=latest_version + 1,
             status=KnowledgeDocumentLifecycleStatus.ACTIVE.value,
-            parse_status=KnowledgeDocumentStatus.PROCESSING.value,
-            index_status=KnowledgeDocumentStatus.PROCESSING.value,
+            parse_status=KnowledgeDocumentStatus.PENDING.value,
+            index_status=KnowledgeDocumentStatus.PENDING.value,
+            metadata_json=metadata or {},
             created_by=user_id,
         )
         self.session.add(document)
         await self.session.flush()
 
-        try:
-            text = self.parser.parse(file_name, content)
-            await self._replace_document_chunks(document, text, metadata or {})
-            document.parse_status = KnowledgeDocumentStatus.READY.value
-            document.index_status = KnowledgeDocumentStatus.READY.value
-            document.error_message = None
-            if latest_version:
-                await self.session.execute(
-                    update(KnowledgeDocumentORM)
-                    .where(
-                        KnowledgeDocumentORM.kb_id == kb.id,
-                        KnowledgeDocumentORM.file_name == file_name,
-                        KnowledgeDocumentORM.id != document.id,
-                        KnowledgeDocumentORM.status
-                        == KnowledgeDocumentLifecycleStatus.ACTIVE.value,
-                    )
-                    .values(status=KnowledgeDocumentLifecycleStatus.ARCHIVED.value)
-                )
-        except Exception as exc:
-            # 新版本解析失败时不参与检索，保留上一版 active 文档继续服务搜索。
-            document.status = KnowledgeDocumentLifecycleStatus.DISABLED.value
-            document.parse_status = KnowledgeDocumentStatus.FAILED.value
-            document.index_status = KnowledgeDocumentStatus.FAILED.value
-            document.error_message = str(exc)
+        if index_immediately:
+            await self._index_document_row(document, content, metadata or {})
+
         document.updated_at = utc_now_naive()
         kb.updated_at = utc_now_naive()
         await self.session.commit()
         await self.session.refresh(document)
         return _row_to_document(document)
+
+    async def index_document(self, *, document_id: str) -> KnowledgeDocument:
+        """执行单个文档的解析、切分和向量索引，供后台 worker 或同步路径复用。"""
+        result = await self.session.execute(
+            select(KnowledgeDocumentORM)
+            .options(selectinload(KnowledgeDocumentORM.knowledge_base))
+            .where(KnowledgeDocumentORM.id == document_id)
+        )
+        document = result.scalar_one_or_none()
+        if document is None:
+            raise ValueError("文档不存在")
+        if not document.storage_uri:
+            document.parse_status = KnowledgeDocumentStatus.FAILED.value
+            document.index_status = KnowledgeDocumentStatus.FAILED.value
+            document.error_message = "文档缺少原始文件，无法建立索引"
+            document.updated_at = utc_now_naive()
+            await self.session.commit()
+            await self.session.refresh(document)
+            return _row_to_document(document)
+
+        content = Path(document.storage_uri).read_bytes()
+        _validate_upload_content(document.file_type, content)
+        await self._index_document_row(document, content, document.metadata_json or {})
+        document.updated_at = utc_now_naive()
+        if document.knowledge_base is not None:
+            document.knowledge_base.updated_at = utc_now_naive()
+        await self.session.commit()
+        await self.session.refresh(document)
+        return _row_to_document(document)
+
+    async def _index_document_row(
+        self,
+        document: KnowledgeDocumentORM,
+        content: bytes,
+        metadata: dict[str, Any],
+    ) -> None:
+        """在当前事务中刷新一个文档的索引状态和索引行。"""
+        document.parse_status = KnowledgeDocumentStatus.PROCESSING.value
+        document.index_status = KnowledgeDocumentStatus.PROCESSING.value
+        document.error_message = None
+        await self.session.flush()
+        try:
+            text = self.parser.parse(document.file_name, content)
+            await self._replace_document_chunks(document, text, metadata)
+            await self.session.execute(
+                update(KnowledgeDocumentORM)
+                .where(
+                    KnowledgeDocumentORM.kb_id == document.kb_id,
+                    KnowledgeDocumentORM.file_name == document.file_name,
+                    KnowledgeDocumentORM.id != document.id,
+                    KnowledgeDocumentORM.version < document.version,
+                    KnowledgeDocumentORM.status == KnowledgeDocumentLifecycleStatus.ACTIVE.value,
+                )
+                .values(
+                    status=KnowledgeDocumentLifecycleStatus.ARCHIVED.value,
+                    updated_at=utc_now_naive(),
+                )
+            )
+            document.parse_status = KnowledgeDocumentStatus.READY.value
+            document.index_status = KnowledgeDocumentStatus.READY.value
+            document.error_message = None
+        except Exception as exc:
+            logger.warning("知识库文档索引失败 document_id=%s: %s", document.id, exc)
+            document.parse_status = KnowledgeDocumentStatus.FAILED.value
+            document.index_status = KnowledgeDocumentStatus.FAILED.value
+            document.error_message = str(exc)
+
+    async def _ensure_document_limit(self, *, kb_id: str, file_name: str) -> None:
+        max_documents = get_settings().KNOWLEDGE_MAX_DOCUMENTS_PER_KB
+        if max_documents <= 0:
+            return
+        result = await self.session.execute(
+            select(KnowledgeDocumentORM.file_name)
+            .where(
+                KnowledgeDocumentORM.kb_id == kb_id,
+                KnowledgeDocumentORM.status.in_(
+                    [
+                        KnowledgeDocumentLifecycleStatus.ACTIVE.value,
+                        KnowledgeDocumentLifecycleStatus.DISABLED.value,
+                    ]
+                ),
+            )
+            .distinct()
+        )
+        active_file_names = set(result.scalars().all())
+        if file_name in active_file_names:
+            return
+        if len(active_file_names) >= max_documents:
+            raise ValueError(f"知识库文档数量不能超过 {max_documents} 个")
 
     def _write_original_file(
         self,
@@ -645,7 +786,7 @@ class KnowledgeService:
                 KnowledgeEmbeddingORM(
                     id=str(uuid.uuid4()),
                     chunk_id=chunk.id,
-                    embedding_model=self.embedding_provider.model_name,
+                    embedding_model=self.embedding_provider.effective_model_name,
                     vector_json=vector,
                     # pgvector 生产索引列固定为 1536 维；测试或本地 hash 维度不一致时仅保留 JSON 回退向量。
                     embedding_vector=pgvector_value,
@@ -757,6 +898,7 @@ class KnowledgeService:
         workspace_id: str,
         user_id: str,
         role: Any,
+        index_immediately: bool = True,
     ) -> KnowledgeDocument:
         document = await self.get_document(
             document_id=document_id,
@@ -767,18 +909,12 @@ class KnowledgeService:
         )
         if not document.storage_uri:
             raise ValueError("文档缺少原始文件，无法重建索引")
-        document.parse_status = KnowledgeDocumentStatus.PROCESSING.value
-        document.index_status = KnowledgeDocumentStatus.PROCESSING.value
-        try:
-            text = self.parser.parse(document.file_name, Path(document.storage_uri).read_bytes())
-            await self._replace_document_chunks(document, text, {})
-            document.parse_status = KnowledgeDocumentStatus.READY.value
-            document.index_status = KnowledgeDocumentStatus.READY.value
+        if index_immediately:
+            await self._index_document_row(document, Path(document.storage_uri).read_bytes(), {})
+        else:
+            document.parse_status = KnowledgeDocumentStatus.PENDING.value
+            document.index_status = KnowledgeDocumentStatus.PENDING.value
             document.error_message = None
-        except Exception as exc:
-            document.parse_status = KnowledgeDocumentStatus.FAILED.value
-            document.index_status = KnowledgeDocumentStatus.FAILED.value
-            document.error_message = str(exc)
         document.updated_at = utc_now_naive()
         await self.session.commit()
         await self.session.refresh(document)
@@ -800,6 +936,9 @@ class KnowledgeService:
             scopes=request.scopes,
             filters=request.filters,
             workflow_run_id=request.workflow_run_id,
+            query_vector=query_vector,
+            mode=request.mode,
+            candidate_limit=max(request.top_k * 5, 50),
         )
         candidates = [
             self._score_candidate(
@@ -812,7 +951,7 @@ class KnowledgeService:
             for row in rows
         ]
         if request.enable_rerank:
-            candidates = self._rerank(query, candidates)
+            candidates = self.reranker_provider.rerank(query, candidates)
         candidates = [candidate for candidate in candidates if candidate.score >= request.min_score]
         candidates = sorted(candidates, key=lambda item: item.score, reverse=True)[: request.top_k]
         evidence_chunks = [
@@ -843,6 +982,144 @@ class KnowledgeService:
             retrieval_log_id=retrieval_log_id,
         )
 
+    async def evaluate_retrieval(
+        self,
+        *,
+        request: RetrievalEvaluationRequest,
+        workspace_id: str,
+        user_id: str,
+    ) -> RetrievalEvaluationResponse:
+        """对一组查询执行检索质量评测，返回 hit rate / MRR / Precision@k。"""
+        results: list[RetrievalEvaluationResult] = []
+        empty_expected_count = 0
+
+        for case in request.cases:
+            expected_document_ids = set(case.expected_document_ids)
+            expected_chunk_ids = set(case.expected_chunk_ids)
+            if not expected_document_ids and not expected_chunk_ids:
+                empty_expected_count += 1
+
+            search_response = await self.search(
+                request=KnowledgeSearchRequest(
+                    query=case.query,
+                    scopes=request.scopes,
+                    top_k=request.top_k,
+                    min_score=request.min_score,
+                    mode=request.mode,
+                    filters=request.filters,
+                    enable_query_rewrite=request.enable_query_rewrite,
+                    enable_multi_query=request.enable_multi_query,
+                    enable_rerank=request.enable_rerank,
+                    enable_context_compression=request.enable_context_compression,
+                    enable_conflict_detection=request.enable_conflict_detection,
+                ),
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
+            chunks = search_response.evidence_pack.chunks
+            retrieved_document_ids = [chunk.document_id for chunk in chunks]
+            retrieved_chunk_ids = [chunk.chunk_id for chunk in chunks]
+            relevant_ranks = [
+                index
+                for index, chunk in enumerate(chunks, start=1)
+                if chunk.document_id in expected_document_ids
+                or chunk.chunk_id in expected_chunk_ids
+            ]
+            first_relevant_rank = min(relevant_ranks) if relevant_ranks else None
+            relevant_count = len(relevant_ranks)
+            precision_at_k = relevant_count / max(1, len(chunks))
+            results.append(
+                RetrievalEvaluationResult(
+                    case_id=case.id,
+                    query=case.query,
+                    expected_document_ids=list(expected_document_ids),
+                    expected_chunk_ids=list(expected_chunk_ids),
+                    retrieved_document_ids=retrieved_document_ids,
+                    retrieved_chunk_ids=retrieved_chunk_ids,
+                    hit=first_relevant_rank is not None,
+                    first_relevant_rank=first_relevant_rank,
+                    reciprocal_rank=round(1 / first_relevant_rank, 4)
+                    if first_relevant_rank
+                    else 0.0,
+                    precision_at_k=round(precision_at_k, 4),
+                )
+            )
+
+        total_cases = len(results)
+        hit_count = sum(1 for result in results if result.hit)
+        return RetrievalEvaluationResponse(
+            summary=RetrievalEvaluationSummary(
+                total_cases=total_cases,
+                hit_count=hit_count,
+                hit_rate=round(hit_count / max(1, total_cases), 4),
+                mean_reciprocal_rank=round(
+                    sum(result.reciprocal_rank for result in results) / max(1, total_cases),
+                    4,
+                ),
+                mean_precision_at_k=round(
+                    sum(result.precision_at_k for result in results) / max(1, total_cases),
+                    4,
+                ),
+                empty_expected_count=empty_expected_count,
+            ),
+            results=results,
+        )
+
+    async def get_usage_stats(
+        self,
+        *,
+        workspace_id: str,
+        user_id: str,
+        role: Any | None = None,
+    ) -> KnowledgeUsageStats:
+        """基于检索日志统计当前用户可见范围内的知识库使用情况。"""
+        filters = [KnowledgeRetrievalLogORM.workspace_id == workspace_id]
+        if role is None or not check_permission(
+            _normalize_role_value(role),
+            "knowledge_base",
+            "manage",
+        ):
+            filters.append(KnowledgeRetrievalLogORM.user_id == user_id)
+
+        result = await self.session.execute(select(KnowledgeRetrievalLogORM).where(and_(*filters)))
+        logs = list(result.scalars().all())
+        total_searches = len(logs)
+        total_chunks = 0
+        conflict_search_count = 0
+        unverified_search_count = 0
+        scope_counts: Counter[str] = Counter()
+        mode_counts: Counter[str] = Counter()
+        last_search_at = None
+
+        for log in logs:
+            retrieved_chunk_ids = log.retrieved_chunk_ids or []
+            if isinstance(retrieved_chunk_ids, list):
+                total_chunks += len(retrieved_chunk_ids)
+            if log.created_at and (last_search_at is None or log.created_at > last_search_at):
+                last_search_at = log.created_at
+
+            for scope in log.retrieval_scope or []:
+                scope_counts[str(scope)] += 1
+            mode_counts[str(log.retrieval_mode)] += 1
+
+            metadata = log.metadata_json or {}
+            if metadata.get("conflicts"):
+                conflict_search_count += 1
+            if metadata.get("unverified_points"):
+                unverified_search_count += 1
+
+        return KnowledgeUsageStats(
+            workspace_id=workspace_id,
+            total_searches=total_searches,
+            total_chunks_returned=total_chunks,
+            average_chunks_per_search=round(total_chunks / max(1, total_searches), 2),
+            conflict_search_count=conflict_search_count,
+            unverified_search_count=unverified_search_count,
+            last_search_at=last_search_at,
+            scope_counts=dict(scope_counts),
+            mode_counts=dict(mode_counts),
+        )
+
     def _rewrite_queries(self, query: str, request: KnowledgeSearchRequest) -> list[str]:
         queries = [query]
         if request.enable_query_rewrite:
@@ -862,6 +1139,9 @@ class KnowledgeService:
         scopes: list[KnowledgeScope],
         filters: dict[str, Any],
         workflow_run_id: str | None,
+        query_vector: list[float],
+        mode: RetrievalMode,
+        candidate_limit: int,
     ) -> list[
         tuple[
             KnowledgeChunkORM, KnowledgeDocumentORM, KnowledgeBaseORM, KnowledgeEmbeddingORM | None
@@ -897,6 +1177,30 @@ class KnowledgeService:
             else:
                 conditions.append(KnowledgeBaseORM.scope != KnowledgeScope.RUN_UPLOAD.value)
 
+        if self._should_use_pgvector_candidates(query_vector=query_vector, mode=mode):
+            result = await self.session.execute(
+                select(
+                    KnowledgeChunkORM,
+                    KnowledgeDocumentORM,
+                    KnowledgeBaseORM,
+                    KnowledgeEmbeddingORM,
+                )
+                .join(
+                    KnowledgeDocumentORM, KnowledgeChunkORM.document_id == KnowledgeDocumentORM.id
+                )
+                .join(KnowledgeBaseORM, KnowledgeChunkORM.kb_id == KnowledgeBaseORM.id)
+                .join(KnowledgeEmbeddingORM, KnowledgeEmbeddingORM.chunk_id == KnowledgeChunkORM.id)
+                .where(
+                    and_(
+                        *conditions,
+                        KnowledgeEmbeddingORM.embedding_vector.is_not(None),
+                    )
+                )
+                .order_by(KnowledgeEmbeddingORM.embedding_vector.cosine_distance(query_vector))
+                .limit(candidate_limit)
+            )
+            return list(result.all())
+
         result = await self.session.execute(
             select(KnowledgeChunkORM, KnowledgeDocumentORM, KnowledgeBaseORM, KnowledgeEmbeddingORM)
             .join(KnowledgeDocumentORM, KnowledgeChunkORM.document_id == KnowledgeDocumentORM.id)
@@ -907,6 +1211,21 @@ class KnowledgeService:
             .where(and_(*conditions))
         )
         return list(result.all())
+
+    def _should_use_pgvector_candidates(
+        self,
+        *,
+        query_vector: list[float],
+        mode: RetrievalMode,
+    ) -> bool:
+        if mode == RetrievalMode.KEYWORD:
+            return False
+        if len(query_vector) != 1536:
+            return False
+        if not hasattr(KnowledgeEmbeddingORM, "embedding_vector"):
+            return False
+        bind = self.session.get_bind()
+        return bool(bind is not None and bind.dialect.name == "postgresql")
 
     def _score_candidate(
         self,
@@ -941,19 +1260,6 @@ class KnowledgeService:
             vector_score=round(vector_score, 4),
             keyword_score=round(keyword_score, 4),
         )
-
-    def _rerank(self, query: str, candidates: list[_Candidate]) -> list[_Candidate]:
-        query_terms = set(_tokenize(query))
-        for candidate in candidates:
-            heading_terms = set(_tokenize(" ".join(candidate.chunk.heading_path or [])))
-            title_terms = set(_tokenize(candidate.document.file_name))
-            authority_boost = 0.04 if candidate.kb.scope == KnowledgeScope.WORKSPACE.value else 0.0
-            heading_boost = 0.03 if query_terms & heading_terms else 0.0
-            title_boost = 0.03 if query_terms & title_terms else 0.0
-            rerank_score = min(1.0, candidate.score + authority_boost + heading_boost + title_boost)
-            candidate.rerank_score = round(rerank_score, 4)
-            candidate.score = candidate.rerank_score
-        return candidates
 
     def _candidate_to_evidence_chunk(
         self,

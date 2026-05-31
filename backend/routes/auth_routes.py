@@ -593,11 +593,9 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
             try:
                 await email_service.send_password_reset_email(user.id, user.email)
                 logger.info("密码重置邮件已提交发送，user_id=%s email=%s", user.id, user.email)
-            except EmailDeliveryError as e:
+            except EmailDeliveryError:
                 await session.rollback()
                 logger.exception("密码重置邮件发送失败，user_id=%s", user_id)
-                if get_settings().DEBUG:
-                    raise InfrastructureError(code=INFRA_EMAIL_SERVICE_ERROR, cause=e) from e
             else:
                 auth_context = await build_auth_context(user.id)
                 workspace = auth_context["workspace"]

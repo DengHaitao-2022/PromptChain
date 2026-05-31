@@ -176,6 +176,38 @@
     color: var(--color-success);
 }
 
+.evidenceBadge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.evidenceSupported {
+    background: var(--workflow-success-soft, color-mix(in srgb, var(--color-success) 10%, transparent));
+    color: var(--color-success);
+}
+
+.evidenceUnsupported {
+    background: var(--workflow-warning-soft, color-mix(in srgb, var(--color-warning) 10%, transparent));
+    color: var(--color-warning);
+}
+
+.evidenceConflicting {
+    background: var(--workflow-danger-soft, color-mix(in srgb, var(--color-danger) 10%, transparent));
+    color: var(--color-danger);
+}
+
+.evidenceNotChecked {
+    background: var(--workflow-control-bg-soft, var(--color-bg-tertiary));
+    color: var(--color-text-secondary);
+}
+
 .claimSnippet {
     margin: 0;
     color: var(--color-text-primary);

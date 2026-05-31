@@ -95,6 +95,8 @@ class Settings:
             "KNOWLEDGE_EMBEDDING_PROVIDER",
             "hash",
         ).lower()
+        if self.KNOWLEDGE_EMBEDDING_PROVIDER not in {"hash", "openai"}:
+            raise RuntimeError("KNOWLEDGE_EMBEDDING_PROVIDER 仅支持 hash 或 openai")
         self.KNOWLEDGE_EMBEDDING_MODEL: str = os.getenv(
             "KNOWLEDGE_EMBEDDING_MODEL",
             "promptchain-hash-embedding-v1",
@@ -102,11 +104,29 @@ class Settings:
         self.KNOWLEDGE_EMBEDDING_DIMENSION: int = int(
             os.getenv("KNOWLEDGE_EMBEDDING_DIMENSION", "1536")
         )
+        self.KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH: bool = (
+            os.getenv("KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH", "true").lower() == "true"
+        )
         self.KNOWLEDGE_CHUNK_TARGET_TOKENS: int = int(
             os.getenv("KNOWLEDGE_CHUNK_TARGET_TOKENS", "1000")
         )
         self.KNOWLEDGE_CHUNK_OVERLAP_TOKENS: int = int(
             os.getenv("KNOWLEDGE_CHUNK_OVERLAP_TOKENS", "150")
+        )
+        self.KNOWLEDGE_MAX_UPLOAD_BYTES: int = int(
+            os.getenv("KNOWLEDGE_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))
+        )
+        self.KNOWLEDGE_MAX_DOCUMENTS_PER_KB: int = int(
+            os.getenv("KNOWLEDGE_MAX_DOCUMENTS_PER_KB", "200")
+        )
+        self.KNOWLEDGE_INDEX_WORKER_ENABLED: bool = (
+            os.getenv("KNOWLEDGE_INDEX_WORKER_ENABLED", "true").lower() == "true"
+        )
+        self.KNOWLEDGE_INDEX_WORKER_INTERVAL_SECONDS: float = float(
+            os.getenv("KNOWLEDGE_INDEX_WORKER_INTERVAL_SECONDS", "2")
+        )
+        self.KNOWLEDGE_INDEX_WORKER_BATCH_SIZE: int = int(
+            os.getenv("KNOWLEDGE_INDEX_WORKER_BATCH_SIZE", "5")
         )
 
 

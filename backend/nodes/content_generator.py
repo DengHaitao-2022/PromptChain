@@ -104,27 +104,32 @@ def _format_evidence_context(state: dict, section: OutlineSection, *, max_chunks
         return "未启用知识库或未检索到可用证据。"
 
     section_terms = {section.title.lower(), *[part.lower() for part in section.summary.split()]}
-    formatted: list[str] = []
+    formatted: list[str] = [
+        "使用规则：工作空间资料优先作为事实依据，个人资料仅作为风格或补充材料。"
+    ]
     for index, chunk in enumerate(chunks[:max_chunks], start=1):
         document_name = getattr(chunk, "document_name", None)
         content = getattr(chunk, "content", None)
         score = getattr(chunk, "score", None)
         heading_path = getattr(chunk, "heading_path", None)
+        scope = getattr(chunk, "scope", None)
         if isinstance(chunk, dict):
             document_name = chunk.get("document_name")
             content = chunk.get("content")
             score = chunk.get("score")
             heading_path = chunk.get("heading_path")
+            scope = chunk.get("scope")
         if not content:
             continue
         heading = " / ".join(heading_path or []) if isinstance(heading_path, list) else ""
+        scope_value = getattr(scope, "value", scope) or "unknown"
         relevance_note = (
             "章节相关"
             if any(term and term in content.lower() for term in section_terms)
             else "全局证据"
         )
         formatted.append(
-            f"[{index}] {relevance_note}；来源：{document_name or '未知文档'}；标题路径：{heading or '无'}；分数：{score}\n{content}"
+            f"[{index}] {relevance_note}；scope={scope_value}；来源：{document_name or '未知文档'}；标题路径：{heading or '无'}；分数：{score}\n{content}"
         )
     return "\n\n".join(formatted) if formatted else "未启用知识库或未检索到可用证据。"
 

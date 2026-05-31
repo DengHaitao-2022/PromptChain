@@ -1,14 +1,18 @@
 import asyncio
 import importlib
 import sys
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from starlette.datastructures import UploadFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.config import get_settings
 from db.postgres_store import Base
 from models.auth_models import MemberRole
 from models.auth_orm import MembershipORM, UserORM, WorkspaceORM
@@ -16,6 +20,8 @@ from models.knowledge import (
     KnowledgeDocumentLifecycleStatus,
     KnowledgeScope,
     KnowledgeSearchRequest,
+    RetrievalEvaluationCase,
+    RetrievalEvaluationRequest,
 )
 from orm.knowledge_orm import (
     KnowledgeBaseORM,
@@ -23,6 +29,8 @@ from orm.knowledge_orm import (
     KnowledgeEmbeddingORM,
 )
 from routes import knowledge_routes
+from routes.workflow_routes import _read_run_upload_documents
+from services import knowledge_index_worker
 from services.knowledge_service import KnowledgeService
 
 
@@ -32,6 +40,7 @@ def run_with_knowledge_session(tmp_path, monkeypatch):
         async def _run_scenario():
             monkeypatch.setenv("KNOWLEDGE_STORAGE_DIR", str(tmp_path / "knowledge"))
             monkeypatch.setenv("KNOWLEDGE_EMBEDDING_DIMENSION", "32")
+            get_settings.cache_clear()
 
             engine = create_async_engine("sqlite+aiosqlite:///:memory:")
 
@@ -82,6 +91,7 @@ def run_with_knowledge_session(tmp_path, monkeypatch):
                     await scenario(session)
             finally:
                 await engine.dispose()
+                get_settings.cache_clear()
 
         # 当前项目未安装 pytest-asyncio，测试用同步包装保持依赖面最小。
         asyncio.run(_run_scenario())
@@ -448,6 +458,523 @@ def test_run_upload_documents_are_scoped_to_workflow_run(run_with_knowledge_sess
         assert [chunk.document_id for chunk in current_run_search.evidence_pack.chunks] == [
             document.id
         ]
+
+    run_with_knowledge_session(scenario)
+
+
+def test_openai_embedding_without_fallback_marks_document_failed(
+    run_with_knowledge_session,
+    monkeypatch,
+):
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH", "false")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+
+        document = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="embedding.md",
+            content=b"openai embedding should fail without api key",
+        )
+
+        assert document.index_status == "failed"
+        assert "OpenAI embedding" in (document.error_message or "")
+
+    run_with_knowledge_session(scenario)
+
+
+def test_openai_embedding_can_fallback_to_hash_provider(
+    run_with_knowledge_session,
+    monkeypatch,
+):
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+
+        document = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="fallback.md",
+            content=b"fallback embedding should remain searchable",
+        )
+        embedding = (
+            await knowledge_session.execute(KnowledgeEmbeddingORM.__table__.select())
+        ).first()
+
+        assert document.index_status == "ready"
+        assert embedding is not None
+        assert embedding._mapping["embedding_model"] == "promptchain-hash-embedding-v1"
+
+    run_with_knowledge_session(scenario)
+
+
+def test_retrieval_evaluation_reports_hit_rate_mrr_and_precision(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        document = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="eval.md",
+            content=b"retrieval evaluation golden answer",
+        )
+
+        response = await service.evaluate_retrieval(
+            request=RetrievalEvaluationRequest(
+                cases=[
+                    RetrievalEvaluationCase(
+                        id="hit-case",
+                        query="golden answer",
+                        expected_document_ids=[document.id],
+                    ),
+                    RetrievalEvaluationCase(
+                        id="miss-case",
+                        query="missing topic",
+                        expected_document_ids=["missing-document"],
+                    ),
+                ],
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=3,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        assert response.summary.total_cases == 2
+        assert response.summary.hit_count == 1
+        assert response.summary.hit_rate == 0.5
+        assert response.summary.mean_reciprocal_rank >= 0.5
+        assert response.results[0].hit is True
+        assert response.results[0].first_relevant_rank == 1
+        assert response.results[1].hit is False
+
+    run_with_knowledge_session(scenario)
+
+
+def test_usage_stats_summarizes_current_user_retrieval_logs(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="stats.md",
+            content=b"usage statistics evidence source",
+        )
+
+        await service.search(
+            request=KnowledgeSearchRequest(
+                query="usage statistics",
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=3,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+        await service.search(
+            request=KnowledgeSearchRequest(
+                query="missing evidence",
+                scopes=[KnowledgeScope.PERSONAL],
+                top_k=3,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+        await service.search(
+            request=KnowledgeSearchRequest(
+                query="other user query",
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=3,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-other",
+        )
+
+        stats = await service.get_usage_stats(workspace_id="ws-1", user_id="user-owner")
+        owner_rollup = await service.get_usage_stats(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+        )
+
+        assert stats.total_searches == 2
+        assert stats.total_chunks_returned == 1
+        assert stats.average_chunks_per_search == 0.5
+        assert stats.unverified_search_count == 1
+        assert stats.scope_counts == {"workspace": 1, "personal": 1}
+        assert stats.mode_counts == {"hybrid": 2}
+        assert stats.last_search_at is not None
+        assert owner_rollup.total_searches == 3
+
+    run_with_knowledge_session(scenario)
+
+
+def test_reranker_provider_records_rerank_score(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="rerank.md",
+            content=b"# Rerank\nrerank provider should boost matching heading",
+        )
+
+        search = await service.search(
+            request=KnowledgeSearchRequest(
+                query="rerank provider",
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=3,
+                min_score=0.0,
+                enable_rerank=True,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        assert service.reranker_provider.provider_name == "heuristic"
+        assert search.evidence_pack.chunks[0].rerank_score is not None
+
+    run_with_knowledge_session(scenario)
+
+
+def test_async_indexing_keeps_new_document_pending_until_worker_runs(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+
+        document = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="async.md",
+            content=b"async indexing source",
+            index_immediately=False,
+        )
+        pending_search = await service.search(
+            request=KnowledgeSearchRequest(
+                query="async indexing source",
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=5,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        assert document.parse_status == "pending"
+        assert document.index_status == "pending"
+        assert pending_search.evidence_pack.chunks == []
+
+        indexed = await service.index_document(document_id=document.id)
+        ready_search = await service.search(
+            request=KnowledgeSearchRequest(
+                query="async indexing source",
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=5,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        assert indexed.parse_status == "ready"
+        assert indexed.index_status == "ready"
+        assert [chunk.document_id for chunk in ready_search.evidence_pack.chunks] == [document.id]
+
+    run_with_knowledge_session(scenario)
+
+
+def test_pending_new_version_does_not_archive_current_active_version(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        first = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="policy.md",
+            content=b"Old active policy",
+        )
+        second = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="policy.md",
+            content=b"New pending policy",
+            index_immediately=False,
+        )
+
+        pending_documents = await service.list_documents(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+        assert [(item.version, item.status, item.index_status) for item in pending_documents] == [
+            (2, KnowledgeDocumentLifecycleStatus.ACTIVE, "pending"),
+            (1, KnowledgeDocumentLifecycleStatus.ACTIVE, "ready"),
+        ]
+
+        await service.index_document(document_id=second.id)
+        ready_documents = await service.list_documents(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+        assert [(item.version, item.status, item.index_status) for item in ready_documents] == [
+            (2, KnowledgeDocumentLifecycleStatus.ACTIVE, "ready"),
+            (1, KnowledgeDocumentLifecycleStatus.ARCHIVED, "ready"),
+        ]
+        assert first.version == 1
+        assert second.version == 2
+
+    run_with_knowledge_session(scenario)
+
+
+def test_index_worker_processes_pending_documents(run_with_knowledge_session, monkeypatch):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        document = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="worker.md",
+            content=b"worker indexed content",
+            index_immediately=False,
+        )
+
+        class _SessionContext:
+            async def __aenter__(self):
+                return knowledge_session
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return False
+
+        class _Store:
+            def initialized_session(self):
+                return _SessionContext()
+
+        monkeypatch.setattr(knowledge_index_worker, "get_postgres_store", lambda: _Store())
+
+        assert await knowledge_index_worker.index_pending_documents(limit=5) == 1
+        indexed = await service.get_document(
+            document_id=document.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+        assert indexed.index_status == "ready"
+
+    run_with_knowledge_session(scenario)
+
+
+def test_upload_rejects_empty_oversized_and_mismatched_binary_files(
+    run_with_knowledge_session,
+    monkeypatch,
+):
+    monkeypatch.setenv("KNOWLEDGE_MAX_UPLOAD_BYTES", "8")
+
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+
+        with pytest.raises(ValueError, match="不能为空"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="empty.md",
+                content=b"",
+            )
+
+        with pytest.raises(ValueError, match="不能超过"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="oversized.md",
+                content=b"123456789",
+            )
+
+        with pytest.raises(ValueError, match="PDF 文件格式校验失败"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="fake.pdf",
+                content=b"not pdf",
+            )
+
+        with pytest.raises(ValueError, match="DOCX 文件格式校验失败"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="fake.docx",
+                content=b"not docx",
+            )
+
+    run_with_knowledge_session(scenario)
+
+
+def test_run_upload_reuses_knowledge_file_validation():
+    async def scenario():
+        upload = UploadFile(filename="fake.pdf", file=BytesIO(b"not pdf"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _read_run_upload_documents([upload])
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "PDF 文件格式校验失败"
+
+    asyncio.run(scenario())
+
+
+def test_document_count_limit_allows_same_file_version_but_blocks_new_document(
+    run_with_knowledge_session,
+    monkeypatch,
+):
+    monkeypatch.setenv("KNOWLEDGE_MAX_DOCUMENTS_PER_KB", "1")
+
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        first = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="policy.md",
+            content=b"first version",
+        )
+        second = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="policy.md",
+            content=b"second version",
+        )
+
+        with pytest.raises(ValueError, match="文档数量不能超过 1 个"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="another.md",
+                content=b"new active document",
+            )
+
+        documents = await service.list_documents(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        assert first.version == 1
+        assert second.version == 2
+        assert [document.file_name for document in documents] == ["policy.md", "policy.md"]
 
     run_with_knowledge_session(scenario)
 

@@ -67,6 +67,7 @@ class KnowledgeDocumentORM(Base):
     parse_status = Column(String(20), nullable=False, default=KnowledgeDocumentStatus.PENDING.value)
     index_status = Column(String(20), nullable=False, default=KnowledgeDocumentStatus.PENDING.value)
     error_message = Column(Text, nullable=True)
+    metadata_json = Column(JSON, default=dict)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)

@@ -17,6 +17,9 @@ from models.knowledge import (
     KnowledgeScope,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    KnowledgeUsageStats,
+    RetrievalEvaluationRequest,
+    RetrievalEvaluationResponse,
 )
 from services.knowledge_service import KnowledgeService
 
@@ -296,6 +299,7 @@ async def upload_knowledge_document(
                 file_name=file.filename or "untitled.txt",
                 content=content,
                 metadata=metadata,
+                index_immediately=False,
             )
         except ValueError as exc:
             raise _normalize_service_error(exc, not_found=True) from exc
@@ -377,6 +381,7 @@ async def reindex_knowledge_document(
                 workspace_id=workspace_id,
                 user_id=user_id,
                 role=role,
+                index_immediately=False,
             )
         except ValueError as exc:
             raise _normalize_service_error(exc, not_found=True) from exc
@@ -401,3 +406,33 @@ async def search_knowledge(
             )
         except ValueError as exc:
             raise _normalize_service_error(exc) from exc
+
+
+@router.post("/knowledge/evaluate", response_model=RetrievalEvaluationResponse)
+async def evaluate_knowledge_retrieval(
+    request: Request,
+    body: RetrievalEvaluationRequest,
+) -> RetrievalEvaluationResponse:
+    """执行一组检索评测用例，返回命中率、MRR 和 Precision@k。"""
+    user_id, workspace_id, _ = await _knowledge_context(request, action="read")
+    async with _postgres_store().initialized_session() as session:
+        try:
+            return await KnowledgeService(session).evaluate_retrieval(
+                request=body,
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
+        except ValueError as exc:
+            raise _normalize_service_error(exc) from exc
+
+
+@router.get("/knowledge/stats", response_model=KnowledgeUsageStats)
+async def get_knowledge_usage_stats(request: Request) -> KnowledgeUsageStats:
+    """读取当前用户在当前工作空间的知识库使用统计。"""
+    user_id, workspace_id, role = await _knowledge_context(request, action="read")
+    async with _postgres_store().initialized_session() as session:
+        return await KnowledgeService(session).get_usage_stats(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            role=role,
+        )
