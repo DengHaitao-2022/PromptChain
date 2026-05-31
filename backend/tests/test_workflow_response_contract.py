@@ -211,6 +211,43 @@ def test_pause_and_resume_endpoints_round_trip_pause_metadata(monkeypatch):
     assert resume_body["state"]["pause"]["resumed_at"]
 
 
+def test_state_pause_keeps_metadata_fields_when_graph_pause_is_partial(monkeypatch):
+    store = _FakeStore(
+        _FakeWorkflowRun(
+            current_node="generate_content",
+            metadata={
+                "pause": {
+                    "reason": "等待人工复核",
+                    "paused_at": "2026-03-08T10:02:00Z",
+                    "resumed_at": "2026-03-08T10:03:00Z",
+                    "source": "user",
+                }
+            },
+        )
+    )
+    workflow = _FakeWorkflow(
+        {
+            "current_node": "generate_content",
+            "is_paused": True,
+            "pause": {
+                "reason": "等待人工复核",
+                "paused_at": "2026-03-08T10:02:00Z",
+            },
+        },
+        store=store,
+    )
+    monkeypatch.setattr("services.get_artifact_store", lambda: store)
+    monkeypatch.setattr("graph.get_workflow", lambda: workflow)
+
+    client = authenticated_client(monkeypatch)
+    res = client.get("/api/workflow/wf-123")
+
+    assert res.status_code == 200
+    pause = res.json()["state"]["pause"]
+    assert pause["resumed_at"] == "2026-03-08T10:03:00Z"
+    assert pause["source"] == "user"
+
+
 def test_pause_rejects_gate_waiting_workflow(monkeypatch):
     store = _FakeStore(_FakeWorkflowRun(current_node="parse_intent"))
     workflow = _FakeWorkflow(

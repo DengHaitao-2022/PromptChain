@@ -605,7 +605,7 @@ def _simplify_state(
         simplified["final_content_artifact_id"] = final_artifact_id
         simplified["final_artifact_id"] = final_artifact_id
 
-    pause = _normalize_pause_state(workflow_run)
+    pause = _normalize_pause_state(workflow_run, state=state)
     if pause:
         simplified["pause"] = pause
 
@@ -758,19 +758,36 @@ def _coerce_mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _normalize_pause_state(workflow_run: Any | None) -> dict[str, Any] | None:
-    """从 WorkflowRun 元数据构建规范化的 pause 状态"""
-    if workflow_run is None:
-        return None
+def _normalize_pause_state(
+    workflow_run: Any | None, *, state: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """从图状态和 WorkflowRun 元数据构建规范化的 pause 状态。"""
+    state_pause = _coerce_mapping(state.get("pause")) if isinstance(state, dict) else {}
+    metadata: dict[str, Any] = {}
+    metadata_pause: dict[str, Any] = {}
+    if workflow_run is not None:
+        metadata = _ensure_workflow_metadata(workflow_run)
+        metadata_pause = _coerce_mapping(metadata.get("pause"))
 
-    metadata = _ensure_workflow_metadata(workflow_run)
-    pause_state = metadata.get("pause")
-    if isinstance(pause_state, dict):
+    if state_pause:
+        # 图状态优先，但用持久化 metadata 补齐 resumed_at/source 等历史字段。
+        pause_state = {**metadata_pause, **state_pause}
         return {
             "reason": pause_state.get("reason"),
             "paused_at": _coerce_iso(pause_state.get("paused_at")),
             "resumed_at": _coerce_iso(pause_state.get("resumed_at")),
             "source": pause_state.get("source") or "user",
+        }
+
+    if workflow_run is None:
+        return None
+
+    if metadata_pause:
+        return {
+            "reason": metadata_pause.get("reason"),
+            "paused_at": _coerce_iso(metadata_pause.get("paused_at")),
+            "resumed_at": _coerce_iso(metadata_pause.get("resumed_at")),
+            "source": metadata_pause.get("source") or "user",
         }
 
     legacy_reason = metadata.get("pause_reason")
