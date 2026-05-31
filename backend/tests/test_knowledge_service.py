@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.config import get_settings
 from db.postgres_store import Base
 from models.auth_models import MemberRole
 from models.auth_orm import MembershipORM, UserORM, WorkspaceORM
@@ -32,6 +33,7 @@ def run_with_knowledge_session(tmp_path, monkeypatch):
         async def _run_scenario():
             monkeypatch.setenv("KNOWLEDGE_STORAGE_DIR", str(tmp_path / "knowledge"))
             monkeypatch.setenv("KNOWLEDGE_EMBEDDING_DIMENSION", "32")
+            get_settings.cache_clear()
 
             engine = create_async_engine("sqlite+aiosqlite:///:memory:")
 
@@ -82,6 +84,7 @@ def run_with_knowledge_session(tmp_path, monkeypatch):
                     await scenario(session)
             finally:
                 await engine.dispose()
+                get_settings.cache_clear()
 
         # 当前项目未安装 pytest-asyncio，测试用同步包装保持依赖面最小。
         asyncio.run(_run_scenario())
@@ -438,6 +441,122 @@ def test_run_upload_documents_are_scoped_to_workflow_run(run_with_knowledge_sess
         assert [chunk.document_id for chunk in current_run_search.evidence_pack.chunks] == [
             document.id
         ]
+
+    run_with_knowledge_session(scenario)
+
+
+def test_upload_rejects_empty_oversized_and_mismatched_binary_files(
+    run_with_knowledge_session,
+    monkeypatch,
+):
+    monkeypatch.setenv("KNOWLEDGE_MAX_UPLOAD_BYTES", "8")
+
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+
+        with pytest.raises(ValueError, match="不能为空"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="empty.md",
+                content=b"",
+            )
+
+        with pytest.raises(ValueError, match="不能超过"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="oversized.md",
+                content=b"123456789",
+            )
+
+        with pytest.raises(ValueError, match="PDF 文件格式校验失败"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="fake.pdf",
+                content=b"not pdf",
+            )
+
+        with pytest.raises(ValueError, match="DOCX 文件格式校验失败"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="fake.docx",
+                content=b"not docx",
+            )
+
+    run_with_knowledge_session(scenario)
+
+
+def test_document_count_limit_allows_same_file_version_but_blocks_new_document(
+    run_with_knowledge_session,
+    monkeypatch,
+):
+    monkeypatch.setenv("KNOWLEDGE_MAX_DOCUMENTS_PER_KB", "1")
+
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        first = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="policy.md",
+            content=b"first version",
+        )
+        second = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="policy.md",
+            content=b"second version",
+        )
+
+        with pytest.raises(ValueError, match="文档数量不能超过 1 个"):
+            await service.add_document(
+                kb_id=kb.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                role=MemberRole.OWNER,
+                file_name="another.md",
+                content=b"new active document",
+            )
+
+        documents = await service.list_documents(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        assert first.version == 1
+        assert second.version == 2
+        assert [document.file_name for document in documents] == ["policy.md", "policy.md"]
 
     run_with_knowledge_session(scenario)
 

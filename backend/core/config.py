@@ -108,6 +108,12 @@ class Settings:
         self.KNOWLEDGE_CHUNK_OVERLAP_TOKENS: int = int(
             os.getenv("KNOWLEDGE_CHUNK_OVERLAP_TOKENS", "150")
         )
+        self.KNOWLEDGE_MAX_UPLOAD_BYTES: int = int(
+            os.getenv("KNOWLEDGE_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))
+        )
+        self.KNOWLEDGE_MAX_DOCUMENTS_PER_KB: int = int(
+            os.getenv("KNOWLEDGE_MAX_DOCUMENTS_PER_KB", "200")
+        )
 
 
 @lru_cache

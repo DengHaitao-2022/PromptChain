@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: promptchain-prod-postgres
     restart: unless-stopped
     environment:
@@ -62,6 +62,11 @@ services:
       SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
       SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-20}
       EMAIL_DEV_LOG_BODY: ${EMAIL_DEV_LOG_BODY:-false}
+      KNOWLEDGE_STORAGE_DIR: ${KNOWLEDGE_STORAGE_DIR:-/app/.data/knowledge}
+      KNOWLEDGE_MAX_UPLOAD_BYTES: ${KNOWLEDGE_MAX_UPLOAD_BYTES:-20971520}
+      KNOWLEDGE_MAX_DOCUMENTS_PER_KB: ${KNOWLEDGE_MAX_DOCUMENTS_PER_KB:-200}
+    volumes:
+      - knowledge_data:/app/.data/knowledge
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -104,3 +109,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  knowledge_data:

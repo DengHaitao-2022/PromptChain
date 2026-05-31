@@ -46,6 +46,8 @@ from services.permission_service import check_permission
 TOKEN_PATTERN = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
 SUPPORTED_TEXT_TYPES = {"txt", "md", "markdown", "text"}
 SUPPORTED_DOCUMENT_TYPES = {*SUPPORTED_TEXT_TYPES, "docx", "pdf"}
+DOCX_ZIP_MAGIC = b"PK"
+PDF_MAGIC = b"%PDF"
 
 
 def _normalize_file_type(file_name: str) -> str:
@@ -53,6 +55,20 @@ def _normalize_file_type(file_name: str) -> str:
     if suffix == "markdown":
         return "md"
     return suffix or "txt"
+
+
+def _validate_upload_content(file_type: str, content: bytes) -> None:
+    """在解析前做轻量上传安全检查，避免明显伪造文件进入索引流程。"""
+    settings = get_settings()
+    if not content:
+        raise ValueError("文档内容不能为空")
+    if len(content) > settings.KNOWLEDGE_MAX_UPLOAD_BYTES:
+        max_mb = settings.KNOWLEDGE_MAX_UPLOAD_BYTES / 1024 / 1024
+        raise ValueError(f"文档大小不能超过 {max_mb:.0f} MB")
+    if file_type == "pdf" and not content.startswith(PDF_MAGIC):
+        raise ValueError("PDF 文件格式校验失败")
+    if file_type == "docx" and not content.startswith(DOCX_ZIP_MAGIC):
+        raise ValueError("DOCX 文件格式校验失败")
 
 
 def _hash_content(content: bytes | str) -> str:
@@ -530,6 +546,8 @@ class KnowledgeService:
         file_type = _normalize_file_type(file_name)
         if file_type not in SUPPORTED_DOCUMENT_TYPES:
             raise ValueError(f"暂不支持的文档类型: {file_type}")
+        _validate_upload_content(file_type, content)
+        await self._ensure_document_limit(kb_id=kb.id, file_name=file_name)
 
         document_id = str(uuid.uuid4())
         storage_uri = self._write_original_file(workspace_id, document_id, file_name, content)
@@ -588,6 +606,29 @@ class KnowledgeService:
         await self.session.commit()
         await self.session.refresh(document)
         return _row_to_document(document)
+
+    async def _ensure_document_limit(self, *, kb_id: str, file_name: str) -> None:
+        max_documents = get_settings().KNOWLEDGE_MAX_DOCUMENTS_PER_KB
+        if max_documents <= 0:
+            return
+        result = await self.session.execute(
+            select(KnowledgeDocumentORM.file_name)
+            .where(
+                KnowledgeDocumentORM.kb_id == kb_id,
+                KnowledgeDocumentORM.status.in_(
+                    [
+                        KnowledgeDocumentLifecycleStatus.ACTIVE.value,
+                        KnowledgeDocumentLifecycleStatus.DISABLED.value,
+                    ]
+                ),
+            )
+            .distinct()
+        )
+        active_file_names = set(result.scalars().all())
+        if file_name in active_file_names:
+            return
+        if len(active_file_names) >= max_documents:
+            raise ValueError(f"知识库文档数量不能超过 {max_documents} 个")
 
     def _write_original_file(
         self,
