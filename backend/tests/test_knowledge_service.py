@@ -17,6 +17,8 @@ from models.knowledge import (
     KnowledgeDocumentLifecycleStatus,
     KnowledgeScope,
     KnowledgeSearchRequest,
+    RetrievalEvaluationCase,
+    RetrievalEvaluationRequest,
 )
 from orm.knowledge_orm import (
     KnowledgeBaseORM,
@@ -442,6 +444,131 @@ def test_run_upload_documents_are_scoped_to_workflow_run(run_with_knowledge_sess
         assert [chunk.document_id for chunk in current_run_search.evidence_pack.chunks] == [
             document.id
         ]
+
+    run_with_knowledge_session(scenario)
+
+
+def test_openai_embedding_without_fallback_marks_document_failed(
+    run_with_knowledge_session,
+    monkeypatch,
+):
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH", "false")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+
+        document = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="embedding.md",
+            content=b"openai embedding should fail without api key",
+        )
+
+        assert document.index_status == "failed"
+        assert "OpenAI embedding" in (document.error_message or "")
+
+    run_with_knowledge_session(scenario)
+
+
+def test_openai_embedding_can_fallback_to_hash_provider(
+    run_with_knowledge_session,
+    monkeypatch,
+):
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+
+        document = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="fallback.md",
+            content=b"fallback embedding should remain searchable",
+        )
+        embedding = (
+            await knowledge_session.execute(KnowledgeEmbeddingORM.__table__.select())
+        ).first()
+
+        assert document.index_status == "ready"
+        assert embedding is not None
+        assert embedding._mapping["embedding_model"] == "promptchain-hash-embedding-v1"
+
+    run_with_knowledge_session(scenario)
+
+
+def test_retrieval_evaluation_reports_hit_rate_mrr_and_precision(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="团队资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        document = await service.add_document(
+            kb_id=kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="eval.md",
+            content=b"retrieval evaluation golden answer",
+        )
+
+        response = await service.evaluate_retrieval(
+            request=RetrievalEvaluationRequest(
+                cases=[
+                    RetrievalEvaluationCase(
+                        id="hit-case",
+                        query="golden answer",
+                        expected_document_ids=[document.id],
+                    ),
+                    RetrievalEvaluationCase(
+                        id="miss-case",
+                        query="missing topic",
+                        expected_document_ids=["missing-document"],
+                    ),
+                ],
+                scopes=[KnowledgeScope.WORKSPACE],
+                top_k=3,
+                min_score=0.0,
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        assert response.summary.total_cases == 2
+        assert response.summary.hit_count == 1
+        assert response.summary.hit_rate == 0.5
+        assert response.summary.mean_reciprocal_rank >= 0.5
+        assert response.results[0].hit is True
+        assert response.results[0].first_relevant_rank == 1
+        assert response.results[1].hit is False
 
     run_with_knowledge_session(scenario)
 

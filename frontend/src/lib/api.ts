@@ -224,6 +224,50 @@ export interface KnowledgeSearchRequest {
   node_run_id?: string | null;
 }
 
+export interface RetrievalEvaluationCase {
+  id?: string | null;
+  query: string;
+  expected_document_ids: string[];
+  expected_chunk_ids: string[];
+}
+
+export interface RetrievalEvaluationRequest {
+  cases: RetrievalEvaluationCase[];
+  scopes: KnowledgeScope[];
+  top_k?: number;
+  min_score?: number;
+  mode?: RetrievalMode;
+  filters?: Record<string, unknown>;
+  enable_query_rewrite?: boolean;
+  enable_multi_query?: boolean;
+  enable_rerank?: boolean;
+  enable_context_compression?: boolean;
+  enable_conflict_detection?: boolean;
+}
+
+export interface RetrievalEvaluationResponse {
+  summary: {
+    total_cases: number;
+    hit_count: number;
+    hit_rate: number;
+    mean_reciprocal_rank: number;
+    mean_precision_at_k: number;
+    empty_expected_count: number;
+  };
+  results: Array<{
+    case_id?: string | null;
+    query: string;
+    expected_document_ids: string[];
+    expected_chunk_ids: string[];
+    retrieved_document_ids: string[];
+    retrieved_chunk_ids: string[];
+    hit: boolean;
+    first_relevant_rank?: number | null;
+    reciprocal_rank: number;
+    precision_at_k: number;
+  }>;
+}
+
 export interface WorkflowTrace {
   workflow: Record<string, unknown>;
   nodes: Record<string, unknown>[];
@@ -905,6 +949,12 @@ export const knowledgeApi = {
         body: JSON.stringify(body),
       }
     ),
+
+  evaluate: (body: RetrievalEvaluationRequest) =>
+    request<RetrievalEvaluationResponse>('/knowledge/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 };
 
 // Artifact API

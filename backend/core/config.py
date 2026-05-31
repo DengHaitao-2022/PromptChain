@@ -95,12 +95,17 @@ class Settings:
             "KNOWLEDGE_EMBEDDING_PROVIDER",
             "hash",
         ).lower()
+        if self.KNOWLEDGE_EMBEDDING_PROVIDER not in {"hash", "openai"}:
+            raise RuntimeError("KNOWLEDGE_EMBEDDING_PROVIDER 仅支持 hash 或 openai")
         self.KNOWLEDGE_EMBEDDING_MODEL: str = os.getenv(
             "KNOWLEDGE_EMBEDDING_MODEL",
             "promptchain-hash-embedding-v1",
         )
         self.KNOWLEDGE_EMBEDDING_DIMENSION: int = int(
             os.getenv("KNOWLEDGE_EMBEDDING_DIMENSION", "1536")
+        )
+        self.KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH: bool = (
+            os.getenv("KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH", "true").lower() == "true"
         )
         self.KNOWLEDGE_CHUNK_TARGET_TOKENS: int = int(
             os.getenv("KNOWLEDGE_CHUNK_TARGET_TOKENS", "1000")

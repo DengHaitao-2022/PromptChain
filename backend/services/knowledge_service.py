@@ -32,6 +32,10 @@ from models.knowledge import (
     KnowledgeScope,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    RetrievalEvaluationRequest,
+    RetrievalEvaluationResponse,
+    RetrievalEvaluationResult,
+    RetrievalEvaluationSummary,
     RetrievalMode,
 )
 from orm.knowledge_orm import (
@@ -296,10 +300,20 @@ class EmbeddingProvider:
 
     def __init__(self):
         self.settings = get_settings()
+        self._last_provider_name = self.settings.KNOWLEDGE_EMBEDDING_PROVIDER
+        self._last_model_name = self.settings.KNOWLEDGE_EMBEDDING_MODEL
 
     @property
     def model_name(self) -> str:
         return self.settings.KNOWLEDGE_EMBEDDING_MODEL
+
+    @property
+    def effective_provider_name(self) -> str:
+        return self._last_provider_name
+
+    @property
+    def effective_model_name(self) -> str:
+        return self._last_model_name
 
     @property
     def dimension(self) -> int:
@@ -318,10 +332,19 @@ class EmbeddingProvider:
                     api_key=self.settings.OPENAI_API_KEY,
                     dimensions=self.dimension,
                 )
+                self._last_provider_name = "openai"
+                self._last_model_name = self.model_name
                 return await embeddings.aembed_documents(texts)
-            except Exception:
-                # 外部 embedding 暂不可用时回退本地向量，保证索引流程不中断。
-                return [self._hash_embedding(text) for text in texts]
+            except Exception as exc:
+                if not self.settings.KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH:
+                    raise RuntimeError(f"OpenAI embedding 调用失败: {exc}") from exc
+                logger.warning("OpenAI embedding 不可用，已回退本地 hash provider: %s", exc)
+                return self._embed_with_hash(texts)
+        return self._embed_with_hash(texts)
+
+    def _embed_with_hash(self, texts: list[str]) -> list[list[float]]:
+        self._last_provider_name = "hash"
+        self._last_model_name = "promptchain-hash-embedding-v1"
         return [self._hash_embedding(text) for text in texts]
 
     def _hash_embedding(self, text: str) -> list[float]:
@@ -736,7 +759,7 @@ class KnowledgeService:
                 KnowledgeEmbeddingORM(
                     id=str(uuid.uuid4()),
                     chunk_id=chunk.id,
-                    embedding_model=self.embedding_provider.model_name,
+                    embedding_model=self.embedding_provider.effective_model_name,
                     vector_json=vector,
                     # pgvector 生产索引列固定为 1536 维；测试或本地 hash 维度不一致时仅保留 JSON 回退向量。
                     embedding_vector=pgvector_value,
@@ -930,6 +953,89 @@ class KnowledgeService:
         return KnowledgeSearchResponse(
             evidence_pack=evidence_pack,
             retrieval_log_id=retrieval_log_id,
+        )
+
+    async def evaluate_retrieval(
+        self,
+        *,
+        request: RetrievalEvaluationRequest,
+        workspace_id: str,
+        user_id: str,
+    ) -> RetrievalEvaluationResponse:
+        """对一组查询执行检索质量评测，返回 hit rate / MRR / Precision@k。"""
+        results: list[RetrievalEvaluationResult] = []
+        empty_expected_count = 0
+
+        for case in request.cases:
+            expected_document_ids = set(case.expected_document_ids)
+            expected_chunk_ids = set(case.expected_chunk_ids)
+            if not expected_document_ids and not expected_chunk_ids:
+                empty_expected_count += 1
+
+            search_response = await self.search(
+                request=KnowledgeSearchRequest(
+                    query=case.query,
+                    scopes=request.scopes,
+                    top_k=request.top_k,
+                    min_score=request.min_score,
+                    mode=request.mode,
+                    filters=request.filters,
+                    enable_query_rewrite=request.enable_query_rewrite,
+                    enable_multi_query=request.enable_multi_query,
+                    enable_rerank=request.enable_rerank,
+                    enable_context_compression=request.enable_context_compression,
+                    enable_conflict_detection=request.enable_conflict_detection,
+                ),
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
+            chunks = search_response.evidence_pack.chunks
+            retrieved_document_ids = [chunk.document_id for chunk in chunks]
+            retrieved_chunk_ids = [chunk.chunk_id for chunk in chunks]
+            relevant_ranks = [
+                index
+                for index, chunk in enumerate(chunks, start=1)
+                if chunk.document_id in expected_document_ids
+                or chunk.chunk_id in expected_chunk_ids
+            ]
+            first_relevant_rank = min(relevant_ranks) if relevant_ranks else None
+            relevant_count = len(relevant_ranks)
+            precision_at_k = relevant_count / max(1, len(chunks))
+            results.append(
+                RetrievalEvaluationResult(
+                    case_id=case.id,
+                    query=case.query,
+                    expected_document_ids=list(expected_document_ids),
+                    expected_chunk_ids=list(expected_chunk_ids),
+                    retrieved_document_ids=retrieved_document_ids,
+                    retrieved_chunk_ids=retrieved_chunk_ids,
+                    hit=first_relevant_rank is not None,
+                    first_relevant_rank=first_relevant_rank,
+                    reciprocal_rank=round(1 / first_relevant_rank, 4)
+                    if first_relevant_rank
+                    else 0.0,
+                    precision_at_k=round(precision_at_k, 4),
+                )
+            )
+
+        total_cases = len(results)
+        hit_count = sum(1 for result in results if result.hit)
+        return RetrievalEvaluationResponse(
+            summary=RetrievalEvaluationSummary(
+                total_cases=total_cases,
+                hit_count=hit_count,
+                hit_rate=round(hit_count / max(1, total_cases), 4),
+                mean_reciprocal_rank=round(
+                    sum(result.reciprocal_rank for result in results) / max(1, total_cases),
+                    4,
+                ),
+                mean_precision_at_k=round(
+                    sum(result.precision_at_k for result in results) / max(1, total_cases),
+                    4,
+                ),
+                empty_expected_count=empty_expected_count,
+            ),
+            results=results,
         )
 
     def _rewrite_queries(self, query: str, request: KnowledgeSearchRequest) -> list[str]:

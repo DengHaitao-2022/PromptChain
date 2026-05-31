@@ -17,6 +17,8 @@ from models.knowledge import (
     KnowledgeScope,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    RetrievalEvaluationRequest,
+    RetrievalEvaluationResponse,
 )
 from services.knowledge_service import KnowledgeService
 
@@ -383,6 +385,24 @@ async def search_knowledge(
     async with _postgres_store().initialized_session() as session:
         try:
             return await KnowledgeService(session).search(
+                request=body,
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
+        except ValueError as exc:
+            raise _normalize_service_error(exc) from exc
+
+
+@router.post("/knowledge/evaluate", response_model=RetrievalEvaluationResponse)
+async def evaluate_knowledge_retrieval(
+    request: Request,
+    body: RetrievalEvaluationRequest,
+) -> RetrievalEvaluationResponse:
+    """执行一组检索评测用例，返回命中率、MRR 和 Precision@k。"""
+    user_id, workspace_id, _ = await _knowledge_context(request, action="read")
+    async with _postgres_store().initialized_session() as session:
+        try:
+            return await KnowledgeService(session).evaluate_retrieval(
                 request=body,
                 workspace_id=workspace_id,
                 user_id=user_id,

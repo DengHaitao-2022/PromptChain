@@ -174,6 +174,64 @@ class KnowledgeSearchResponse(BaseModel):
     retrieval_log_id: str | None = None
 
 
+class RetrievalEvaluationCase(BaseModel):
+    """单条检索评测用例。"""
+
+    id: str | None = None
+    query: str = Field(..., min_length=1)
+    expected_document_ids: list[str] = Field(default_factory=list)
+    expected_chunk_ids: list[str] = Field(default_factory=list)
+
+
+class RetrievalEvaluationRequest(BaseModel):
+    """检索质量评测请求。"""
+
+    cases: list[RetrievalEvaluationCase] = Field(..., min_length=1, max_length=50)
+    scopes: list[KnowledgeScope] = Field(default_factory=lambda: [KnowledgeScope.WORKSPACE])
+    top_k: int = Field(default=8, ge=1, le=30)
+    min_score: float = Field(default=0.0, ge=0, le=1)
+    mode: RetrievalMode = RetrievalMode.HYBRID
+    filters: dict[str, Any] = Field(default_factory=dict)
+    enable_query_rewrite: bool = True
+    enable_multi_query: bool = True
+    enable_rerank: bool = True
+    enable_context_compression: bool = True
+    enable_conflict_detection: bool = False
+
+
+class RetrievalEvaluationResult(BaseModel):
+    """单条检索评测结果。"""
+
+    case_id: str | None = None
+    query: str
+    expected_document_ids: list[str]
+    expected_chunk_ids: list[str]
+    retrieved_document_ids: list[str]
+    retrieved_chunk_ids: list[str]
+    hit: bool
+    first_relevant_rank: int | None = None
+    reciprocal_rank: float = 0.0
+    precision_at_k: float = 0.0
+
+
+class RetrievalEvaluationSummary(BaseModel):
+    """检索评测汇总指标。"""
+
+    total_cases: int
+    hit_count: int
+    hit_rate: float
+    mean_reciprocal_rank: float
+    mean_precision_at_k: float
+    empty_expected_count: int = 0
+
+
+class RetrievalEvaluationResponse(BaseModel):
+    """检索评测响应。"""
+
+    summary: RetrievalEvaluationSummary
+    results: list[RetrievalEvaluationResult]
+
+
 class RetrievalConfig(BaseModel):
     """工作流运行时知识检索配置。"""
 
