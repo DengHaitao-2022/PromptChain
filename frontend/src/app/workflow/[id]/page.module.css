@@ -275,6 +275,151 @@
     flex-shrink: 0;
 }
 
+.flowShell {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 20px;
+    background:
+        var(--workflow-surface-sheen-soft),
+        var(--workflow-surface-bg-soft);
+    box-shadow:
+        var(--workflow-shadow-card),
+        var(--workflow-inset-highlight);
+}
+
+.flowHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+}
+
+.flowTitle {
+    margin: 0;
+    font-size: 1.15rem;
+}
+
+.flowSummary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 10px;
+    border-radius: var(--radius-full);
+    background: var(--workflow-control-bg);
+    border: 1px solid var(--workflow-border-subtle);
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.flowCanvas {
+    width: 100%;
+    height: 320px;
+    overflow: hidden;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 18px;
+    background: var(--workflow-surface-bg-subtle);
+}
+
+.flowCanvas :global(.react-flow__controls) {
+    overflow: hidden;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 12px;
+    box-shadow: var(--workflow-shadow-card);
+}
+
+.flowCanvas :global(.react-flow__controls-button) {
+    background: var(--workflow-surface-bg);
+    border-bottom-color: var(--workflow-border-subtle);
+    color: var(--color-text-secondary);
+}
+
+.flowCanvas :global(.react-flow__controls-button:hover) {
+    background: var(--workflow-control-hover-bg);
+    color: var(--color-text-primary);
+}
+
+.flowCanvas :global(.react-flow__attribution) {
+    display: none;
+}
+
+.flowNode {
+    width: 180px;
+    border: 1px solid var(--workflow-border-subtle) !important;
+    border-radius: 16px !important;
+    background: var(--workflow-surface-bg) !important;
+    color: var(--color-text-primary) !important;
+    box-shadow: var(--workflow-shadow-card);
+}
+
+.flowNode :global(.react-flow__handle) {
+    opacity: 0;
+}
+
+.flowNodeLabel {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+    text-align: left;
+}
+
+.flowNodeTitle {
+    overflow: hidden;
+    color: var(--color-text-primary);
+    font-size: 0.86rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.flowNodeMeta {
+    color: var(--color-text-muted);
+    font-size: 0.72rem;
+}
+
+.flowNodeCurrent {
+    border-color: var(--workflow-brand-border) !important;
+    background: var(--workflow-control-hover-bg) !important;
+}
+
+.flowNodeRunning,
+.flowNodeGate_waiting {
+    border-color: var(--workflow-brand-border) !important;
+    box-shadow:
+        var(--workflow-shadow-card),
+        0 0 0 4px var(--workflow-brand-soft);
+}
+
+.flowNodeCompleted {
+    border-color: var(--workflow-success-border) !important;
+    background: var(--workflow-success-soft) !important;
+}
+
+.flowNodePaused,
+.flowNodeInterrupted {
+    border-color: var(--workflow-warning-border) !important;
+    background: var(--workflow-warning-soft) !important;
+}
+
+.flowNodeFailed {
+    border-color: var(--workflow-danger-border) !important;
+    background: var(--workflow-danger-soft) !important;
+}
+
+.flowEdge :global(.react-flow__edge-path) {
+    stroke: var(--workflow-border-muted);
+    stroke-width: 1.5;
+}
+
+.flowEdgeActive :global(.react-flow__edge-path) {
+    stroke: var(--color-brand-primary);
+    stroke-width: 2;
+}
+
 .stageShell {
     display: flex;
     flex-direction: column;
@@ -379,6 +524,135 @@
     margin: 0;
     font-size: 1.125rem;
     font-weight: 600;
+}
+
+.evidencePanel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-brand-border);
+    border-radius: 18px;
+    background: var(--workflow-surface-bg-subtle);
+}
+
+.evidenceHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-lg);
+}
+
+.evidenceEyebrow {
+    margin: 0 0 6px;
+    color: var(--color-brand-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.evidenceHeader h3 {
+    margin: 0 0 8px;
+    font-size: 1.125rem;
+}
+
+.evidenceHeader p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+}
+
+.evidenceStats,
+.evidenceScopes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.evidenceStats {
+    justify-content: flex-end;
+    min-width: 240px;
+}
+
+.evidenceStats span,
+.evidenceScopes span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: var(--radius-full);
+    background: var(--workflow-control-bg);
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+}
+
+.evidenceGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.evidenceCard {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    min-height: 180px;
+    padding: var(--spacing-md);
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 16px;
+    background: var(--workflow-control-bg);
+}
+
+.evidenceCard header,
+.evidenceCard footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.evidenceCard strong {
+    min-width: 0;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.evidenceCard header span,
+.evidenceCard footer span {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.evidenceCard p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+    word-break: break-word;
+}
+
+.evidenceNotice {
+    padding: var(--spacing-md);
+    border: 1px solid var(--workflow-warning-border);
+    border-radius: 16px;
+    background: var(--workflow-warning-soft);
+}
+
+.evidenceNotice strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--color-text-primary);
+}
+
+.evidenceNotice ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
 }
 
 .followStreamButton {
@@ -1235,6 +1509,15 @@
     .stageHeader {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .evidenceHeader {
+        flex-direction: column;
+    }
+
+    .evidenceStats {
+        justify-content: flex-start;
+        min-width: 0;
     }
 
     .stageMetrics {

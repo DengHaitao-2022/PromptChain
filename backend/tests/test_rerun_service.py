@@ -53,6 +53,11 @@ class _FakeTraceService:
         return self.trace
 
 
+class _FakeArtifactStore:
+    async def get_workflow_run(self, workflow_run_id: str):
+        return None
+
+
 @pytest.mark.asyncio
 async def test_prepare_rerun_state_raises_when_from_node_not_found():
     trace_service = _FakeTraceService(
@@ -68,7 +73,7 @@ async def test_prepare_rerun_state_raises_when_from_node_not_found():
             },
         }
     )
-    service = RerunService(artifact_store=None, trace_service=trace_service)
+    service = RerunService(artifact_store=_FakeArtifactStore(), trace_service=trace_service)
 
     with pytest.raises(ValueError, match="Node 'unknown_node' not found in workflow"):
         await service.prepare_rerun_state("wf-1", "unknown_node")
@@ -147,7 +152,7 @@ async def test_prepare_rerun_state_maps_artifacts_before_from_node():
             },
         }
     )
-    service = RerunService(artifact_store=None, trace_service=trace_service)
+    service = RerunService(artifact_store=_FakeArtifactStore(), trace_service=trace_service)
 
     state = await service.prepare_rerun_state("wf-1", "finalize")
 
@@ -190,7 +195,7 @@ async def test_prepare_rerun_state_applies_updated_input_override():
             },
         }
     )
-    service = RerunService(artifact_store=None, trace_service=trace_service)
+    service = RerunService(artifact_store=_FakeArtifactStore(), trace_service=trace_service)
 
     state = await service.prepare_rerun_state(
         "wf-1",

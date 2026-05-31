@@ -1,7 +1,7 @@
 # PromptChain API 文档总览（v1）
 
 - 规范版本：`1.0.0`
-- 更新时间：`2026-05-20`
+- 更新时间：`2026-05-23`
 - 唯一事实源（SSOT）：`docs/api/openapi.v1.yaml`
 
 ## 文档索引
@@ -11,6 +11,7 @@
 - [运行监控与结果回放（Trace/Artifact/WebSocket）](./monitoring.md)
 - [认证与用户上下文](./auth.md)
 - [工作空间与成员管理](./workspace.md)
+- [后台管理与模型配置](./admin.md)
 
 ## 鉴权约定
 
@@ -30,7 +31,7 @@
 
 ## 统一错误响应
 
-当前 `dev@8218f54` 主线仍保留 FastAPI `HTTPException` 与局部 `Result` 兼容风格。MVP2 统一错误体系正在 PR #5 中推进，尚未合入主线。
+当前 `dev@699bf53` 主线仍保留 FastAPI `HTTPException` 与局部 `Result` 兼容风格。MVP2 统一错误体系正在 PR #5 中推进，尚未合入主线。
 
 当前主线常见错误形态：
 
@@ -77,3 +78,4 @@ PR #5 候选统一错误 envelope：
 - 一键生成长文/脚本：`workflow.md`
 - 不确定点检测与人机门控：`workflow.md`
 - 任务运行监控与结果回放：`monitoring.md`
+- 后台模型与运营管理：`admin.md`

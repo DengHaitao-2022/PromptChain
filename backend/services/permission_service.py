@@ -27,6 +27,7 @@ RESOURCES = [
     "member",  # 成员管理
     "workspace",  # 工作空间设置
     "audit_log",  # 审计日志
+    "knowledge_base",  # 知识库
 ]
 
 # 动作类型
@@ -53,6 +54,7 @@ ROLE_PERMISSIONS: dict[MemberRole, dict[str, list[str]]] = {
         "member": [],
         "workspace": ["read"],
         "audit_log": [],
+        "knowledge_base": ["read"],
     },
     MemberRole.EDITOR: {
         "workflow": ["read", "create", "update", "execute"],
@@ -64,6 +66,7 @@ ROLE_PERMISSIONS: dict[MemberRole, dict[str, list[str]]] = {
         "member": [],
         "workspace": ["read"],
         "audit_log": [],
+        "knowledge_base": ["read", "create", "update"],
     },
     MemberRole.ADMIN: {
         "workflow": ["read", "create", "update", "delete", "execute", "export", "manage"],
@@ -75,6 +78,7 @@ ROLE_PERMISSIONS: dict[MemberRole, dict[str, list[str]]] = {
         "member": ["read", "create", "update", "delete", "manage"],
         "workspace": ["read", "update", "manage"],
         "audit_log": ["read", "export"],
+        "knowledge_base": ["read", "create", "update", "delete", "manage"],
     },
     MemberRole.OWNER: {
         "workflow": ["read", "create", "update", "delete", "execute", "export", "manage"],
@@ -86,6 +90,7 @@ ROLE_PERMISSIONS: dict[MemberRole, dict[str, list[str]]] = {
         "member": ["read", "create", "update", "delete", "manage"],
         "workspace": ["read", "update", "delete", "manage"],
         "audit_log": ["read", "export"],
+        "knowledge_base": ["read", "create", "update", "delete", "manage"],
     },
 }
 
@@ -107,6 +112,7 @@ PermissionResource = Literal[
     "member",
     "workspace",
     "audit_log",
+    "knowledge_base",
 ]
 
 PermissionAction = Literal[

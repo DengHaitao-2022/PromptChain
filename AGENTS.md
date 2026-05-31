@@ -98,7 +98,7 @@ API 客户端集中在：
 当前内容工作流链路默认走 **PostgreSQL-backed runtime store**。只有显式设置 `RUNTIME_STORE_BACKEND=memory` 时才回退到内存实现。
 
 这意味着：
-- `dev@8218f54` 的默认基线已经具备运行态持久化
+- `dev@699bf53` 的默认基线已经具备运行态持久化
 - 内存 store 现在只是开发回退，不再是主线事实
 - `backend/orm/*` 已进入当前仓库历史，可作为 ORM 目录事实源；本地未跟踪内容仍不应反向覆盖仓库现实
 
@@ -110,7 +110,7 @@ API 客户端集中在：
 - HttpOnly Cookie：`access_token` + `refresh_token`
 - Access Token 默认 15 分钟，Refresh Token 7 天
 - 注册后需邮箱验证激活账号
-- `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 的页面闭环已在 `dev@8218f54`
+- `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 的页面闭环已在 `dev@699bf53`
 
 关键文件：
 - `backend/routes/auth_routes.py`
@@ -228,7 +228,7 @@ specify init --here --ai codex --force
 
 ---
 
-## 6. 当前实现状态评估（以 `dev@8218f54` 为准）
+## 6. 当前实现状态评估（以 `dev@699bf53` 为准）
 
 1. 运行态主链路已在主线
 - `WorkflowResponse`、pause/resume、clarify、outline approval、fact-check approval、rerun、rerun-history 都已在 `backend/routes/workflow_routes.py` 落地。
@@ -254,10 +254,10 @@ specify init --here --ai codex --force
 - 详情页已提供 trace、artifact history、rerun options、rerun history 与 DOCX 导出入口。
 
 7. 当前剩余主线以验收和平台化收口为主
-- `T037`：`console/runs`、trace、artifact history、rerun 与 DOCX 导出仍需要在当前 `dev@8218f54` 上重新执行 live smoke。
+- `T037`：`console/runs`、trace、artifact history、rerun 与 DOCX 导出仍需要在当前 `dev@699bf53` 上重新执行 live smoke。
 - `T017/T024/T031/T042`：US1/US2/US3/US5 还缺可复用的最终验收归档；其中 `T042` 是 auth/access 验收，不代表 auth-flow 尚未实现。
-- `005-unified-error-system` 的后端统一错误体系与 `frontend/src/lib/api.ts` 错误归一化已在 PR #5，CodeQL 通过且 mergeable，但尚未合入 `dev`；不得写成主线已完成。
-- 生产 CI/CD 与部署基线已在 PR #4，但 PR CI 的后端质量检查和前端质量检查仍失败，当前只可视为候选分支。
+- `005-unified-error-system` 的后端统一错误体系与 `frontend/src/lib/api.ts` 错误归一化已在 PR #5，CodeQL 通过但当前 merge state 不是 clean，尚未合入 `dev`；不得写成主线已完成。
+- 生产 CI/CD 与部署基线已在 PR #4，当前 PR 检查已通过但尚未合入 `dev`，合入前仍只可视为候选分支。
 
 ---
 
@@ -288,7 +288,7 @@ specify init --here --ai codex --force
 - 不默认自动运行/编译
 
 ### 7.4 当前协作事实源
-- 主线事实固定以当前 `dev` 分支 head 为准；本轮文档同步基线为 `8218f54`。
+- 主线事实固定以当前 `dev` 分支 head 为准；本轮文档同步基线为 `699bf53`。
 - 多 agent 协作只认以下 canonical 文件：
   - `specs/002-content-gen-mvp1/subagent-events.jsonl`
   - `specs/002-content-gen-mvp1/subagent-locks.json`
@@ -303,14 +303,14 @@ specify init --here --ai codex --force
 
 当你要继续开发时，建议按以下顺序推进：
 
-1. 先做 `dev@8218f54` 的 MVP1 最终 smoke
+1. 先做 `dev@699bf53` 的 MVP1 最终 smoke
 - 优先复核首页启动、Gate、pause/resume、trace/artifact history、rerun、DOCX 导出和 auth/access。
 
 2. 再推进 PR #5 的 merge gate
 - `code/feat-unified-error-system-current` 仍是 open PR；合入前继续按 PR + CI/CD gate 处理，不在本地直接写成主线事实。
 
-3. 再处理 PR #4 的 CI 失败
-- `code/feat-production-ci-deploy-foundation` 当前后端质量检查和前端质量检查失败；修复前不应作为生产部署基线归档。
+3. 再处理 PR #4 的合并前 gate
+- `code/feat-production-ci-deploy-foundation` 当前 PR 检查已通过，但尚未合入 `dev`；合入前不应作为生产部署基线归档。
 
 4. 最后继续 MVP2 后续队列
 - `005-unified-error-system` 合入后，再派发 legacy-alignment / frontend-consumer 的剩余错误体系收口。
@@ -606,14 +606,14 @@ specify init --here --ai codex --force
 - `rule`：前端用户可见文本默认使用中文。
 - `preference`：默认不主动运行编译和测试，除非用户要求或验证必须。
 - `pattern`：内容工作流状态字段应以 `frontend/src/lib/api.ts` 契约为准进行对齐。
-- `context`：内容主链路当前默认使用内存 Artifact Store，重启后运行数据不会保留。
+- `context`：内容主链路当前默认使用 PostgreSQL-backed runtime store；内存 Artifact Store 只作为 `RUNTIME_STORE_BACKEND=memory` 的开发回退。
 
 ## Active Technologies
 - Python 3.14+（backend）, TypeScript 5 + React 19 + Next.js 16（frontend） + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, Next.js App Router, React, `@xyflow/react`, Radix UI (002-content-gen-mvp1)
-- 现状为 PostgreSQL（认证/工作空间/工作流定义）+ 内存 `ArtifactStore`（内容运行态）；目标为 PostgreSQL 统一承载运行态 `WorkflowRun` / `NodeRun` / `Artifact` / 会话状态，内存存储仅作开发期回退 (002-content-gen-mvp1)
-- Python 3.14+ + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, `langchain-core`, `langchain-openai`, `langchain-anthropic`, `langchain-community`, 目标新增 `langchain-google-genai` (003-provider-architecture)
+- 现状为 PostgreSQL 统一承载认证/工作空间/工作流定义与内容运行态 `WorkflowRun` / `NodeRun` / `Artifact`；内存存储仅作开发期回退 (002-content-gen-mvp1)
+- Python 3.14+ + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, `langchain-core`, `langchain-openai`, `langchain-anthropic`, `langchain-google-genai`, `langchain-ollama` (003-provider-architecture)
 - N/A（本特性只改配置与 provider 解析，不涉及数据库或持久化模型） (003-provider-architecture)
-- Python 3.14+ + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, `langchain`, `langchain-core`, `langchain-openai`, `langchain-anthropic`, 新增 `langchain-google-genai`, `python-dotenv` (003-provider-architecture)
+- Python 3.14+ + FastAPI, LangGraph, SQLAlchemy, Pydantic 2, `langchain`, `langchain-core`, `langchain-openai`, `langchain-anthropic`, `langchain-google-genai`, `langchain-ollama`, `python-dotenv` (003-provider-architecture)
 - N/A（本特性不新增持久化模型；仅涉及运行时配置与 provider 构造） (003-provider-architecture)
 
 ## Recent Changes

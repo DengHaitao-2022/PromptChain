@@ -8,6 +8,8 @@
 import { apiUrl } from './api-config';
 
 const PREFERRED_WORKSPACE_STORAGE_KEY = 'promptchain:workspace_id';
+
+// 合并并发 401 触发的刷新请求，避免多个接口同时刷新 Access Token。
 let refreshTokenRequest: Promise<boolean> | null = null;
 
 export type UserStatus = 'active' | 'inactive' | 'suspended';
@@ -23,7 +25,8 @@ export type Resource =
   | 'api_key'
   | 'member'
   | 'workspace'
-  | 'audit_log';
+  | 'audit_log'
+  | 'knowledge_base';
 
 export interface User {
   id: string;
@@ -100,18 +103,21 @@ export interface ConsoleRouteGuard {
   action?: Action;
 }
 
+// 前端权限表用于菜单显隐和交互兜底；最终授权仍以服务端 RBAC 为准。
 export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>> = {
   viewer: {
     workflow: ['read', 'execute'],
     workflow_run: ['read', 'create'],
     template: ['read'],
     workspace: ['read'],
+    knowledge_base: ['read'],
   },
   editor: {
     workflow: ['read', 'create', 'update', 'execute'],
     workflow_run: ['read', 'create'],
     template: ['read', 'create', 'update'],
     workspace: ['read'],
+    knowledge_base: ['read', 'create', 'update'],
   },
   admin: {
     workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
@@ -123,6 +129,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     member: ['read', 'create', 'update', 'delete', 'manage'],
     workspace: ['read', 'update', 'manage'],
     audit_log: ['read', 'export'],
+    knowledge_base: ['read', 'create', 'update', 'delete', 'manage'],
   },
   owner: {
     workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
@@ -134,15 +141,18 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     member: ['read', 'create', 'update', 'delete', 'manage'],
     workspace: ['read', 'update', 'delete', 'manage'],
     audit_log: ['read', 'export'],
+    knowledge_base: ['read', 'create', 'update', 'delete', 'manage'],
   },
 };
 
+// 控制台路由采用最长前缀匹配，确保更具体的页面先命中自己的权限规则。
 const CONSOLE_ROUTE_GUARDS: ConsoleRouteGuard[] = [
   { prefix: '/console/workflows/edit', resource: 'workflow', action: 'create' },
   { prefix: '/console/settings/members', resource: 'member', action: 'read' },
   { prefix: '/console/settings/models', resource: 'model_provider', action: 'read' },
   { prefix: '/console/settings/keys', resource: 'secret', action: 'read' },
   { prefix: '/console/settings/audit', resource: 'audit_log', action: 'read' },
+  { prefix: '/console/knowledge', resource: 'knowledge_base', action: 'read' },
   { prefix: '/console/runs', resource: 'workflow_run', action: 'read' },
   { prefix: '/console/workflows', resource: 'workflow', action: 'read' },
   { prefix: '/console/settings' },
@@ -150,6 +160,7 @@ const CONSOLE_ROUTE_GUARDS: ConsoleRouteGuard[] = [
 ];
 
 function normalizeAuthState(data: AuthResponse): AuthState {
+  // 将服务端选定的工作空间写入本地偏好，供后续刷新 Token 时恢复上下文。
   persistPreferredWorkspace(data.workspace?.id ?? null);
   return {
     user: data.user,
@@ -250,6 +261,7 @@ export async function refreshToken(): Promise<boolean> {
     return refreshTokenRequest;
   }
 
+  // Refresh Token 存在 HttpOnly Cookie 中，前端只负责携带工作空间偏好。
   refreshTokenRequest = (async () => {
     try {
       const workspaceId = getPreferredWorkspace();
@@ -290,6 +302,7 @@ export async function authenticatedFetch(
     return response;
   }
 
+  // 只刷新并重试一次，防止认证失效时形成无限请求循环。
   const refreshed = await refreshToken();
   if (!refreshed) {
     return response;
@@ -539,7 +552,7 @@ export function canAccessConsolePath(role: Role | null | undefined, pathname: st
     return pathname === '/console';
   }
 
-  // 寻找最精确匹配的路由守卫（最长前缀匹配）
+  // 寻找最精确匹配的路由守卫，避免 `/console/settings` 抢先覆盖子页面规则。
   const guard = CONSOLE_ROUTE_GUARDS
     .filter((item) => pathname.startsWith(item.prefix))
     .reduce<ConsoleRouteGuard | undefined>(

@@ -15,8 +15,16 @@ from core.time import utc_now_iso
 from graph.builder import build_content_generation_graph
 from graph.runtime_plan import compile_workflow_runtime_plan
 from graph.state import GraphState
-from models import ArtifactType, FactCheckReport, WorkflowRun, WorkflowRunStatus
-from services import format_workflow_error, get_artifact_store
+from models import (
+    ArtifactType,
+    FactCheckReport,
+    KnowledgeScope,
+    RetrievalConfig,
+    WorkflowRun,
+    WorkflowRunStatus,
+)
+from services import format_workflow_error, get_artifact_store, get_postgres_store
+from services.knowledge_service import KnowledgeService
 
 
 class ContentGenerationWorkflow:
@@ -110,11 +118,19 @@ class ContentGenerationWorkflow:
             "workflow_version_id": actual_workflow_version_id,
             "workflow_context": workflow_context,
             "runtime_plan": runtime_plan,
+            "retrieval_config": RetrievalConfig.from_raw(
+                (workflow_run.metadata or {}).get("retrieval_config")
+            ),
             "is_paused": False,
             "pause_reason": None,
             "needs_clarification": False,
             "clarification_questions": [],
             "user_clarifications": {},
+            "evidence_pack": None,
+            "evidence_artifact_id": None,
+            "citations": [],
+            "knowledge_conflicts": [],
+            "unverified_points": [],
             "awaiting_outline_approval": False,
             "outline_approved": False,
             "draft_sections": {},
@@ -330,6 +346,11 @@ class ContentGenerationWorkflow:
         metadata["workflow_context_loaded"] = bool(state.get("workflow_context"))
         if isinstance(state.get("runtime_plan"), dict):
             metadata["runtime_plan"] = state.get("runtime_plan")
+        retrieval_config = state.get("retrieval_config")
+        if hasattr(retrieval_config, "model_dump"):
+            metadata["retrieval_config"] = retrieval_config.model_dump(mode="json")
+        elif isinstance(retrieval_config, dict):
+            metadata["retrieval_config"] = retrieval_config
         workflow_run.metadata = metadata
 
         await self._refresh_workflow_stats(workflow_run)
@@ -361,6 +382,11 @@ class ContentGenerationWorkflow:
         artifacts = await self.store.get_artifacts_by_workflow(workflow_run.id)
         latest_fact_report = max(
             (artifact for artifact in artifacts if artifact.type == ArtifactType.FACT_CHECK_REPORT),
+            key=lambda artifact: artifact.created_at,
+            default=None,
+        )
+        latest_evidence_pack = max(
+            (artifact for artifact in artifacts if artifact.type == ArtifactType.EVIDENCE_PACK),
             key=lambda artifact: artifact.created_at,
             default=None,
         )
@@ -399,6 +425,9 @@ class ContentGenerationWorkflow:
             "quality_score_count": len(quality_scores),
             "revisions_requested": revisions_requested,
             "fact_check": fact_check_metrics,
+            "knowledge": self._extract_evidence_metrics(
+                latest_evidence_pack.content if latest_evidence_pack else None
+            ),
             "tokens": {
                 "total": workflow_run.total_tokens,
                 "llm_call_count": workflow_run.total_llm_calls,
@@ -409,6 +438,31 @@ class ContentGenerationWorkflow:
             },
             "final_artifact_id": workflow_run.final_artifact_id,
             "final_content_hash": getattr(final_artifact, "content_hash", None),
+        }
+
+    @staticmethod
+    def _extract_evidence_metrics(content: Any) -> dict[str, Any]:
+        """从 Evidence Artifact 提取检索质量指标，供运行记录与验收观察使用。"""
+        if not isinstance(content, dict):
+            return {
+                "chunk_count": 0,
+                "conflict_count": 0,
+                "unverified_count": 0,
+                "scopes": [],
+                "average_score": None,
+            }
+        chunks = content.get("chunks") if isinstance(content.get("chunks"), list) else []
+        scores = [
+            float(chunk.get("score"))
+            for chunk in chunks
+            if isinstance(chunk, dict) and isinstance(chunk.get("score"), int | float)
+        ]
+        return {
+            "chunk_count": len(chunks),
+            "conflict_count": len(content.get("conflicts") or []),
+            "unverified_count": len(content.get("unverified_points") or []),
+            "scopes": content.get("scopes") or [],
+            "average_score": round(sum(scores) / len(scores), 4) if scores else None,
         }
 
     @staticmethod
@@ -750,6 +804,8 @@ class ContentGenerationWorkflow:
         user_id: str | None = None,
         model_provider_id: str | None = None,
         model_name: str | None = None,
+        retrieval_config: RetrievalConfig | dict | None = None,
+        run_upload_documents: list[dict[str, Any]] | None = None,
     ) -> dict:
         """启动新的工作流，并在后台逐节点推进。"""
         from services.llm_provider import get_workspace_runtime_model_config
@@ -760,6 +816,13 @@ class ContentGenerationWorkflow:
             model_name,
             model_provider_id,
         )
+        upload_documents = run_upload_documents or []
+        retrieval_config_model = RetrievalConfig.from_raw(retrieval_config)
+        if upload_documents:
+            retrieval_config_model = retrieval_config_model.model_copy(
+                update={"enabled": True, "use_run_upload": True}
+            )
+
         metadata = {}
         if workspace_id:
             metadata["workspace_id"] = workspace_id
@@ -783,6 +846,9 @@ class ContentGenerationWorkflow:
             metadata.setdefault("model_provider_id", model_provider_id)
         metadata["model_provider_name"] = runtime_model_config.provider
         metadata["model_name"] = runtime_model_config.model
+        metadata["retrieval_config"] = retrieval_config_model.model_dump(mode="json")
+        if upload_documents:
+            metadata["run_upload_document_count"] = len(upload_documents)
 
         workflow_run = WorkflowRun(
             user_input=user_input,
@@ -805,6 +871,16 @@ class ContentGenerationWorkflow:
             )
         await self.store.create_workflow_run(workflow_run)
 
+        if upload_documents:
+            if not workspace_id or not user_id:
+                raise ValueError("本次运行资料上传需要用户和工作空间上下文。")
+            await self._attach_run_upload_documents(
+                workflow_run_id=workflow_run.id,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                documents=upload_documents,
+            )
+
         initial_state = await self._build_initial_state(workflow_run)
         self._schedule_drive(workflow_run.id, initial_state=initial_state)
 
@@ -813,6 +889,42 @@ class ContentGenerationWorkflow:
             "state": {**initial_state, "current_node": "parse_intent"},
             "status": "running",
         }
+
+    async def _attach_run_upload_documents(
+        self,
+        *,
+        workflow_run_id: str,
+        workspace_id: str,
+        user_id: str,
+        documents: list[dict[str, Any]],
+    ) -> None:
+        """把本次运行上传资料索引到只属于当前 workflow_run 的临时知识库。"""
+        async with get_postgres_store().initialized_session() as session:
+            service = KnowledgeService(session)
+            kb = await service.create_knowledge_base(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                role="viewer",
+                name="本次运行上传资料",
+                description="仅用于当前工作流运行的临时检索资料。",
+                scope=KnowledgeScope.RUN_UPLOAD,
+                workflow_run_id=workflow_run_id,
+            )
+            for document in documents:
+                content = document.get("content")
+                file_name = str(document.get("file_name") or "untitled.txt")
+                if not isinstance(content, bytes):
+                    raise ValueError(f"运行资料 {file_name} 缺少二进制内容。")
+                metadata = document.get("metadata")
+                await service.add_document(
+                    kb_id=kb.id,
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    role="viewer",
+                    file_name=file_name,
+                    content=content,
+                    metadata=metadata if isinstance(metadata, dict) else {},
+                )
 
     async def resume(self, workflow_run_id: str, user_input: dict) -> dict:
         """

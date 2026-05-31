@@ -14,6 +14,7 @@ function getSafeNextPath() {
   }
 
   const nextPath = new URLSearchParams(window.location.search).get('next');
+  // 只允许站内相对路径跳转，避免登录后被外部地址劫持。
   if (!nextPath || !nextPath.startsWith('/') || nextPath.startsWith('//')) {
     return null;
   }
@@ -40,6 +41,7 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
+      // 登录接口只写入 HttpOnly Cookie，进入控制台后再由 AuthProvider 拉取用户上下文。
       await login({ email, password });
       router.push(getSafeNextPath() || '/console');
     } catch (err) {

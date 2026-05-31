@@ -5,9 +5,9 @@
 
 ## Current Status (`2026-05-20`)
 
-- 当前 `dev@8218f54` 尚未包含统一错误体系；主线仍以 FastAPI `HTTPException`、局部 `Result` 和旧 `detail` 兼容风格为主。
+- 当前 `dev@699bf53` 尚未包含统一错误体系；主线仍以 FastAPI `HTTPException`、局部 `Result` 和旧 `detail` 兼容风格为主。
 - PR #5：`code/feat-unified-error-system-current -> dev`，标题为“feat: 统一错误体系与前端错误归一化”。
-- PR #5 当前 open、mergeable，CodeQL checks 通过，但尚未合入 `dev`。
+- PR #5 当前 open，CodeQL checks 通过；当前 merge state 不是 clean，尚未合入 `dev`。
 - 候选分支已实现后端统一错误基础设施、核心域迁移、邮件基础设施失败映射，以及 `frontend/src/lib/api.ts` 错误归一化。
 - 合入前不得把统一错误 envelope 写入主线 API 契约；合入后需要继续收口 `frontend/src/lib/auth.ts`、设置页和 WorkflowEditor hook 等旧错误解析路径。
 

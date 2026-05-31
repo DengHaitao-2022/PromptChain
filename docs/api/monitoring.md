@@ -88,8 +88,11 @@
   - `node_started`
   - `node_completed`
   - `node_failed`
+  - `workflow_gate_waiting`
   - `workflow_completed`
   - `workflow_paused`
+  - `workflow_resumed`
+  - `workflow_failed`
 
 ### 2) `/ws/user/{user_id}`
 

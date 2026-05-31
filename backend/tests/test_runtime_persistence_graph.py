@@ -69,12 +69,47 @@ def test_workflow_status_prioritizes_gate_over_manual_pause():
 
 
 def test_runtime_schema_statements_include_workflow_reference_columns():
-    statements = postgres_store_module._runtime_schema_statements(
+    statements = postgres_store_module._runtime_upgrade_statements(
         "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
     )
 
     assert any("ADD COLUMN IF NOT EXISTS workflow_definition_id" in stmt for stmt in statements)
     assert any("ADD COLUMN IF NOT EXISTS workflow_version_id" in stmt for stmt in statements)
+
+
+def test_runtime_schema_statements_prepare_pgvector_before_metadata_create_all():
+    statements = postgres_store_module._runtime_schema_statements(
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
+    )
+
+    assert "CREATE EXTENSION IF NOT EXISTS vector" in statements
+
+
+def test_split_migration_statements_handles_transactions_comments_and_do_blocks():
+    statements = postgres_store_module._split_migration_statements(
+        """
+        -- 注释不应成为语句
+        BEGIN;
+        CREATE EXTENSION IF NOT EXISTS vector;
+        DO $$
+        BEGIN
+            IF TRUE THEN
+                CREATE INDEX IF NOT EXISTS demo_idx ON demo (id);
+            END IF;
+        END $$;
+        COMMIT;
+        """
+    )
+
+    assert statements == [
+        "CREATE EXTENSION IF NOT EXISTS vector",
+        """DO $$
+        BEGIN
+            IF TRUE THEN
+                CREATE INDEX IF NOT EXISTS demo_idx ON demo (id);
+            END IF;
+        END $$""",
+    ]
 
 
 def test_outline_gate_routes_pending_decision_to_approval_node():

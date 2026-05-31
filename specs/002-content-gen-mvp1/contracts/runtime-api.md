@@ -1,6 +1,6 @@
 # Runtime API Contract
 
-## 0. Current Baseline (`dev@8218f54`)
+## 0. Current Baseline (`dev@699bf53`)
 
 - 当前后端 canonical 落点是 `backend/routes/workflow_routes.py` 与 `backend/routes/workflow_helpers.py`；`backend/main.py` 只保留兼容入口。
 - `POST /api/workflow/start` 现已支持可选的 `workflow_definition_id`、`workflow_version_id`、`model_provider_id` 与 `model_name`，用于从已发布工作流版本和指定模型配置启动任务。

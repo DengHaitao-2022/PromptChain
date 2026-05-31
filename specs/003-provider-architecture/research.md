@@ -12,18 +12,20 @@
 
 ## Current Baseline Facts
 
+> 说明：本节记录 003 特性立项时的仓库基线，用于解释为什么当时需要补齐 Google provider。当前 `dev@699bf53` 主线已经支持 `openai / anthropic / google / github / ollama`，其中 GitHub Models 使用 `GITHUB_MODEL_TOKEN`。
+
 ### 仓库现状
 
-1. `backend/services/llm_provider.py` 已有 `LLMProvider` 抽象基类、`OpenAIProvider`、`AnthropicProvider`、`OllamaProvider` 和 `LLMProviderFactory`。
-2. 当前 factory 内部采用静态 `_providers` 映射和 `_instances` 单例缓存，但只覆盖 `openai / anthropic / ollama`。
+1. 003 立项时，`backend/services/llm_provider.py` 已有 `LLMProvider` 抽象基类、`OpenAIProvider`、`AnthropicProvider`、`OllamaProvider` 和 `LLMProviderFactory`。
+2. 003 立项时，factory 内部采用静态 `_providers` 映射和 `_instances` 单例缓存，但只覆盖 `openai / anthropic / ollama`。
 3. 统一调用入口已经稳定存在：
    - `get_llm()`
    - `get_structured_llm()`
    - `get_current_model_info()`
 4. `backend/nodes/*.py` 普遍直接依赖上述三个入口；改变调用面会产生跨节点回归风险。
-5. `backend/core/config.py` 目前只暴露 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`OLLAMA_BASE_URL`，未显式声明 `GEMINI_API_KEY`。
-6. `backend/.env.example` 仍写明“当前代码仅支持 openai / anthropic / ollama”，并把 Google key 场景标记为未支持。
-7. `backend/pyproject.toml` 当前已包含 `langchain-openai`、`langchain-anthropic`，但未包含 Google 的 LangChain 集成包。
+5. 003 立项时，`backend/core/config.py` 只暴露 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`OLLAMA_BASE_URL`，未显式声明 `GEMINI_API_KEY`。
+6. 003 立项时，`backend/.env.example` 仍写明“当前代码仅支持 openai / anthropic / ollama”，并把 Google key 场景标记为未支持。
+7. 003 立项时，`backend/pyproject.toml` 已包含 `langchain-openai`、`langchain-anthropic`，但未包含 Google 的 LangChain 集成包。
 8. `backend/models/admin_models.py` 已有 `ModelProviderType.GOOGLE`，`frontend/src/app/console/settings/models/page.tsx` 已有 `google` 标签，`frontend/src/components/WorkflowEditor/panels/NodeConfigPanel.tsx` 也已出现 Gemini 模型选项，这说明管理域与展示层并不缺少 Google / Gemini 字面支持，本轮阻塞点主要集中在运行时 provider 层。
 9. `backend/tests/` 当前没有 provider 专用测试文件，Google 接入若不新增单元验证，将无法证明 registry 改造未让 openai / anthropic / ollama 回归。
 
@@ -63,7 +65,7 @@
 - **Rationale**: 当前代码已经在该文件内完成 provider 抽象与工厂职责。最小实现应在现有结构上演进，而不是引入 OpenClaw 式插件系统。
 - **Alternatives considered**:
   - 新建 `backend/services/providers/` 多文件目录：被拒绝，因为会引入额外迁移与导出同步成本。
-  - 动态插件注册：被拒绝，因为当前只有 4 个 provider，复杂度明显过度。
+  - 动态插件注册：被拒绝，因为 003 立项时目标 provider 数量很少；即使当前主线已有 5 个 provider，也仍未达到需要插件系统的复杂度。
 
 ### 3. Google provider 使用 `langchain-google-genai` + `ChatGoogleGenerativeAI`
 
