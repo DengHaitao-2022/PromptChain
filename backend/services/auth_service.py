@@ -18,6 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from core.config import get_settings
+from core.errors.codes import (
+    AUTH_ACCOUNT_SUSPENDED,
+    AUTH_LOGIN_LOCKED,
+    AUTH_REGISTRATION_CONFLICT,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from core.time import utc_now_naive
 from models.admin_orm import LoginAttemptORM
 from models.auth_models import MemberRole, User, UserStatus, Workspace
@@ -191,20 +197,26 @@ class AuthService:
             创建的用户
 
         Raises:
-            ValueError: 邮箱或用户名已存在
+            DomainError: 邮箱或用户名已存在
         """
         email = normalize_email(email)
 
         # 检查邮箱是否已存在
         result = await self.session.execute(select(UserORM).where(user_email_matches(email)))
         if result.scalar_one_or_none():
-            raise ValueError("该邮箱已被注册")
+            raise DomainError(
+                code=AUTH_REGISTRATION_CONFLICT,
+                message="该邮箱已被注册",
+            )
 
         # 检查用户名是否已存在
         if username:
             result = await self.session.execute(select(UserORM).where(UserORM.username == username))
             if result.scalar_one_or_none():
-                raise ValueError("该用户名已被使用")
+                raise DomainError(
+                    code=AUTH_REGISTRATION_CONFLICT,
+                    message="该用户名已被使用",
+                )
 
         # 创建用户和默认工作空间；提交由注册用例统一控制，避免邮件失败后留下不可验证账号。
         user_id = str(uuid.uuid4())
@@ -277,7 +289,8 @@ class AuthService:
             用户ORM对象或None
 
         Raises:
-            ValueError: 登录被锁定
+            ApplicationError: 登录被锁定
+            DomainError: 账号已停用
         """
         email = normalize_email(email)
 
@@ -285,7 +298,10 @@ class AuthService:
         if ip_address:
             is_locked = await self._check_login_lockout(email, ip_address)
             if is_locked:
-                raise ValueError("登录尝试次数过多，请稍后再试")
+                raise ApplicationError(
+                    code=AUTH_LOGIN_LOCKED,
+                    message="登录尝试次数过多，请稍后再试",
+                )
 
         # 查找用户
         result = await self.session.execute(select(UserORM).where(user_email_matches(email)))
@@ -302,7 +318,10 @@ class AuthService:
 
         # 检查用户状态
         if user.status == UserStatus.SUSPENDED.value:
-            raise ValueError("账号已被停用")
+            raise DomainError(
+                code=AUTH_ACCOUNT_SUSPENDED,
+                message="账号已被停用",
+            )
 
         # 记录成功登录
         await self._record_login_attempt(email, ip_address, success=True)

@@ -9,10 +9,20 @@ import os
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
 from core.config import get_settings
+from core.errors.codes import (
+    AUTH_ACCOUNT_SUSPENDED,
+    AUTH_EMAIL_NOT_VERIFIED,
+    AUTH_INVALID_CREDENTIALS,
+    AUTH_UNAUTHENTICATED,
+    COMMON_BAD_REQUEST,
+    COMMON_NOT_FOUND,
+    INFRA_EMAIL_SERVICE_ERROR,
+)
+from core.errors.exceptions import ApplicationError, DomainError, InfrastructureError
 from core.time import utc_max_naive
 from db.postgres_store import get_postgres_store
 from models.admin_models import AuditAction
@@ -176,7 +186,7 @@ async def get_current_user(request: Request) -> dict:
     """获取当前用户（强制登录）"""
     payload = await get_current_user_optional(request)
     if not payload:
-        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+        raise ApplicationError(code=AUTH_UNAUTHENTICATED, message="未登录或登录已过期")
 
     store = get_postgres_store()
     async with store.async_session() as session:
@@ -184,13 +194,13 @@ async def get_current_user(request: Request) -> dict:
         user = await auth_service.get_user_by_id(payload["sub"])
 
         if not user:
-            raise HTTPException(status_code=401, detail="当前登录状态无效")
+            raise ApplicationError(code=AUTH_UNAUTHENTICATED, message="当前登录状态无效")
 
         if user.status == UserStatus.SUSPENDED.value:
-            raise HTTPException(status_code=403, detail="账号已被停用")
+            raise DomainError(code=AUTH_ACCOUNT_SUSPENDED, message="账号已被停用")
 
         if user.status != UserStatus.ACTIVE.value or not user.email_verified:
-            raise HTTPException(status_code=403, detail="账号尚未激活")
+            raise DomainError(code=AUTH_EMAIL_NOT_VERIFIED, message="账号尚未激活")
 
     return payload
 
@@ -252,7 +262,7 @@ async def build_auth_context(
 
         user = await auth_service.get_user_by_id(user_id)
         if not user:
-            raise HTTPException(status_code=404, detail="用户不存在")
+            raise DomainError(code=COMMON_NOT_FOUND, message="用户不存在")
 
         workspaces = await auth_service.get_user_workspaces(user_id)
         workspace_list = []
@@ -330,9 +340,9 @@ async def register(request: Request, body: RegisterRequest):
 
         except EmailDeliveryError as e:
             await session.rollback()
-            raise HTTPException(status_code=502, detail=str(e)) from e
+            raise InfrastructureError(code=INFRA_EMAIL_SERVICE_ERROR, cause=e) from e
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise ApplicationError(code=COMMON_BAD_REQUEST, message=str(e)) from e
 
 
 @router.post("/auth/login")
@@ -358,11 +368,11 @@ async def login(request: Request, response: Response, body: LoginRequest):
             )
 
             if not user:
-                raise HTTPException(status_code=401, detail="邮箱或密码错误")
+                raise DomainError(code=AUTH_INVALID_CREDENTIALS, message="邮箱或密码错误")
 
             # 检查邮箱是否验证
             if not user.email_verified:
-                raise HTTPException(status_code=403, detail="请先验证您的邮箱")
+                raise DomainError(code=AUTH_EMAIL_NOT_VERIFIED, message="请先验证您的邮箱")
 
             # 获取登录后上下文，统一 `/api/me` 与登录响应结构
             auth_context = await build_auth_context(user.id)
@@ -401,7 +411,7 @@ async def login(request: Request, response: Response, body: LoginRequest):
             return {"message": "登录成功", **auth_context}
 
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            raise ApplicationError(code=COMMON_BAD_REQUEST, message=str(e)) from e
 
 
 @router.post("/auth/refresh")
@@ -413,7 +423,7 @@ async def refresh_token(request: Request, response: Response, body: RefreshReque
     """
     refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
     if not refresh_token:
-        raise HTTPException(status_code=401, detail="未找到 Refresh Token")
+        raise ApplicationError(code=AUTH_UNAUTHENTICATED, message="未找到 Refresh Token")
 
     store = get_postgres_store()
     async with store.async_session() as session:
@@ -423,7 +433,10 @@ async def refresh_token(request: Request, response: Response, body: RefreshReque
         user = await auth_service.validate_refresh_token(refresh_token)
         if not user:
             clear_auth_cookies(response)
-            raise HTTPException(status_code=401, detail="Refresh Token 无效或已过期")
+            raise ApplicationError(
+                code=AUTH_UNAUTHENTICATED,
+                message="Refresh Token 无效或已过期",
+            )
 
         preferred_workspace_id = None
         access_token = request.cookies.get(ACCESS_TOKEN_COOKIE)
@@ -505,7 +518,7 @@ async def verify_email(request: Request, body: VerifyEmailRequest):
         # 验证 Token
         user_id = await email_service.verify_email_token(body.token)
         if not user_id:
-            raise HTTPException(status_code=400, detail="验证链接无效或已过期")
+            raise ApplicationError(code=COMMON_BAD_REQUEST, message="验证链接无效或已过期")
 
         # 激活用户
         await auth_service.activate_user(user_id)
@@ -549,7 +562,7 @@ async def resend_verification_email(body: ResendVerificationEmailRequest):
         except EmailDeliveryError as e:
             await session.rollback()
             logger.exception("验证邮件重发失败，user_id=%s", user_id)
-            raise HTTPException(status_code=502, detail=str(e)) from e
+            raise InfrastructureError(code=INFRA_EMAIL_SERVICE_ERROR, cause=e) from e
 
         return MessageResponse(message="如果该邮箱需要验证，您将收到验证邮件")
 
@@ -583,7 +596,7 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
                 await session.rollback()
                 logger.exception("密码重置邮件发送失败，user_id=%s", user_id)
                 if get_settings().DEBUG:
-                    raise HTTPException(status_code=502, detail=str(e)) from e
+                    raise InfrastructureError(code=INFRA_EMAIL_SERVICE_ERROR, cause=e) from e
             else:
                 auth_context = await build_auth_context(user.id)
                 workspace = auth_context["workspace"]
@@ -625,14 +638,14 @@ async def reset_password(request: Request, body: ResetPasswordRequest):
         # 验证 Token
         user_id = await email_service.verify_password_reset_token(body.token)
         if not user_id:
-            raise HTTPException(status_code=400, detail="重置链接无效或已过期")
+            raise ApplicationError(code=COMMON_BAD_REQUEST, message="重置链接无效或已过期")
 
         # 更新密码
         result = await session.execute(select(UserORM).where(UserORM.id == user_id))
         user = result.scalar_one_or_none()
 
         if not user:
-            raise HTTPException(status_code=400, detail="用户不存在")
+            raise DomainError(code=COMMON_NOT_FOUND, message="用户不存在")
 
         user.password_hash = hash_password(body.password)
         await session.commit()

@@ -8,9 +8,18 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 from pydantic import BaseModel, Field
 
+from core.errors.codes import (
+    AUTH_UNAUTHENTICATED,
+    WORKFLOW_GATE_CONFLICT,
+    WORKFLOW_NOT_FOUND,
+    WORKFLOW_STATE_CONFLICT,
+    WORKSPACE_ACCESS_DENIED,
+    WORKSPACE_CONTEXT_REQUIRED,
+)
+from core.errors.exceptions import ApplicationError, DomainError
 from core.time import to_utc_iso, to_utc_iso_or_none
 from graph.runtime_plan import canonical_runtime_plan
 from models.artifact import WorkflowRunStatus
@@ -390,9 +399,9 @@ async def require_workspace_permission(
         workspace_id = user.get("default_workspace_id") or user.get("workspace_id")
 
     if not user_id:
-        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+        raise ApplicationError(code=AUTH_UNAUTHENTICATED, message="未登录或登录已过期")
     if not workspace_id:
-        raise HTTPException(status_code=400, detail="请先选择工作空间")
+        raise ApplicationError(code=WORKSPACE_CONTEXT_REQUIRED, message="请先选择工作空间")
 
     store = get_postgres_store()
     async with store.async_session() as session:
@@ -443,18 +452,21 @@ async def require_workflow_run_access(
     workflow_run = await store.get_workflow_run(workflow_run_id)
 
     if not workflow_run:
-        raise HTTPException(status_code=404, detail="Workflow not found")
+        raise DomainError(code=WORKFLOW_NOT_FOUND, message="工作流不存在")
 
     metadata = _ensure_workflow_metadata(workflow_run)
     run_workspace_id = metadata.get("workspace_id")
     run_user_id = metadata.get("user_id")
 
     if not run_workspace_id or not run_user_id:
-        raise HTTPException(status_code=403, detail="该任务缺少归属信息，暂不允许访问")
+        raise DomainError(
+            code=WORKSPACE_ACCESS_DENIED,
+            message="该任务缺少归属信息，暂不允许访问",
+        )
     if run_workspace_id != workspace_id:
-        raise HTTPException(status_code=403, detail="您无权访问该工作空间中的任务")
+        raise DomainError(code=WORKSPACE_ACCESS_DENIED, message="您无权访问该工作空间中的任务")
     if not _is_admin_role(role) and run_user_id != user_id:
-        raise HTTPException(status_code=403, detail="您只能访问自己的任务")
+        raise DomainError(code=WORKSPACE_ACCESS_DENIED, message="您只能访问自己的任务")
 
     return workflow_run
 
@@ -466,7 +478,7 @@ async def require_node_run_access(request: Request, node_run_id: str) -> Any:
     store = get_artifact_store()
     node_run = await store.get_node_run(node_run_id)
     if not node_run:
-        raise HTTPException(status_code=404, detail="NodeRun not found")
+        raise DomainError(code=WORKFLOW_NOT_FOUND, message="节点运行记录不存在")
 
     await require_workflow_run_access(request, node_run.workflow_run_id)
     return node_run
@@ -479,7 +491,7 @@ async def require_artifact_access(request: Request, artifact_id: str) -> Any:
     store = get_artifact_store()
     artifact = await store.get_artifact(artifact_id)
     if not artifact:
-        raise HTTPException(status_code=404, detail="Artifact not found")
+        raise DomainError(code=WORKFLOW_NOT_FOUND, message="产物不存在")
 
     await require_workflow_run_access(request, artifact.workflow_run_id)
     return artifact
@@ -487,15 +499,13 @@ async def require_artifact_access(request: Request, artifact_id: str) -> Any:
 
 async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, dict, WorkflowStatus]:
     """加载工作流运行时上下文（store, workflow, workflow_run, graph_state, status）"""
-    from fastapi import HTTPException
-
     from graph import get_workflow
     from services import get_artifact_store
 
     store = get_artifact_store()
     workflow_run = await store.get_workflow_run(workflow_run_id)
     if not workflow_run:
-        raise HTTPException(status_code=404, detail="Workflow not found")
+        raise DomainError(code=WORKFLOW_NOT_FOUND, message="工作流不存在")
 
     workflow = get_workflow()
     graph_state = await _get_graph_state(workflow, workflow_run_id)
@@ -520,14 +530,12 @@ def _assert_status(
     paused_detail: str,
 ) -> None:
     """断言工作流状态，不满足时抛出 HTTPException"""
-    from fastapi import HTTPException
-
     if current_status == "paused":
-        raise HTTPException(status_code=409, detail=paused_detail)
+        raise DomainError(code=WORKFLOW_GATE_CONFLICT, message=paused_detail)
     if current_status not in allowed:
-        raise HTTPException(
-            status_code=409,
-            detail=f"当前工作流状态为 {current_status}，不能执行{action}。",
+        raise DomainError(
+            code=WORKFLOW_STATE_CONFLICT,
+            message=f"当前工作流状态为 {current_status}，不能执行{action}。",
         )
 
 

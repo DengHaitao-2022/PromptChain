@@ -272,11 +272,16 @@ export default function WorkflowEditPage() {
                 );
             } catch (err: unknown) {
                 const error = err as {
-                    code?: number;
+                    code?: number | string;
                     data?: { validation?: ValidationResult };
+                    details?: { validation?: ValidationResult };
                 };
-                if (error.code === 40000 && error.data?.validation) {
-                    setValidation(error.data.validation);
+                const publishValidation = error.data?.validation ?? error.details?.validation;
+                if (
+                    publishValidation
+                    && (error.code === 40000 || error.code === 'WORKFLOW_VALIDATION_FAILED')
+                ) {
+                    setValidation(publishValidation);
                     setStatusMessage('发布已拦截，请先修复校验问题。');
                 } else {
                     setActionError(err instanceof Error ? err.message : '发布工作流失败');

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import routes.workflow_helpers as workflow_helpers
+from core.errors.codes import AUTH_UNAUTHENTICATED, WORKFLOW_NOT_FOUND, WORKSPACE_ACCESS_DENIED
 from core.time import to_utc_iso
 from main import app
 from routes.auth_routes import ACCESS_TOKEN_COOKIE
@@ -343,6 +344,10 @@ def test_runtime_and_trace_routes_require_authentication(
     )
 
     assert response.status_code == 401
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == AUTH_UNAUTHENTICATED
+    assert body["request_id"]
 
 
 def test_start_workflow_persists_runtime_ownership(monkeypatch):
@@ -431,7 +436,11 @@ def test_workflow_status_rejects_foreign_workspace(monkeypatch):
     response = client.get("/api/workflow/wf-foreign")
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "您无权访问该工作空间中的任务"
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == WORKSPACE_ACCESS_DENIED
+    assert body["message"] == "您无权访问该工作空间中的任务"
+    assert body["request_id"]
 
 
 def test_trace_rejects_foreign_workspace(monkeypatch):
@@ -447,7 +456,11 @@ def test_trace_rejects_foreign_workspace(monkeypatch):
     response = client.get("/api/trace/wf-foreign")
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "您无权访问该工作空间中的任务"
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == WORKSPACE_ACCESS_DENIED
+    assert body["message"] == "您无权访问该工作空间中的任务"
+    assert body["request_id"]
 
 
 def test_trace_node_returns_404_for_missing_resource(monkeypatch):
@@ -463,7 +476,11 @@ def test_trace_node_returns_404_for_missing_resource(monkeypatch):
     response = client.get("/api/trace/node/node-missing")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "NodeRun not found"
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == WORKFLOW_NOT_FOUND
+    assert body["message"] == "节点运行记录不存在"
+    assert body["request_id"]
 
 
 def test_artifact_history_rejects_foreign_workspace_without_wrapping_500(monkeypatch):
@@ -479,7 +496,11 @@ def test_artifact_history_rejects_foreign_workspace_without_wrapping_500(monkeyp
     response = client.get("/api/artifact/art-foreign/history")
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "您无权访问该工作空间中的任务"
+    body = response.json()
+    assert body["success"] is False
+    assert body["code"] == WORKSPACE_ACCESS_DENIED
+    assert body["message"] == "您无权访问该工作空间中的任务"
+    assert body["request_id"]
 
 
 def test_rerun_persists_runtime_ownership(monkeypatch):
