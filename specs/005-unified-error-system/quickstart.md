@@ -2,6 +2,20 @@
 
 本文档描述 `005-unified-error-system` 的最小验收路径。目标不是跑完整业务主链，而是验证核心 API 域已经开始使用统一错误契约，并且前端/调用方可以基于稳定错误标识做处理。
 
+## 0. 当前状态（PR #5 候选，尚未合入 `dev`）
+
+- 当前 `dev@699bf53` 尚未包含统一错误体系；主线仍保留 FastAPI `HTTPException`、局部 `Result` 和旧 `detail` 风格。
+- PR #5 `code/feat-unified-error-system-current -> dev` 已创建，标题为“feat: 统一错误体系与前端错误归一化”。
+- PR #5 当前 open，CodeQL checks 通过；当前 merge state 不是 clean，尚未合入 `dev`。
+- 本 quickstart 在 PR #5 合入前只用于候选分支验收；不得把下面的统一错误 envelope 预期写成当前主线 API 事实。
+
+候选分支已知验证边界：
+
+- 已运行后端目标测试，结果为 `40 passed`。
+- 已运行目标后端文件 ruff check。
+- 前端 lint/build 未运行，因为 `frontend/node_modules` 缺失。
+- 未启动服务，未执行 live smoke。
+
 ## 1. 环境前提
 
 - 后端服务可访问
@@ -11,10 +25,24 @@
 
 ## 2. 启动本地环境
 
+若本轮只验证后端错误契约，可以先跑不依赖真实模型的 fake smoke，确认基础链路不是被 provider key 阻断：
+
+```bash
+cd backend
+uv run pytest tests/test_llm_provider.py -q
+DEFAULT_LLM_PROVIDER=fake uv run python ../scripts/smoke/acceptance_smoke.py
+```
+
+记录规则：
+
+- `tests/test_llm_provider.py` 可进 CI，用于确认 fake provider 不依赖真实 OpenAI/Anthropic/Gemini key
+- `scripts/smoke/acceptance_smoke.py` 需要 PostgreSQL 和后端服务；若 PostgreSQL/Redis 不可用，应记录为 `blocked`
+- 真实 provider smoke 仍需人工或独立 live job 执行；未真实运行时必须记录 `manual_live_provider: not_run`
+
 ### 后端
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 uv sync
 uv run uvicorn app:app --reload --port 8000
 ```
@@ -22,7 +50,7 @@ uv run uvicorn app:app --reload --port 8000
 ### 前端
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/frontend
+cd frontend
 npm install
 npm run dev
 ```

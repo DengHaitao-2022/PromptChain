@@ -59,6 +59,20 @@
 
 - 用途：移除成员
 
+### 10) `POST /api/workspace-context/switch`
+
+- 用途：切换当前工作空间上下文，并重写包含 `workspace_id` 的 access token Cookie
+- 鉴权：必须登录，且当前用户必须属于目标工作空间
+- 请求体：
+
+```json
+{
+  "workspace_id": "workspace_123"
+}
+```
+
+- 成功响应含新的 `user/workspace/role/workspaces` 上下文
+
 ## 约束与权限
 
 - 全部接口需要登录态（Cookie）

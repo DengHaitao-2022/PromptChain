@@ -7,7 +7,7 @@ GraphState 是 LangGraph 工作流的核心数据合约，
 
 from typing import Any, TypedDict
 
-from models import FactCheckReport, IntentCard, Outline, Uncertainty
+from models import EvidencePack, FactCheckReport, IntentCard, Outline, RetrievalConfig, Uncertainty
 
 
 class GraphState(TypedDict, total=False):
@@ -25,6 +25,7 @@ class GraphState(TypedDict, total=False):
     workflow_version_id: str | None
     workflow_context: dict[str, Any] | None
     runtime_plan: dict[str, Any] | None
+    retrieval_config: RetrievalConfig | dict[str, Any] | None
     is_paused: bool
     pause_reason: str | None
     rerun_from_node: str | None
@@ -36,6 +37,13 @@ class GraphState(TypedDict, total=False):
     needs_clarification: bool
     clarification_questions: list[Uncertainty]
     user_clarifications: dict[str, str]
+
+    # 知识检索
+    evidence_pack: EvidencePack | dict[str, Any] | None
+    evidence_artifact_id: str | None
+    citations: list[dict[str, Any]]
+    knowledge_conflicts: list[dict[str, Any]]
+    unverified_points: list[str]
 
     # 提纲生成
     outline: Outline | None

@@ -55,6 +55,15 @@ class _FakeWorkflow:
     async def pause(self, workflow_run_id: str, reason: str = ""):
         self.store.workflow_run.status = "paused"
         paused_at = self._utc_now_z()
+        metadata = dict(self.store.workflow_run.metadata or {})
+        metadata["pause"] = {
+            "reason": reason,
+            "paused_at": paused_at,
+            "resumed_at": None,
+            "source": "user",
+        }
+        metadata["pause_reason"] = reason
+        self.store.workflow_run.metadata = metadata
         return {
             "workflow_run_id": workflow_run_id,
             "status": "paused",
@@ -71,6 +80,15 @@ class _FakeWorkflow:
     async def resume_paused(self, workflow_run_id: str):
         self.store.workflow_run.status = "running"
         pause_info = self.store.workflow_run.metadata.get("pause", {})
+        metadata = dict(self.store.workflow_run.metadata or {})
+        metadata["pause"] = {
+            "reason": pause_info.get("reason", ""),
+            "paused_at": pause_info.get("paused_at", self._utc_now_z()),
+            "source": pause_info.get("source", "user"),
+            "resumed_at": self._utc_now_z(),
+        }
+        metadata["pause_reason"] = None
+        self.store.workflow_run.metadata = metadata
         return {
             "workflow_run_id": workflow_run_id,
             "status": "running",

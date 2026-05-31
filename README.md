@@ -21,6 +21,7 @@
   <a href="#核心能力">核心能力</a> ·
   <a href="#工作流总览">工作流总览</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#生产部署基线">生产部署基线</a> ·
   <a href="#系统架构">系统架构</a> ·
   <a href="#当前边界与后续方向">当前边界与后续方向</a>
 </p>
@@ -56,8 +57,9 @@ PromptChain 的目标不是“再包一层 Prompt”，而是把复杂内容生�
 | 不确定点检测与人机门控 | 已实现 | 支持澄清问题、提纲审批、事实核查高风险项确认。 |
 | 事实核查与内容修订 | 已实现 | 集成 Self-Refine 与事实核查节点，支持高风险项二次确认。 |
 | Trace / Artifact 追踪 / 节点重跑 | 已实现 | 支持节点详情、Artifact 历史、重跑选项与从指定节点重跑。 |
-| 可视化工作流编排 | 部分实现 | 已有工作流定义、版本管理和前端编辑器骨架，保存与控制台能力仍在完善。 |
-| 实时推送与控制台监控 | 部分实现 | WebSocket 路由已存在，但主执行链路的实时事件接入仍需补齐。 |
+| 最终产物导出 | 已实现基础版本 | 工作流详情页支持完成态阅读、复制/下载 Markdown 与导出 DOCX。 |
+| 可视化工作流编排 | 已实现基础闭环 | 支持工作流定义、校验、发布、版本对比、恢复与前端编辑器。 |
+| 实时推送与控制台监控 | 已实现基础版本 | 支持 SSE/事件流、运行记录总览、详情回放与状态入口；最终 live smoke 仍需按验收文档复核。 |
 
 ## 适用场景
 
@@ -121,16 +123,19 @@ cp .env.example .env
 uv run uvicorn app:app --reload --port 8000
 ```
 
-`backend/.env` 至少需要配置一个可用模型提供方：
+`backend/.env` 至少需要配置一个可用模型提供方。当前运行时支持
+`openai / anthropic / google / github / ollama`，其中 Google 使用
+`GEMINI_API_KEY`，GitHub Models 使用 `GITHUB_MODEL_TOKEN`：
 
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 GITHUB_MODEL_TOKEN=your_github_models_token_here
 OLLAMA_BASE_URL=http://localhost:11434
 
-DEFAULT_LLM_PROVIDER=openai
-DEFAULT_MODEL_NAME=gpt-4o
+DEFAULT_LLM_PROVIDER=anthropic
+DEFAULT_MODEL_NAME=claude-3-5-sonnet-20241022
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain
 ```
 
@@ -148,6 +153,18 @@ npm run dev
 - 前端：`http://localhost:3000`
 - 后端：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`
+
+## 生产部署基线
+
+仓库提供最小生产工程基线，覆盖 PR CI、后端/前端 Docker 镜像和单机 Docker Compose 示例：
+
+- PR CI：`.github/workflows/pr-ci.yml`
+- 后端镜像：`backend/Dockerfile`
+- 前端镜像：`frontend/Dockerfile`
+- 生产 Compose 示例：`docker-compose.prod.yml`
+- 部署说明：`docs/deployment.md`
+
+该基线不引入 Kubernetes 或云厂商平台流水线。PR 进入 `dev` 或 `main` 时，CI 会执行后端 `ruff + pytest`，以及前端 `lint + typecheck + build`，可在 GitHub 分支保护中作为必需状态检查。
 
 ## 典型使用路径
 
@@ -185,12 +202,16 @@ npm run dev
 ### 内容工作流
 
 - `POST /api/workflow/start`
+- `POST /api/workflow/{workflow_run_id}/pause`
+- `POST /api/workflow/{workflow_run_id}/resume`
 - `POST /api/workflow/{workflow_run_id}/clarify`
 - `POST /api/workflow/{workflow_run_id}/approve-outline`
 - `POST /api/workflow/{workflow_run_id}/approve-fact-check`
 - `GET /api/workflow/{workflow_run_id}`
 - `GET /api/workflow/{workflow_run_id}/rerun-options`
 - `POST /api/workflow/{workflow_run_id}/rerun`
+- `GET /api/workflow/{workflow_run_id}/exports/docx`
+- `GET /api/workflow/runs`
 
 ### 追踪与产物
 
@@ -201,9 +222,10 @@ npm run dev
 
 ### 平台能力
 
-- `POST /api/auth/*`：登录、注册、刷新 Token、邮箱验证等
-- `GET/POST/PATCH /api/workspaces*`：工作空间与成员管理
-- `GET/POST/PUT /api/workflows*`：工作流定义与版本管理
+- `POST /api/auth/*`：登录、注册、刷新 Token、邮箱验证、重发验证邮件、密码重置等
+- `GET/POST/PATCH /api/workspaces*` 与 `POST /api/workspace-context/switch`：工作空间、成员管理与当前工作空间切换
+- `GET/POST/PUT /api/workflows*`：工作流定义、公开已发布工作流、发布与版本管理
+- `GET/POST/PATCH/DELETE /api/admin/*`：模型供应商、密钥、API Key、用户状态、审计日志与 Dashboard
 - `WebSocket /ws/*`：工作流与用户级实时通道
 
 ## 项目结构
@@ -235,16 +257,20 @@ PromptChain/
 当前仓库已经具备“可运行的内容主链路”，但还没有完全进入生产态，主要边界如下：
 
 - 内容工作流运行数据默认使用 PostgreSQL 持久化，服务重启后可保留历史；仅在显式切换到内存模式时才会在重启后丢失运行态数据。
-- 控制台中的部分列表页、版本对比和工作流编辑保存仍处于骨架或占位状态。
-- WebSocket 通道已存在，但节点执行事件尚未全面接入实时推送链路。
-- 前后端契约、控制台管理能力和内容链路持久化还需要进一步统一。
+- 首页启动、工作流详情、运行记录总览、工作流编辑/发布、版本对比/恢复、Trace、Artifact、Rerun 和 DOCX 导出都已进入主线。
+- WebSocket / SSE 是实时体验增强通道；REST + Trace 仍是最终对账入口，不应把“事件已推送”当成唯一事实源。
+- MVP1 当前主要剩余项是 `dev@699bf53` 上的最终 live smoke 与验收归档，不再是核心功能补齐。
+- 统一错误体系与前端错误归一化目前在 PR #5，尚未合入 `dev`；生产 CI/CD 与部署基线在 PR #4，当前 PR 检查已通过但仍未合入主线。
+- 生产态能力仍缺少版本化数据库迁移、独立 worker/队列、通用重试/超时/熔断、完整 CI/CD、可观测性与灾难恢复闭环。
 
 下一步更合理的演进方向：
 
-1. 将内容链路全面切换到 PostgreSQL 或统一的持久化存储。
-2. 打通工作流编辑器的保存、发布、版本回滚与可执行编译链路。
-3. 为内容工作流补齐实时推送、运行列表、筛选与监控面板。
-4. 引入更明确的评测、模型路由和质量指标闭环。
+1. 在 `dev@699bf53` 上完成 MVP1 最终 smoke：标准生成、Gate、pause/resume、trace/artifact history、rerun、DOCX 导出和 auth/access。
+2. 合入并验收统一错误体系，使后端错误 envelope、错误码和前端错误消费从 PR 候选变成主线契约。
+3. 修复生产 CI/CD PR 的质量检查失败，并补齐可复用部署说明。
+4. 引入 Alembic 等版本化迁移体系，避免继续依赖启动期 `create_all` 和手写 `ALTER TABLE`。
+5. 将长任务执行从进程内后台任务演进到 worker/queue 模式，并补齐超时、重试、熔断、限流与死信处理。
+6. 引入更明确的评测、模型路由、成本统计和质量指标闭环。
 
 ## 设计目标
 

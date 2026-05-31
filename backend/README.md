@@ -3,8 +3,8 @@
 ## 技术栈
 - **框架**: FastAPI
 - **工作流引擎**: LangGraph
-- **LLM**: 多Provider兼容 (OpenAI, Anthropic, Ollama)
-- **数据存储**: PostgreSQL / SQLite
+- **LLM**: 多 Provider 兼容（OpenAI, Anthropic, Google Gemini, GitHub Models, Ollama）
+- **数据存储**: PostgreSQL（运行态主路径）/ 内存回退（开发模式）
 - **包管理**: uv (快速、可复现)
 - **代码质量**: ruff + pre-commit
 
@@ -39,10 +39,13 @@ uvicorn app:app --reload --port 8000
 uv add package-name
 
 # 添加开发依赖
-uv add --dev pytest
+uv add --dev pytest pytest-asyncio
 
 # 运行Python脚本
 uv run python script.py
+
+# 运行后端测试（包含异步测试插件）
+uv run --extra dev pytest -q
 
 # 更新依赖
 uv sync
@@ -85,7 +88,12 @@ backend/
 │   └── config.py            # 统一配置（环境变量集中管理）
 │
 ├── graph/                   # LangGraph 工作流定义
-│   └── content_generation_graph.py  # 图定义 + 执行器
+│   ├── state.py             # GraphState 数据合约
+│   ├── conditions.py        # 条件路由函数
+│   ├── builder.py           # 图构建与 finalize_output
+│   ├── executor.py          # ContentGenerationWorkflow 执行器
+│   ├── runtime_plan.py      # 已发布 DSL 到受限运行计划的编译
+│   └── content_generation_graph.py  # 兼容 re-export 入口
 │
 ├── nodes/                   # LangGraph 节点实现
 │   ├── intent_parser.py
@@ -102,7 +110,7 @@ backend/
 │   └── result.py
 │
 ├── routes/                  # API 路由
-│   ├── workflow_routes.py   # 内容工作流 API（启动/审批/暂停/重跑）
+│   ├── workflow_routes.py   # 内容工作流 API（启动/审批/暂停/重跑/SSE/DOCX导出）
 │   ├── workflow_helpers.py  # 工作流共享模型和工具函数
 │   ├── trace_routes.py      # Trace / Artifact API
 │   ├── auth_routes.py       # 认证路由
@@ -115,7 +123,8 @@ backend/
 ├── services/                # 核心服务层
 │   ├── auth_service.py / email_service.py / permission_service.py
 │   ├── artifact_store.py / trace_service.py / rerun_service.py
-│   ├── llm_provider.py
+│   ├── workflow_export_service.py
+│   ├── llm_provider.py / llm_retry.py / llm_errors.py
 │   └── workflow_definition_service.py
 │
 ├── db/                      # 数据库层
@@ -124,3 +133,12 @@ backend/
 │
 └── tests/                   # 测试
 ```
+
+## 当前实现边界
+
+- 当前主线基线为 `dev@699bf53`。
+- 内容运行态默认走 PostgreSQL-backed store；`RUNTIME_STORE_BACKEND=memory` 仅用于开发回退。
+- 内容工作流 API 已覆盖启动、澄清、提纲审批、事实核查审批、手动暂停/恢复、运行列表、SSE 快照流、节点重跑、重跑历史和 DOCX 导出。
+- 工作流定义/版本 API 已覆盖 CRUD、校验、编译预览、发布、版本对比与恢复。
+- 统一错误体系仍在 PR #5，尚未进入 `dev`；当前主线仍以 FastAPI `HTTPException` / `Result` 兼容风格为主。
+- 生产 CI/CD 与部署基线仍在 PR #4；当前 PR 检查已通过，但合入前仍只能视为候选部署基线。

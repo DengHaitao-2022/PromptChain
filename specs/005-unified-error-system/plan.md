@@ -3,6 +3,14 @@
 **Branch**: `005-unified-error-system` | **Date**: `2026-04-12` | **Spec**: [`spec.md`](./spec.md)
 **Input**: Feature specification from `/specs/005-unified-error-system/spec.md`
 
+## Current Status (`2026-05-20`)
+
+- 当前 `dev@699bf53` 尚未包含统一错误体系；主线仍以 FastAPI `HTTPException`、局部 `Result` 和旧 `detail` 兼容风格为主。
+- PR #5：`code/feat-unified-error-system-current -> dev`，标题为“feat: 统一错误体系与前端错误归一化”。
+- PR #5 当前 open，CodeQL checks 通过；当前 merge state 不是 clean，尚未合入 `dev`。
+- 候选分支已实现后端统一错误基础设施、核心域迁移、邮件基础设施失败映射，以及 `frontend/src/lib/api.ts` 错误归一化。
+- 合入前不得把统一错误 envelope 写入主线 API 契约；合入后需要继续收口 `frontend/src/lib/auth.ts`、设置页和 WorkflowEditor hook 等旧错误解析路径。
+
 ## Summary
 
 本计划聚焦一次 MVP2 平台基础能力升级：为 PromptChain 建立统一错误模型、错误码注册表、异常分层和全局异常映射，使 auth、workflow runtime、trace、workspace、admin 等核心 API 域能够返回一致、可判定、可追踪、可脱敏的错误响应。实现路径保持在现有 `FastAPI + LangGraph + SQLAlchemy + Next.js` 架构内，通过后端统一错误契约、全局 handler、请求追踪标识、核心路由迁移和前端错误消费约定完成闭环，不扩展成全量架构重写或大型运维平台。

@@ -48,12 +48,18 @@
 
 - 请求体：`{ "token": "..." }`
 
-### 6) `POST /api/auth/forgot-password`
+### 6) `POST /api/auth/resend-verification-email`
+
+- 用途：重发邮箱验证邮件
+- 请求体：`{ "email": "user@example.com" }`
+- 说明：未验证账号会重新生成验证 token；已验证或不存在账号按防枚举策略返回中性消息
+
+### 7) `POST /api/auth/forgot-password`
 
 - 请求体：`{ "email": "user@example.com" }`
 - 说明：邮箱不存在也返回成功消息（防枚举）
 
-### 7) `POST /api/auth/reset-password`
+### 8) `POST /api/auth/reset-password`
 
 - 请求体：
 
@@ -64,7 +70,7 @@
 }
 ```
 
-### 8) `GET /api/me`
+### 9) `GET /api/me`
 
 - 用途：获取当前登录用户与工作空间上下文
 - 鉴权：必须登录（Cookie）

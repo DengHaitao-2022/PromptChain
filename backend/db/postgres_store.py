@@ -11,6 +11,8 @@ import base64
 import importlib
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, TypeVar
 
 from langgraph.checkpoint.base import (
@@ -59,11 +61,99 @@ class Base(DeclarativeBase):
     pass
 
 
+def _split_migration_statements(sql: str) -> list[str]:
+    """把迁移 SQL 拆成单语句，避开 asyncpg prepared statement 的多语句限制。"""
+    statements: list[str] = []
+    current: list[str] = []
+    index = 0
+    quote: str | None = None
+    dollar_quote: str | None = None
+    while index < len(sql):
+        char = sql[index]
+        next_char = sql[index + 1] if index + 1 < len(sql) else ""
+
+        if dollar_quote:
+            current.append(char)
+            if sql.startswith(dollar_quote, index):
+                current.extend(sql[index + 1 : index + len(dollar_quote)])
+                index += len(dollar_quote)
+                dollar_quote = None
+            else:
+                index += 1
+            continue
+
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            elif char == "\\" and quote == "'" and next_char:
+                current.append(next_char)
+                index += 1
+            index += 1
+            continue
+
+        if char == "-" and next_char == "-":
+            index += 2
+            while index < len(sql) and sql[index] not in "\r\n":
+                index += 1
+            continue
+
+        if char == "/" and next_char == "*":
+            index += 2
+            while index + 1 < len(sql) and not (sql[index] == "*" and sql[index + 1] == "/"):
+                index += 1
+            index += 2
+            continue
+
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            index += 1
+            continue
+
+        if char == "$":
+            end = sql.find("$", index + 1)
+            if end > index:
+                tag = sql[index : end + 1]
+                if tag == "$$" or tag[1:-1].replace("_", "").isalnum():
+                    dollar_quote = tag
+                    current.append(tag)
+                    index = end + 1
+                    continue
+
+        if char == ";":
+            statement = "".join(current).strip()
+            if statement and statement.upper() not in {"BEGIN", "COMMIT"}:
+                statements.append(statement)
+            current.clear()
+            index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    statement = "".join(current).strip()
+    if statement and statement.upper() not in {"BEGIN", "COMMIT"}:
+        statements.append(statement)
+    return statements
+
+
 def _runtime_schema_statements(database_url: str) -> list[str]:
     """返回 legacy 运行态表的幂等升级语句。
 
     这些语句已归属 Alembic baseline；这里只作为开发兼容路径保留。
     """
+    if not database_url.startswith("postgresql"):
+        return []
+
+    return [
+        'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
+        "CREATE EXTENSION IF NOT EXISTS vector",
+    ]
+
+
+def _runtime_upgrade_statements(database_url: str) -> list[str]:
+    """返回模型建表后的幂等补丁语句，兼容未执行迁移的历史库。"""
     if not database_url.startswith("postgresql"):
         return []
 
@@ -113,6 +203,115 @@ def _runtime_schema_statements(database_url: str) -> list[str]:
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_trace_id ON audit_logs (trace_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_outcome ON audit_logs (outcome)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_target ON audit_logs (target_type, target_id)",
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_bases (
+            id VARCHAR(36) PRIMARY KEY,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            owner_user_id VARCHAR(36) REFERENCES users(id),
+            workflow_run_id VARCHAR(36),
+            scope VARCHAR(20) NOT NULL DEFAULT 'workspace',
+            name VARCHAR(160) NOT NULL,
+            description TEXT,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            created_by VARCHAR(36) NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS kb_documents (
+            id VARCHAR(36) PRIMARY KEY,
+            kb_id VARCHAR(36) NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            owner_user_id VARCHAR(36) REFERENCES users(id),
+            workflow_run_id VARCHAR(36),
+            file_name VARCHAR(255) NOT NULL,
+            file_type VARCHAR(40) NOT NULL,
+            storage_uri TEXT,
+            checksum VARCHAR(64) NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            parse_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            index_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            created_by VARCHAR(36) NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36)",
+        "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36)",
+        "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'",
+        """
+        CREATE TABLE IF NOT EXISTS kb_chunks (
+            id VARCHAR(36) PRIMARY KEY,
+            document_id VARCHAR(36) NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
+            kb_id VARCHAR(36) NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            owner_user_id VARCHAR(36) REFERENCES users(id),
+            workflow_run_id VARCHAR(36),
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            heading_path JSON DEFAULT '[]'::json,
+            page_number INTEGER,
+            metadata_json JSON DEFAULT '{}'::json,
+            content_hash VARCHAR(64) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36)",
+        """
+        CREATE TABLE IF NOT EXISTS kb_embeddings (
+            id VARCHAR(36) PRIMARY KEY,
+            chunk_id VARCHAR(36) NOT NULL REFERENCES kb_chunks(id) ON DELETE CASCADE,
+            embedding_model VARCHAR(120) NOT NULL,
+            vector_json JSON NOT NULL,
+            dimension INTEGER NOT NULL,
+            embedding_vector vector(1536),
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "ALTER TABLE kb_embeddings ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)",
+        """
+        CREATE TABLE IF NOT EXISTS kb_retrieval_logs (
+            id VARCHAR(36) PRIMARY KEY,
+            workflow_run_id VARCHAR(36),
+            node_run_id VARCHAR(36),
+            user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            query TEXT NOT NULL,
+            rewritten_queries JSON DEFAULT '[]'::json,
+            retrieval_scope JSON DEFAULT '[]'::json,
+            retrieval_mode VARCHAR(20) NOT NULL,
+            top_k INTEGER NOT NULL,
+            min_score DOUBLE PRECISION NOT NULL,
+            retrieved_chunk_ids JSON DEFAULT '[]'::json,
+            scores JSON DEFAULT '[]'::json,
+            metadata_json JSON DEFAULT '{}'::json,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_knowledge_bases_workspace_scope ON knowledge_bases (workspace_id, scope, status)",
+        "CREATE INDEX IF NOT EXISTS ix_knowledge_bases_owner ON knowledge_bases (owner_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_knowledge_bases_run_upload ON knowledge_bases (workspace_id, owner_user_id, workflow_run_id, scope)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_documents_kb_status ON kb_documents (kb_id, index_status)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_documents_kb_lifecycle ON kb_documents (kb_id, status, version)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_documents_workspace ON kb_documents (workspace_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_chunks_kb ON kb_chunks (kb_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_chunks_workspace ON kb_chunks (workspace_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_chunks_run_upload ON kb_chunks (workspace_id, owner_user_id, workflow_run_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_embeddings_chunk ON kb_embeddings (chunk_id)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_retrieval_logs_workflow ON kb_retrieval_logs (workflow_run_id)",
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+                CREATE INDEX IF NOT EXISTS ix_kb_embeddings_vector_hnsw
+                    ON kb_embeddings USING hnsw (embedding_vector vector_cosine_ops);
+            END IF;
+        END $$;
+        """,
     ]
 
 
@@ -390,16 +589,66 @@ class PostgresArtifactStore:
 
         Alembic 是生产 schema 变更的唯一入口；这里仅保留开发兼容初始化。
         """
-        for module_name in ("models.auth_orm", "models.admin_orm", "models.workflow_orm"):
+        for module_name in (
+            "models.auth_orm",
+            "models.admin_orm",
+            "models.workflow_orm",
+            "orm.knowledge_orm",
+        ):
             importlib.import_module(module_name)
 
         if not _legacy_schema_init_enabled():
             return
 
         async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
             for statement in _runtime_schema_statements(self.database_url):
                 await conn.execute(text(statement))
+            await conn.run_sync(Base.metadata.create_all)
+            await self._run_migrations(conn)
+            for statement in _runtime_upgrade_statements(self.database_url):
+                await conn.execute(text(statement))
+
+    async def _run_migrations(self, conn) -> None:
+        """按文件名顺序执行 db/migrations 下的 SQL 迁移，并记录已执行版本。"""
+        if not self.database_url.startswith("postgresql"):
+            return
+
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version VARCHAR(120) PRIMARY KEY,
+                    applied_at TIMESTAMPTZ DEFAULT now()
+                )
+                """
+            )
+        )
+        migrations_dir = Path(__file__).resolve().parent / "migrations"
+        if not migrations_dir.exists():
+            return
+
+        result = await conn.execute(text("SELECT version FROM schema_migrations"))
+        applied_versions = {row[0] for row in result.all()}
+        for migration_file in sorted(migrations_dir.glob("*.sql")):
+            version = migration_file.name
+            if version in applied_versions:
+                continue
+            # 迁移文件由仓库维护，不拼接用户输入；保持原 SQL 便于 DB 自身事务处理。
+            for statement in _split_migration_statements(
+                migration_file.read_text(encoding="utf-8")
+            ):
+                await conn.execute(text(statement))
+            await conn.execute(
+                text("INSERT INTO schema_migrations (version) VALUES (:version)"),
+                {"version": version},
+            )
+
+    @asynccontextmanager
+    async def initialized_session(self) -> AsyncIterator[AsyncSession]:
+        """返回已完成迁移初始化的短生命周期 session。"""
+        await self._ensure_initialized()
+        async with self.async_session() as session:
+            yield session
 
     async def dispose(self) -> None:
         """在应用关闭或热重载时主动释放连接池中的底层连接。"""

@@ -26,6 +26,7 @@ class ArtifactType(StrEnum):
 
     INTENT_CARD = "intent_card"
     OUTLINE = "outline"
+    EVIDENCE_PACK = "evidence_pack"
     FACT_CHECK_REPORT = "fact_check_report"
     SECTION_CONTENT = "section_content"
     REFINEMENT_FEEDBACK = "refinement_feedback"

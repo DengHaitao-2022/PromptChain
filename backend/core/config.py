@@ -86,6 +86,29 @@ class Settings:
         self.APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
         self.EMAIL_DEV_LOG_BODY: bool = os.getenv("EMAIL_DEV_LOG_BODY", "false").lower() == "true"
 
+        # 知识库 / RAG 配置。默认使用确定性本地 embedding，避免开发和测试强依赖外部服务。
+        self.KNOWLEDGE_STORAGE_DIR: str = os.getenv(
+            "KNOWLEDGE_STORAGE_DIR",
+            str(Path(__file__).resolve().parents[1] / ".data" / "knowledge"),
+        )
+        self.KNOWLEDGE_EMBEDDING_PROVIDER: str = os.getenv(
+            "KNOWLEDGE_EMBEDDING_PROVIDER",
+            "hash",
+        ).lower()
+        self.KNOWLEDGE_EMBEDDING_MODEL: str = os.getenv(
+            "KNOWLEDGE_EMBEDDING_MODEL",
+            "promptchain-hash-embedding-v1",
+        )
+        self.KNOWLEDGE_EMBEDDING_DIMENSION: int = int(
+            os.getenv("KNOWLEDGE_EMBEDDING_DIMENSION", "1536")
+        )
+        self.KNOWLEDGE_CHUNK_TARGET_TOKENS: int = int(
+            os.getenv("KNOWLEDGE_CHUNK_TARGET_TOKENS", "1000")
+        )
+        self.KNOWLEDGE_CHUNK_OVERLAP_TOKENS: int = int(
+            os.getenv("KNOWLEDGE_CHUNK_OVERLAP_TOKENS", "150")
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:

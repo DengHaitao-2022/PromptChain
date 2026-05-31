@@ -2,9 +2,10 @@
 
 ## 0. Current Baseline
 
-- `backend/services/llm_provider.py` 当前已定义 `LLMProvider` 抽象、三个 provider 实现和 `LLMProviderFactory`。
+- 003 原始基线中，`backend/services/llm_provider.py` 已定义 `LLMProvider` 抽象、三个 provider 实现和 `LLMProviderFactory`。
+- 当前 `dev@699bf53` 主线已在 Google provider 基础上继续补齐 GitHub Models provider，registry 支持 `openai / anthropic / google / github / ollama`。
 - 当前统一调用入口已存在且被后端节点直接依赖。
-- 当前错误消息主要依赖 `ValueError` 文本，不区分不支持 provider、缺少凭证、无效凭证。
+- 当前错误消息仍主要依赖 `ValueError` 文本；统一错误 envelope 仍在 PR #5 中，尚未合入 `dev`。
 
 ## 1. Stable Public Surface
 
@@ -34,7 +35,7 @@ get_current_model_info() -> dict
 ### Registry Rules
 
 - registry 中的 provider 名称必须唯一
-- `google` 必须和 `openai / anthropic / ollama` 平级注册
+- `google` 与 `github` 必须和 `openai / anthropic / ollama` 平级注册
 - registry 变更应只影响 `backend/services/llm_provider.py` 内部，不扩散到调用方
 
 ## 3. Model Construction Contract
@@ -47,7 +48,7 @@ get_current_model_info() -> dict
 ### Structured Model
 
 - `get_structured_llm()` 必须继续通过统一路径构造结构化模型
-- `google` provider 必须与现有 provider 一样支持该调用路径
+- `google` / `github` provider 必须与现有 provider 一样支持该调用路径
 
 ### Model Info
 
@@ -107,4 +108,4 @@ get_current_model_info() -> dict
 - 本轮主要回归风险集中在：
   - registry 选择逻辑
   - `get_current_model_info()` 的回退行为
-  - 现有三类 provider 的构造路径
+  - 现有 provider 的构造路径
