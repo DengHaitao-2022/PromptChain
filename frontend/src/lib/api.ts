@@ -201,6 +201,7 @@ export interface KnowledgeDocument {
   parse_status: KnowledgeDocumentStatus;
   index_status: KnowledgeDocumentStatus;
   error_message?: string | null;
+  metadata: Record<string, unknown>;
   created_by: string;
   created_at: string;
   updated_at: string;

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 import uuid
@@ -48,6 +49,7 @@ SUPPORTED_TEXT_TYPES = {"txt", "md", "markdown", "text"}
 SUPPORTED_DOCUMENT_TYPES = {*SUPPORTED_TEXT_TYPES, "docx", "pdf"}
 DOCX_ZIP_MAGIC = b"PK"
 PDF_MAGIC = b"%PDF"
+logger = logging.getLogger(__name__)
 
 
 def _normalize_file_type(file_name: str) -> str:
@@ -145,6 +147,7 @@ def _row_to_document(row: KnowledgeDocumentORM) -> KnowledgeDocument:
         parse_status=KnowledgeDocumentStatus(row.parse_status),
         index_status=KnowledgeDocumentStatus(row.index_status),
         error_message=row.error_message,
+        metadata=getattr(row, "metadata_json", None) or {},
         created_by=row.created_by,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -535,6 +538,7 @@ class KnowledgeService:
         file_name: str,
         content: bytes,
         metadata: dict[str, Any] | None = None,
+        index_immediately: bool = True,
     ) -> KnowledgeDocument:
         kb = await self.get_knowledge_base_for_action(
             kb_id=kb_id,
@@ -561,16 +565,6 @@ class KnowledgeService:
             .limit(1)
         )
         latest_version = version_result.scalar_one_or_none() or 0
-        if latest_version:
-            await self.session.execute(
-                update(KnowledgeDocumentORM)
-                .where(
-                    KnowledgeDocumentORM.kb_id == kb.id,
-                    KnowledgeDocumentORM.file_name == file_name,
-                    KnowledgeDocumentORM.status == KnowledgeDocumentLifecycleStatus.ACTIVE.value,
-                )
-                .values(status=KnowledgeDocumentLifecycleStatus.ARCHIVED.value)
-            )
 
         document = KnowledgeDocumentORM(
             id=document_id,
@@ -584,28 +578,88 @@ class KnowledgeService:
             checksum=_hash_content(content),
             version=latest_version + 1,
             status=KnowledgeDocumentLifecycleStatus.ACTIVE.value,
-            parse_status=KnowledgeDocumentStatus.PROCESSING.value,
-            index_status=KnowledgeDocumentStatus.PROCESSING.value,
+            parse_status=KnowledgeDocumentStatus.PENDING.value,
+            index_status=KnowledgeDocumentStatus.PENDING.value,
+            metadata_json=metadata or {},
             created_by=user_id,
         )
         self.session.add(document)
         await self.session.flush()
 
-        try:
-            text = self.parser.parse(file_name, content)
-            await self._replace_document_chunks(document, text, metadata or {})
-            document.parse_status = KnowledgeDocumentStatus.READY.value
-            document.index_status = KnowledgeDocumentStatus.READY.value
-            document.error_message = None
-        except Exception as exc:
-            document.parse_status = KnowledgeDocumentStatus.FAILED.value
-            document.index_status = KnowledgeDocumentStatus.FAILED.value
-            document.error_message = str(exc)
+        if index_immediately:
+            await self._index_document_row(document, content, metadata or {})
+
         document.updated_at = utc_now_naive()
         kb.updated_at = utc_now_naive()
         await self.session.commit()
         await self.session.refresh(document)
         return _row_to_document(document)
+
+    async def index_document(self, *, document_id: str) -> KnowledgeDocument:
+        """执行单个文档的解析、切分和向量索引，供后台 worker 或同步路径复用。"""
+        result = await self.session.execute(
+            select(KnowledgeDocumentORM)
+            .options(selectinload(KnowledgeDocumentORM.knowledge_base))
+            .where(KnowledgeDocumentORM.id == document_id)
+        )
+        document = result.scalar_one_or_none()
+        if document is None:
+            raise ValueError("文档不存在")
+        if not document.storage_uri:
+            document.parse_status = KnowledgeDocumentStatus.FAILED.value
+            document.index_status = KnowledgeDocumentStatus.FAILED.value
+            document.error_message = "文档缺少原始文件，无法建立索引"
+            document.updated_at = utc_now_naive()
+            await self.session.commit()
+            await self.session.refresh(document)
+            return _row_to_document(document)
+
+        content = Path(document.storage_uri).read_bytes()
+        _validate_upload_content(document.file_type, content)
+        await self._index_document_row(document, content, document.metadata_json or {})
+        document.updated_at = utc_now_naive()
+        if document.knowledge_base is not None:
+            document.knowledge_base.updated_at = utc_now_naive()
+        await self.session.commit()
+        await self.session.refresh(document)
+        return _row_to_document(document)
+
+    async def _index_document_row(
+        self,
+        document: KnowledgeDocumentORM,
+        content: bytes,
+        metadata: dict[str, Any],
+    ) -> None:
+        """在当前事务中刷新一个文档的索引状态和索引行。"""
+        document.parse_status = KnowledgeDocumentStatus.PROCESSING.value
+        document.index_status = KnowledgeDocumentStatus.PROCESSING.value
+        document.error_message = None
+        await self.session.flush()
+        try:
+            text = self.parser.parse(document.file_name, content)
+            await self._replace_document_chunks(document, text, metadata)
+            await self.session.execute(
+                update(KnowledgeDocumentORM)
+                .where(
+                    KnowledgeDocumentORM.kb_id == document.kb_id,
+                    KnowledgeDocumentORM.file_name == document.file_name,
+                    KnowledgeDocumentORM.id != document.id,
+                    KnowledgeDocumentORM.version < document.version,
+                    KnowledgeDocumentORM.status == KnowledgeDocumentLifecycleStatus.ACTIVE.value,
+                )
+                .values(
+                    status=KnowledgeDocumentLifecycleStatus.ARCHIVED.value,
+                    updated_at=utc_now_naive(),
+                )
+            )
+            document.parse_status = KnowledgeDocumentStatus.READY.value
+            document.index_status = KnowledgeDocumentStatus.READY.value
+            document.error_message = None
+        except Exception as exc:
+            logger.warning("知识库文档索引失败 document_id=%s: %s", document.id, exc)
+            document.parse_status = KnowledgeDocumentStatus.FAILED.value
+            document.index_status = KnowledgeDocumentStatus.FAILED.value
+            document.error_message = str(exc)
 
     async def _ensure_document_limit(self, *, kb_id: str, file_name: str) -> None:
         max_documents = get_settings().KNOWLEDGE_MAX_DOCUMENTS_PER_KB
@@ -794,6 +848,7 @@ class KnowledgeService:
         workspace_id: str,
         user_id: str,
         role: Any,
+        index_immediately: bool = True,
     ) -> KnowledgeDocument:
         document = await self.get_document(
             document_id=document_id,
@@ -804,18 +859,12 @@ class KnowledgeService:
         )
         if not document.storage_uri:
             raise ValueError("文档缺少原始文件，无法重建索引")
-        document.parse_status = KnowledgeDocumentStatus.PROCESSING.value
-        document.index_status = KnowledgeDocumentStatus.PROCESSING.value
-        try:
-            text = self.parser.parse(document.file_name, Path(document.storage_uri).read_bytes())
-            await self._replace_document_chunks(document, text, {})
-            document.parse_status = KnowledgeDocumentStatus.READY.value
-            document.index_status = KnowledgeDocumentStatus.READY.value
+        if index_immediately:
+            await self._index_document_row(document, Path(document.storage_uri).read_bytes(), {})
+        else:
+            document.parse_status = KnowledgeDocumentStatus.PENDING.value
+            document.index_status = KnowledgeDocumentStatus.PENDING.value
             document.error_message = None
-        except Exception as exc:
-            document.parse_status = KnowledgeDocumentStatus.FAILED.value
-            document.index_status = KnowledgeDocumentStatus.FAILED.value
-            document.error_message = str(exc)
         document.updated_at = utc_now_naive()
         await self.session.commit()
         await self.session.refresh(document)
@@ -837,6 +886,9 @@ class KnowledgeService:
             scopes=request.scopes,
             filters=request.filters,
             workflow_run_id=request.workflow_run_id,
+            query_vector=query_vector,
+            mode=request.mode,
+            candidate_limit=max(request.top_k * 5, 50),
         )
         candidates = [
             self._score_candidate(
@@ -899,6 +951,9 @@ class KnowledgeService:
         scopes: list[KnowledgeScope],
         filters: dict[str, Any],
         workflow_run_id: str | None,
+        query_vector: list[float],
+        mode: RetrievalMode,
+        candidate_limit: int,
     ) -> list[
         tuple[
             KnowledgeChunkORM, KnowledgeDocumentORM, KnowledgeBaseORM, KnowledgeEmbeddingORM | None
@@ -934,6 +989,30 @@ class KnowledgeService:
             else:
                 conditions.append(KnowledgeBaseORM.scope != KnowledgeScope.RUN_UPLOAD.value)
 
+        if self._should_use_pgvector_candidates(query_vector=query_vector, mode=mode):
+            result = await self.session.execute(
+                select(
+                    KnowledgeChunkORM,
+                    KnowledgeDocumentORM,
+                    KnowledgeBaseORM,
+                    KnowledgeEmbeddingORM,
+                )
+                .join(
+                    KnowledgeDocumentORM, KnowledgeChunkORM.document_id == KnowledgeDocumentORM.id
+                )
+                .join(KnowledgeBaseORM, KnowledgeChunkORM.kb_id == KnowledgeBaseORM.id)
+                .join(KnowledgeEmbeddingORM, KnowledgeEmbeddingORM.chunk_id == KnowledgeChunkORM.id)
+                .where(
+                    and_(
+                        *conditions,
+                        KnowledgeEmbeddingORM.embedding_vector.is_not(None),
+                    )
+                )
+                .order_by(KnowledgeEmbeddingORM.embedding_vector.cosine_distance(query_vector))
+                .limit(candidate_limit)
+            )
+            return list(result.all())
+
         result = await self.session.execute(
             select(KnowledgeChunkORM, KnowledgeDocumentORM, KnowledgeBaseORM, KnowledgeEmbeddingORM)
             .join(KnowledgeDocumentORM, KnowledgeChunkORM.document_id == KnowledgeDocumentORM.id)
@@ -944,6 +1023,21 @@ class KnowledgeService:
             .where(and_(*conditions))
         )
         return list(result.all())
+
+    def _should_use_pgvector_candidates(
+        self,
+        *,
+        query_vector: list[float],
+        mode: RetrievalMode,
+    ) -> bool:
+        if mode == RetrievalMode.KEYWORD:
+            return False
+        if len(query_vector) != 1536:
+            return False
+        if not hasattr(KnowledgeEmbeddingORM, "embedding_vector"):
+            return False
+        bind = self.session.get_bind()
+        return bool(bind is not None and bind.dialect.name == "postgresql")
 
     def _score_candidate(
         self,

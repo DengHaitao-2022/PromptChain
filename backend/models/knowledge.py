@@ -84,6 +84,7 @@ class KnowledgeDocument(BaseModel):
     parse_status: KnowledgeDocumentStatus = KnowledgeDocumentStatus.PENDING
     index_status: KnowledgeDocumentStatus = KnowledgeDocumentStatus.PENDING
     error_message: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_by: str
     created_at: datetime = Field(default_factory=utc_now_naive)
     updated_at: datetime = Field(default_factory=utc_now_naive)

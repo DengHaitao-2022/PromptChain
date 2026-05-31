@@ -114,6 +114,15 @@ class Settings:
         self.KNOWLEDGE_MAX_DOCUMENTS_PER_KB: int = int(
             os.getenv("KNOWLEDGE_MAX_DOCUMENTS_PER_KB", "200")
         )
+        self.KNOWLEDGE_INDEX_WORKER_ENABLED: bool = (
+            os.getenv("KNOWLEDGE_INDEX_WORKER_ENABLED", "true").lower() == "true"
+        )
+        self.KNOWLEDGE_INDEX_WORKER_INTERVAL_SECONDS: float = float(
+            os.getenv("KNOWLEDGE_INDEX_WORKER_INTERVAL_SECONDS", "2")
+        )
+        self.KNOWLEDGE_INDEX_WORKER_BATCH_SIZE: int = int(
+            os.getenv("KNOWLEDGE_INDEX_WORKER_BATCH_SIZE", "5")
+        )
 
 
 @lru_cache

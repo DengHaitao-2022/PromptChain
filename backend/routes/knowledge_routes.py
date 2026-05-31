@@ -282,6 +282,7 @@ async def upload_knowledge_document(
                 file_name=file.filename or "untitled.txt",
                 content=content,
                 metadata=metadata,
+                index_immediately=False,
             )
         except ValueError as exc:
             raise _normalize_service_error(exc, not_found=True) from exc
@@ -363,6 +364,7 @@ async def reindex_knowledge_document(
                 workspace_id=workspace_id,
                 user_id=user_id,
                 role=role,
+                index_immediately=False,
             )
         except ValueError as exc:
             raise _normalize_service_error(exc, not_found=True) from exc

@@ -191,7 +191,7 @@ export default function KnowledgePage() {
 
     try {
       const document = await knowledgeApi.uploadDocument(selectedKbId, uploadFile);
-      setNotice('文档已入库并完成索引');
+      setNotice(document.index_status === 'ready' ? '文档已入库并完成索引' : '文档已入库，正在后台索引');
       setUploadFile(null);
       setDocuments((items) => [document, ...items]);
     } catch (requestError) {
@@ -242,7 +242,7 @@ export default function KnowledgePage() {
 
     try {
       const updated = await knowledgeApi.reindexDocument(documentId);
-      setNotice('文档索引已重建');
+      setNotice(updated.index_status === 'ready' ? '文档索引已重建' : '文档已进入后台重建队列');
       setDocuments((items) => items.map((item) => (item.id === documentId ? updated : item)));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '重建索引失败');

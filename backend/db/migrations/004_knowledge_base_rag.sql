@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     parse_status VARCHAR(20) NOT NULL DEFAULT 'pending',
     index_status VARCHAR(20) NOT NULL DEFAULT 'pending',
     error_message TEXT,
+    metadata_json JSON DEFAULT '{}'::json,
     created_by VARCHAR(36) NOT NULL REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS kb_retrieval_logs (
 ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36);
 ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36);
 ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS metadata_json JSON DEFAULT '{}'::json;
 ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36);
 ALTER TABLE kb_embeddings ADD COLUMN IF NOT EXISTS embedding_vector vector(1536);
 
