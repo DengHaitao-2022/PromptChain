@@ -433,10 +433,64 @@ def test_tool_registry_contains_issue_15_required_tools():
             "write_artifact",
             "rollback_artifact",
             "retrieve_memory",
+            "retrieve_trace",
             "fact_check",
             "export_docx",
         } <= set(tools)
         assert all(isinstance(tool, ToolDefinition) for tool in tools.values())
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_retrieve_trace_tool_reads_node_run_evidence():
+    async def _scenario(runtime, store, _):
+        run = await runtime.start(
+            goal="完整调研 Autonomous Agent Trace 工具能力",
+            user_id="user-1",
+            workspace_id="ws-1",
+            budget_limit={"max_steps": 3, "max_replans": 0},
+            auto_execute=False,
+        )
+        result = await runtime.execute_until_stop(run.id)
+        steps = await store.list_steps(run.id)
+
+        tool_call = await runtime.tool_executor.execute(
+            run_id=run.id,
+            tool_name="retrieve_trace",
+            payload={"workflow_run_id": run.id},
+            step=steps[-1],
+        )
+
+        assert result.status == AgentRunStatus.FAILED
+        assert tool_call.output["node_run_count"] >= 3
+        assert any(
+            item["node_name"] == "retrieve_memory" for item in tool_call.output["trace_evidence"]
+        )
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_skip_node_resolves_dynamic_plan_dependency():
+    async def _scenario(runtime, store, artifact_store):
+        run = await runtime.start(
+            goal="完整调研 Autonomous Agent 动态跳过节点能力",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=False,
+        )
+        plan = await store.get_plan(run.current_plan_id)
+        assert plan is not None
+
+        skipped = await runtime.skip_node(run.id, "goal_interpretation", "目标已由人工确认")
+        next_node = await runtime._select_next_node(run, plan)
+        node_run = await artifact_store.get_node_run(skipped.id)
+
+        assert skipped.status == AgentStepStatus.SKIPPED
+        assert skipped.output["skipped"] is True
+        assert next_node is not None
+        assert next_node.id == "retrieve_memory"
+        assert node_run is not None
+        assert node_run.status.value == "interrupted"
 
     asyncio.run(_with_runtime(_scenario))
 

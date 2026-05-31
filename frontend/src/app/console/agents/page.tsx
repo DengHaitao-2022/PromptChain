@@ -79,6 +79,7 @@ export default function AgentRunsPage() {
 
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     async function load() {
       try {
@@ -89,6 +90,14 @@ export default function AgentRunsPage() {
         if (active) {
           setRuns(runResult.runs || []);
           setTools(toolResult.tools || []);
+        }
+        if (
+          active &&
+          (runResult.runs || []).some((run) =>
+            ['planning', 'running', 'awaiting_gate', 'paused'].includes(run.status),
+          )
+        ) {
+          timer = setTimeout(load, 5000);
         }
       } catch (err) {
         if (active) {
@@ -105,6 +114,9 @@ export default function AgentRunsPage() {
 
     return () => {
       active = false;
+      if (timer) {
+        clearTimeout(timer);
+      }
     };
   }, []);
 

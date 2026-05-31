@@ -26,6 +26,7 @@ GATE_TOOL_PERMISSIONS = {
     "fact_check": ("workflow", "execute"),
     "read_artifact": ("workflow_run", "read"),
     "retrieve_memory": ("workflow_run", "read"),
+    "retrieve_trace": ("workflow_run", "read"),
 }
 
 
@@ -62,6 +63,13 @@ class UpdateAgentPlanRequest(BaseModel):
 
     plan_graph: dict[str, Any]
     reason: str = "human_plan_edit"
+
+
+class SkipAgentNodeRequest(BaseModel):
+    """人工跳过动态计划节点请求。"""
+
+    node_id: str = Field(..., min_length=1, max_length=200)
+    reason: str = "human_skip_node"
 
 
 def _get_user_id(user: dict[str, Any]) -> str:
@@ -357,6 +365,30 @@ async def approve_agent_gate(run_id: str, request: Request, body: AgentGateDecis
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("审批 Autonomous Agent Gate 失败: run_id=%s", run_id)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+
+
+@router.post("/runs/{run_id}/skip-node")
+async def skip_agent_node(run_id: str, request: Request, body: SkipAgentNodeRequest):
+    """人工跳过当前计划中的未执行节点。"""
+    try:
+        await _require_agent_run_access(request, run_id, action="create")
+        await workflow_helpers.require_workspace_permission(request, "workflow", "execute")
+        store = get_postgres_store()
+        await store.ensure_initialized()
+        async with store.async_session() as session:
+            runtime = AutonomousAgentRuntime(
+                store=AutonomousAgentStore(session),
+                artifact_store=get_artifact_store(),
+            )
+            await runtime.skip_node(run_id, node_id=body.node_id, reason=body.reason)
+            return await runtime.get_detail(run_id)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("跳过 Autonomous Agent 节点失败: run_id=%s", run_id)
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 

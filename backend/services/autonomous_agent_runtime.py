@@ -374,6 +374,89 @@ class AutonomousAgentRuntime:
         await self._sync_workflow_run(run)
         return run
 
+    async def skip_node(self, run_id: str, node_id: str, reason: str = "") -> AgentStep:
+        """人工跳过未执行节点，使动态 Plan Graph 可在运行中裁剪。"""
+        run = await self._require_run(run_id)
+        if run.status in {
+            AgentRunStatus.COMPLETED,
+            AgentRunStatus.FAILED,
+            AgentRunStatus.CANCELLED,
+            AgentRunStatus.AWAITING_GATE,
+        }:
+            raise ValueError("当前 AgentRun 状态不允许跳过节点")
+        if not run.current_plan_id:
+            raise ValueError("AgentRun 缺少 current_plan_id")
+
+        plan = await self._require_plan(run.current_plan_id)
+        node = next((item for item in plan.plan_graph.nodes if item.id == node_id), None)
+        if not node:
+            raise ValueError("指定节点不属于当前计划")
+
+        existing_steps = await self.store.list_steps(run.id)
+        existing_step = next(
+            (
+                step
+                for step in existing_steps
+                if step.plan_id == plan.id
+                and step.node_id == node_id
+                and step.status
+                in {
+                    AgentStepStatus.COMPLETED,
+                    AgentStepStatus.RUNNING,
+                    AgentStepStatus.BLOCKED,
+                    AgentStepStatus.SKIPPED,
+                }
+            ),
+            None,
+        )
+        if existing_step:
+            raise ValueError("该节点已有执行记录，不能重复跳过")
+
+        now = utc_now_naive()
+        step = AgentStep(
+            run_id=run.id,
+            plan_id=plan.id,
+            node_id=node.id,
+            step_type=node.step_type,
+            title=node.title,
+            description=node.description,
+            status=AgentStepStatus.SKIPPED,
+            input={
+                "node": node.model_dump(mode="json"),
+                "goal": run.goal,
+                "skip_reason": reason or "人工跳过",
+            },
+            output={"skipped": True, "reason": reason or "人工跳过"},
+            started_at=now,
+            ended_at=now,
+            metadata={"skip_reason": reason or "人工跳过"},
+        )
+        await self.store.create_step(step)
+        node_run = NodeRun(
+            id=step.id,
+            workflow_run_id=run.id,
+            node_name=node.id,
+            node_type=f"agent_{node.step_type.value}",
+            status=NodeRunStatus.INTERRUPTED,
+            input_artifact_ids=[],
+            completed_at=now,
+            duration_ms=0,
+            error_message=reason or "人工跳过",
+        )
+        await self.artifact_store.create_node_run(node_run)
+
+        run.current_step_id = step.id
+        run.metadata["current_node_id"] = step.node_id
+        run.metadata["last_skipped_node"] = {
+            "node_id": node_id,
+            "reason": reason or "人工跳过",
+            "skipped_at": now.isoformat(),
+        }
+        run.updated_at = utc_now_naive()
+        await self.store.update_run(run)
+        await self._sync_workflow_run(run)
+        return step
+
     async def approve_gate(self, run_id: str, approved: bool, note: str = "") -> AgentRun:
         """审批 Gate 后继续或终止运行。"""
         run = await self._require_run(run_id)
@@ -622,7 +705,10 @@ class AutonomousAgentRuntime:
         completed_node_ids = {
             step.node_id for step in steps if step.status == AgentStepStatus.COMPLETED
         }
-        resolved_node_ids = completed_node_ids | replanned_node_ids
+        skipped_node_ids = {
+            step.node_id for step in steps if step.status == AgentStepStatus.SKIPPED
+        }
+        resolved_node_ids = completed_node_ids | replanned_node_ids | skipped_node_ids
         blocked_node_ids = {
             step.node_id
             for step in steps

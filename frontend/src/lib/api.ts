@@ -1266,6 +1266,12 @@ export const agentApi = {
       body: JSON.stringify({ plan_graph: planGraph, reason }),
     }),
 
+  skipNode: (runId: string, nodeId: string, reason = 'human_skip_node') =>
+    request<AgentRunDetail>(`/agents/runs/${runId}/skip-node`, {
+      method: 'POST',
+      body: JSON.stringify({ node_id: nodeId, reason }),
+    }),
+
   decideGate: (runId: string, approved: boolean, note = '') =>
     request<AgentRunDetail>(`/agents/runs/${runId}/gate`, {
       method: 'POST',

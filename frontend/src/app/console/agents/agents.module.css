@@ -370,6 +370,13 @@
   margin-top: 10px;
 }
 
+.nodeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

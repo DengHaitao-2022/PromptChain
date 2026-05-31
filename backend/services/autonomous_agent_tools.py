@@ -438,6 +438,38 @@ def build_default_tool_registry(
             "note": "未提供 artifact_id，当前步骤将基于目标和记忆继续执行。",
         }
 
+    async def retrieve_trace(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
+        workflow_run_id = payload.get("workflow_run_id")
+        if not workflow_run_id:
+            return {
+                "workflow_run_id": None,
+                "node_run_count": 0,
+                "trace_evidence": [],
+                "reason": "缺少 workflow_run_id",
+            }
+        try:
+            limit = max(1, min(int(payload.get("limit") or 20), 50))
+        except (TypeError, ValueError):
+            limit = 20
+        node_runs = await artifact_store.get_node_runs_by_workflow(str(workflow_run_id))
+        return {
+            "workflow_run_id": str(workflow_run_id),
+            "node_run_count": len(node_runs),
+            "trace_evidence": [
+                {
+                    "node_run_id": node_run.id,
+                    "workflow_run_id": node_run.workflow_run_id,
+                    "node_name": node_run.node_name,
+                    "node_type": node_run.node_type,
+                    "status": node_run.status.value,
+                    "duration_ms": node_run.duration_ms,
+                    "error_message": node_run.error_message,
+                    "output_artifact_ids": node_run.output_artifact_ids,
+                }
+                for node_run in node_runs[-limit:]
+            ],
+        }
+
     async def write_artifact(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
         if step is None:
             raise ValueError("write_artifact 需要关联 AgentStep")
@@ -529,6 +561,18 @@ def build_default_tool_registry(
             idempotent=True,
         ),
         read_artifact,
+    )
+    registry.register(
+        ToolDefinition(
+            name="retrieve_trace",
+            description="读取指定运行的 Trace/NodeRun 证据。",
+            input_schema={"type": "object", "required": ["workflow_run_id"]},
+            output_schema={"type": "object"},
+            risk_level=ToolRiskLevel.LOW,
+            permission="workflow_run:read",
+            idempotent=True,
+        ),
+        retrieve_trace,
     )
     registry.register(
         ToolDefinition(

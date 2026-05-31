@@ -12,6 +12,7 @@ import {
   PlayCircle,
   RotateCcw,
   ShieldAlert,
+  SkipForward,
   Wrench,
   XCircle,
 } from 'lucide-react';
@@ -38,6 +39,8 @@ function statusLabel(status: string) {
       return '已取消';
     case 'blocked':
       return '已阻塞';
+    case 'skipped':
+      return '已跳过';
     default:
       return status;
   }
@@ -86,6 +89,22 @@ function stepForNode(steps: AgentStep[], node: AgentPlanNode) {
   return [...steps].reverse().find((step) => step.node_id === node.id);
 }
 
+function isTerminalStatus(status: string) {
+  return ['completed', 'failed', 'cancelled'].includes(status);
+}
+
+function costAmount(cost: Record<string, unknown>) {
+  const amount = cost?.amount;
+  if (typeof amount === 'number') {
+    return amount;
+  }
+  if (typeof amount === 'string') {
+    const parsed = Number(amount);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 export default function AgentRunDetailPage() {
   const params = useParams<{ id: string }>();
   const runId = params.id;
@@ -103,12 +122,16 @@ export default function AgentRunDetailPage() {
 
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     async function fetchDetail() {
       try {
         const result = await agentApi.getDetail(runId);
         if (active) {
           syncDetail(result);
+          if (!isTerminalStatus(result.run.status)) {
+            timer = setTimeout(fetchDetail, 3500);
+          }
         }
       } catch (err) {
         if (active) {
@@ -125,6 +148,9 @@ export default function AgentRunDetailPage() {
 
     return () => {
       active = false;
+      if (timer) {
+        clearTimeout(timer);
+      }
     };
   }, [runId]);
 
@@ -212,18 +238,32 @@ export default function AgentRunDetailPage() {
     }
   }
 
+  async function handleSkipNode(nodeId: string) {
+    setActing(true);
+    setError('');
+    try {
+      const result = await agentApi.skipNode(runId, nodeId, '用户从运行详情页跳过节点');
+      syncDetail(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '跳过节点失败');
+    } finally {
+      setActing(false);
+    }
+  }
+
   const activePlan = detail?.plans.at(-1);
   const finalEval = detail?.eval_results.find((item) => item.target_type === 'final_output');
   const memoryEvidence = detail?.steps.find((step) => step.node_id === 'retrieve_memory')?.output;
   const metrics = useMemo(() => {
     if (!detail) {
-      return { stepCount: 0, toolCount: 0, evalCount: 0, replanCount: 0 };
+      return { stepCount: 0, toolCount: 0, evalCount: 0, replanCount: 0, totalCost: 0 };
     }
     return {
       stepCount: detail.steps.length,
       toolCount: detail.tool_calls.length,
       evalCount: detail.eval_results.length,
       replanCount: detail.replan_records.length,
+      totalCost: detail.tool_calls.reduce((sum, call) => sum + costAmount(call.cost), 0),
     };
   }, [detail]);
 
@@ -365,6 +405,10 @@ export default function AgentRunDetailPage() {
           <span className={styles.metricLabel}>重规划</span>
           <strong className={styles.metricValue}>{metrics.replanCount}</strong>
         </article>
+        <article className={styles.metricCard}>
+          <span className={styles.metricLabel}>工具成本</span>
+          <strong className={styles.metricValue}>{metrics.totalCost.toFixed(1)}</strong>
+        </article>
       </section>
 
       <section className={styles.detailGrid}>
@@ -396,6 +440,10 @@ export default function AgentRunDetailPage() {
               {(activePlan?.plan_graph.nodes || []).map((node, index) => {
                 const step = stepForNode(detail.steps, node);
                 const currentStatus = step?.status || node.status;
+                const canSkip =
+                  detail.run.status === 'planning' &&
+                  !step &&
+                  !['completed', 'running', 'blocked', 'skipped'].includes(currentStatus);
 
                 return (
                   <article key={node.id} className={styles.nodeItem}>
@@ -416,6 +464,19 @@ export default function AgentRunDetailPage() {
                           <span key={dep} className={styles.chip}>依赖 {dep}</span>
                         ))}
                       </div>
+                      {canSkip && (
+                        <div className={styles.nodeActions}>
+                          <button
+                            className={styles.secondaryAction}
+                            onClick={() => handleSkipNode(node.id)}
+                            disabled={acting}
+                            type="button"
+                          >
+                            <SkipForward size={15} strokeWidth={1.9} />
+                            跳过节点
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </article>
                 );
@@ -525,6 +586,7 @@ export default function AgentRunDetailPage() {
                       {call.risk_level}
                     </span>
                     <span className={styles.chip}>{call.latency_ms ?? 0}ms</span>
+                    <span className={styles.chip}>成本 {costAmount(call.cost).toFixed(1)}</span>
                   </div>
                 </article>
               ))}

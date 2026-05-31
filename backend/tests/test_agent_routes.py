@@ -72,9 +72,14 @@ def test_agent_run_api_returns_full_autonomous_runtime_snapshot(monkeypatch):
     assert body["steps"]
     assert body["tool_calls"]
     assert body["eval_results"]
-    assert {"read_artifact", "write_artifact", "retrieve_memory", "fact_check", "export_docx"} <= {
-        tool["name"] for tool in body["tool_definitions"]
-    }
+    assert {
+        "read_artifact",
+        "write_artifact",
+        "retrieve_memory",
+        "retrieve_trace",
+        "fact_check",
+        "export_docx",
+    } <= {tool["name"] for tool in body["tool_definitions"]}
 
     detail = client.get(f"/api/agents/runs/{body['run']['id']}")
     assert detail.status_code == 200
@@ -125,6 +130,29 @@ def test_agent_plan_can_be_modified_before_resume(monkeypatch):
     assert updated_body["plans"][-1]["created_by"] == "human"
     assert updated_body["plans"][-1]["plan_graph"]["nodes"][0]["title"] == "人工确认后的目标理解"
     assert updated_body["plans"][-1]["metadata"]["artifact_id"]
+
+
+def test_agent_plan_node_can_be_skipped_before_resume(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    client = _client(monkeypatch)
+
+    created = client.post(
+        "/api/agents/runs",
+        json={"goal": "验证 Autonomous Agent 动态跳过节点", "auto_execute": False},
+    )
+    assert created.status_code == 200
+    body = created.json()
+
+    skipped = client.post(
+        f"/api/agents/runs/{body['run']['id']}/skip-node",
+        json={"node_id": "goal_interpretation", "reason": "目标已由人工确认"},
+    )
+
+    assert skipped.status_code == 200
+    skipped_body = skipped.json()
+    assert skipped_body["steps"][0]["node_id"] == "goal_interpretation"
+    assert skipped_body["steps"][0]["status"] == "skipped"
+    assert skipped_body["run"]["metadata"]["last_skipped_node"]["node_id"] == "goal_interpretation"
 
 
 def test_agent_run_can_be_paused_resumed_and_cancelled(monkeypatch):
