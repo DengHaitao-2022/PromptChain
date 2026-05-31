@@ -2,6 +2,8 @@
 
 本文档描述 `003-provider-architecture` 的 US1 最小验收路径。目标是确认 PromptChain 已经从“代码不支持 google provider”升级到“代码支持 google provider”，而不是在本轮证明所有 provider 回归与鉴权语义都已收口。
 
+> 当前主线说明（2026-05-23）：当前 `dev@699bf53` 已在 Google provider 基础上继续支持 GitHub Models provider。若要验证当前完整 provider 集合，应额外检查 `openai / anthropic / google / github / ollama`。
+
 ## 1. 适用范围
 
 本 quickstart 只覆盖以下能力：
@@ -9,6 +11,8 @@
 - Google provider 已纳入受支持列表
 - `GEMINI_API_KEY` 能被代码显式消费
 - `get_llm()`、`get_structured_llm()`、`get_current_model_info()` 调用面不变
+
+GitHub Models 的 `GITHUB_MODEL_TOKEN` 验收不属于 003 原始 US1 范围，但属于当前主线 provider 集合。
 
 ## 2. 前置条件
 

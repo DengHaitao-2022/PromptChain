@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
+import { ChangeEvent, useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
@@ -28,6 +28,7 @@ import {
   workflowDefinitionApi,
   workflowApi,
   ModelProviderSummary,
+  RetrievalConfig,
   WorkflowDefinition,
   WorkflowVersion,
 } from '@/lib/api';
@@ -206,6 +207,7 @@ function HomeAccountAction() {
 
 function HomeContent() {
   const router = useRouter();
+  const { workspace } = useAuth();
   const pageRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -223,6 +225,9 @@ function HomeContent() {
   const [selectedVersion, setSelectedVersion] = useState<string>('');
   const [modelProviders, setModelProviders] = useState<ModelProviderSummary[]>([]);
   const [selectedModelProviderId, setSelectedModelProviderId] = useState<string>('');
+  const [useWorkspaceKnowledge, setUseWorkspaceKnowledge] = useState(true);
+  const [usePersonalKnowledge, setUsePersonalKnowledge] = useState(false);
+  const [runUploadFiles, setRunUploadFiles] = useState<File[]>([]);
   const [publishedCompatibilityMessage, setPublishedCompatibilityMessage] = useState<string | null>(null);
 
   const railRef = useRef<HTMLElement | null>(null);
@@ -438,8 +443,25 @@ function HomeContent() {
     setLaunchState('launching');
 
     try {
+      const hasRunUploads = runUploadFiles.length > 0;
+      const retrievalConfig: RetrievalConfig = {
+        enabled: useWorkspaceKnowledge || usePersonalKnowledge || hasRunUploads,
+        use_workspace_kb: useWorkspaceKnowledge,
+        use_personal_kb: usePersonalKnowledge,
+        use_run_upload: hasRunUploads,
+        top_k: 8,
+        min_score: 0.55,
+        mode: 'hybrid',
+        enable_query_rewrite: true,
+        enable_multi_query: true,
+        enable_rerank: true,
+        enable_context_compression: true,
+        enable_conflict_detection: true,
+      };
       const result = await workflowApi.start(userInput.trim(), selectedWorkflow, selectedVersion, {
         modelProviderId: selectedModelProviderId || undefined,
+        retrievalConfig,
+        runUploadFiles,
       });
 
       setWorkflowRunId(result.workflow_run_id);
@@ -454,6 +476,11 @@ function HomeContent() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleRunUploadChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    setRunUploadFiles(files.slice(0, 5));
   };
 
   const fillExample = (example: ExamplePrompt) => {
@@ -778,6 +805,43 @@ function HomeContent() {
                       未读取到可选模型配置，本次启动将使用工作空间默认模型或后端环境变量。
                     </div>
                   ) : null}
+
+                  <div className={styles.knowledgeOptions} aria-label="知识来源">
+                    <span className={styles.knowledgeOptionsLabel}>知识来源</span>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={useWorkspaceKnowledge}
+                        onChange={(event) => setUseWorkspaceKnowledge(event.target.checked)}
+                        disabled={isLoading || !workspace}
+                      />
+                      工作空间知识库
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={usePersonalKnowledge}
+                        onChange={(event) => setUsePersonalKnowledge(event.target.checked)}
+                        disabled={isLoading || !workspace}
+                      />
+                      个人知识库
+                    </label>
+                    <label className={styles.runUploadPicker}>
+                      <input
+                        type="file"
+                        multiple
+                        accept=".pdf,.docx,.txt,.md,.markdown"
+                        onChange={handleRunUploadChange}
+                        disabled={isLoading || !workspace}
+                      />
+                      本次运行资料
+                    </label>
+                    {runUploadFiles.length > 0 ? (
+                      <span className={styles.runUploadSummary}>
+                        {runUploadFiles.length} 个文件将仅用于本次运行
+                      </span>
+                    ) : null}
+                  </div>
 
                   {isSuggestionPanelVisible ? (
                     <div className={styles.inputHints} role="region" aria-label="快捷提示模板">

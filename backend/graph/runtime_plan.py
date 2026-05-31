@@ -63,6 +63,12 @@ _CANONICAL_STEP_DEFINITIONS: dict[str, dict[str, str]] = {
         "label": "提纲生成",
         "runtime_type": "process",
     },
+    "retrieve_knowledge": {
+        "id": "retrieve_knowledge",
+        "name": "retrieve_knowledge",
+        "label": "知识检索",
+        "runtime_type": "process",
+    },
     "approve_outline": {
         "id": "approve_outline",
         "name": "approve_outline",
@@ -103,6 +109,7 @@ _CANONICAL_STEP_DEFINITIONS: dict[str, dict[str, str]] = {
 
 _DEFAULT_CANONICAL_ORDER: tuple[str, ...] = (
     "parse_intent",
+    "retrieve_knowledge",
     "generate_outline",
     "approve_outline",
     "generate_content",
@@ -119,6 +126,7 @@ def canonical_runtime_plan() -> dict[str, Any]:
         "execution_mode": "canonical_runtime",
         "steps": [_step(step_id) for step_id in _DEFAULT_CANONICAL_ORDER],
         "features": {
+            "knowledge_retrieval": True,
             "outline_gate": True,
             "self_refine": True,
             "fact_check": True,
@@ -156,6 +164,10 @@ def compile_workflow_runtime_plan(workflow_context: dict[str, Any] | None) -> di
 
     steps: list[dict[str, Any]] = [
         _step("parse_intent", source_node=(input_nodes[0] if input_nodes else None)),
+        _step(
+            "retrieve_knowledge",
+            source_node=_first_process_node(process_nodes, {"knowledge", "rag_retrieve"}),
+        ),
         _step("generate_outline", source_node=(process_nodes[0] if process_nodes else None)),
     ]
 
@@ -181,6 +193,9 @@ def compile_workflow_runtime_plan(workflow_context: dict[str, Any] | None) -> di
         "execution_mode": "published_dsl_runtime",
         "steps": steps,
         "features": {
+            "knowledge_retrieval": any(
+                node.get("raw_type") in {"knowledge", "rag_retrieve"} for node in typed_nodes
+            ),
             "outline_gate": outline_gate is not None,
             "self_refine": self_refine_node is not None,
             "fact_check": bool(checker_nodes),
@@ -223,6 +238,17 @@ def _with_context_metadata(plan: dict[str, Any], context: dict[str, Any]) -> dic
     return enriched
 
 
+def _first_process_node(
+    process_nodes: list[dict[str, Any]],
+    raw_types: set[str],
+) -> dict[str, Any] | None:
+    """在发布 DSL 中优先绑定显式知识检索节点。"""
+    for node in process_nodes:
+        if node.get("raw_type") in raw_types:
+            return node
+    return None
+
+
 def _resolve_runtime_type(node_type: str) -> str:
     normalized = str(node_type or "").strip().lower().replace("-", "_")
     return _RUNTIME_NODE_TYPE_ALIASES.get(normalized, normalized)
@@ -230,12 +256,14 @@ def _resolve_runtime_type(node_type: str) -> str:
 
 def _normalize_node(node: dict[str, Any], order: int) -> dict[str, Any]:
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
+    raw_type = str(node.get("type") or "").strip().lower().replace("-", "_")
     return {
         "id": node.get("id"),
         "name": node.get("id"),
         "label": data.get("label") or node.get("id"),
         "type": node.get("type"),
-        "runtime_type": _resolve_runtime_type(str(node.get("type") or "")),
+        "raw_type": raw_type,
+        "runtime_type": _resolve_runtime_type(raw_type),
         "order": order,
     }
 

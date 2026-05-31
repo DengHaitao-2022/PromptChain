@@ -37,6 +37,7 @@ from services.llm_provider import (
 from services.model_provider_tester import test_model_provider
 from services.permission_service import (
     PermissionService,
+    check_permission,
     resolve_membership_role,
     serialize_membership_role,
 )
@@ -207,23 +208,31 @@ async def get_dashboard(request: Request):
 
     store = get_postgres_store()
     async with store.async_session() as session:
-        # Dashboard 属于管理后台资源，普通成员不应访问。
         permission_service = PermissionService(session)
-        await permission_service.require_permission(user_id, workspace_id, "member", "read")
+        role = await permission_service.require_permission(
+            user_id,
+            workspace_id,
+            "workflow_run",
+            "read",
+        )
 
         # 获取统计数据（使用现有的 workflow_runs 表）
         from db.postgres_store import WorkflowRunORM
         from models.artifact import WorkflowRunStatus
 
         today = app_day_start_as_utc_naive()
-        workspace_filter = WorkflowRunORM.metadata_json["workspace_id"].as_string() == workspace_id
+        filters = [WorkflowRunORM.metadata_json["workspace_id"].as_string() == workspace_id]
+        can_read_members = check_permission(role, "member", "read")
+        if not can_read_members:
+            # 普通成员只能看到自己的运行数据，避免控制台首页泄露工作空间全量运行态。
+            filters.append(WorkflowRunORM.metadata_json["user_id"].as_string() == user_id)
 
         # 今日运行次数
         result = await session.execute(
             select(func.count(WorkflowRunORM.id)).where(
                 and_(
                     WorkflowRunORM.started_at >= today,
-                    workspace_filter,
+                    *filters,
                 )
             )
         )
@@ -235,7 +244,7 @@ async def get_dashboard(request: Request):
                 and_(
                     WorkflowRunORM.started_at >= today,
                     WorkflowRunORM.status == WorkflowRunStatus.COMPLETED.value,
-                    workspace_filter,
+                    *filters,
                 )
             )
         )
@@ -247,7 +256,7 @@ async def get_dashboard(request: Request):
                 and_(
                     WorkflowRunORM.started_at >= today,
                     WorkflowRunORM.status == WorkflowRunStatus.FAILED.value,
-                    workspace_filter,
+                    *filters,
                 )
             )
         )
@@ -259,28 +268,30 @@ async def get_dashboard(request: Request):
                 and_(
                     WorkflowRunORM.started_at >= today,
                     WorkflowRunORM.total_duration_ms.isnot(None),
-                    workspace_filter,
+                    *filters,
                 )
             )
         )
         today_avg_duration = result.scalar() or 0
 
         # 总运行次数
-        result = await session.execute(
-            select(func.count(WorkflowRunORM.id)).where(workspace_filter)
-        )
+        result = await session.execute(select(func.count(WorkflowRunORM.id)).where(and_(*filters)))
         total_runs = result.scalar() or 0
 
         # 成员数量
-        result = await session.execute(
-            select(func.count(MembershipORM.id)).where(MembershipORM.workspace_id == workspace_id)
-        )
-        total_members = result.scalar() or 0
+        total_members = None
+        if can_read_members:
+            result = await session.execute(
+                select(func.count(MembershipORM.id)).where(
+                    MembershipORM.workspace_id == workspace_id
+                )
+            )
+            total_members = result.scalar() or 0
 
         # 最近运行
         result = await session.execute(
             select(WorkflowRunORM)
-            .where(workspace_filter)
+            .where(and_(*filters))
             .order_by(desc(WorkflowRunORM.started_at))
             .limit(10)
         )

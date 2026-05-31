@@ -3,6 +3,8 @@
 **Input**: Design documents from `/private/tmp/promptchain-worktrees/003-provider-architecture/specs/003-provider-architecture/`
 **Prerequisites**: `plan.md`, `spec.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`
 
+> 当前主线说明（2026-05-23）：本任务清单原始范围是补齐 Google provider。当前 `dev@699bf53` 已继续支持 `github` provider，主线支持集合为 `openai / anthropic / google / github / ollama`。
+
 **Tests**: 本特性明确要求最小 provider 回归测试，因此保留 `backend/tests/test_llm_provider.py` 相关测试任务。
 
 **Organization**: 任务按 Setup → Foundational → User Story 顺序组织，严格围绕 provider 架构升级，不扩展为插件系统、热加载、模型别名或密钥轮换。
@@ -57,10 +59,10 @@
 
 **Goal**: 在补齐 Google 后，OpenAI、Anthropic、Ollama 仍保持兼容，统一入口行为不回归。
 
-**Independent Test**: 通过最小单元测试验证 `openai / anthropic / ollama / google` 都能沿用同一套 helper 和模型信息读取逻辑。
+**Independent Test**: 通过最小单元测试验证 Google-capable provider baseline 都能沿用同一套 helper 和模型信息读取逻辑；当前主线完整集合为 `openai / anthropic / google / github / ollama`。
 
 - [ ] T010 [US2] Create provider regression test scaffold in `/private/tmp/promptchain-worktrees/003-provider-architecture/backend/tests/test_llm_provider.py`
-- [ ] T011 [US2] Add compatibility tests for registry resolution and helper stability across `openai / anthropic / ollama / google` in `/private/tmp/promptchain-worktrees/003-provider-architecture/backend/tests/test_llm_provider.py`
+- [ ] T011 [US2] Add compatibility tests for registry resolution and helper stability across the Google-capable provider baseline in `/private/tmp/promptchain-worktrees/003-provider-architecture/backend/tests/test_llm_provider.py`; current mainline coverage should include `openai / anthropic / google / github / ollama`
 - [ ] T012 [US2] Adjust `/private/tmp/promptchain-worktrees/003-provider-architecture/backend/services/llm_provider.py` only as needed to keep existing provider defaults, caching, and helper behavior passing the regression tests
 
 **Checkpoint**: 现有 provider 的兼容回归有自动化保障，新增 Google 没有把工厂升级成更大范围的重构。

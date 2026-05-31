@@ -32,7 +32,7 @@ function getInnerZodType(schema: z.ZodTypeAny): z.ZodTypeAny {
 }
 
 export default function SchemaFormRenderer({ schema, defaultValues, onChange }: SchemaFormRendererProps) {
-    const { control, getValues, subscribe, formState: { errors } } = useForm({
+    const { control, getValues, watch, formState: { errors } } = useForm({
         resolver: zodResolver(schema as ZodResolverSchema),
         defaultValues,
         mode: 'onChange' // 边填边校验，并在 UI 上及时反馈错误
@@ -59,13 +59,13 @@ export default function SchemaFormRenderer({ schema, defaultValues, onChange }: 
         // 为了方便自动保存，还是把最新值传上去
         notifyChange(getValues());
 
-        return subscribe({
-            formState: { values: true },
-            callback: ({ values }) => {
-                notifyChange(values);
-            },
+        // 使用 watch 回调订阅值变化，避免依赖不存在的 subscribe API。
+        const subscription = watch((values) => {
+            notifyChange(values as Record<string, unknown>);
         });
-    }, [getValues, subscribe]);
+
+        return () => subscription.unsubscribe();
+    }, [getValues, watch]);
 
     // 从 Zod Object schema 中解析字段进行渲染
     const fields = useMemo(() => {

@@ -17,9 +17,9 @@
 
 说明：
 - 本节记录当前候选分支事实；下方原任务清单保留为 Spec Kit 规划痕迹。
-- `dev@8218f54` 尚未包含统一错误体系，不能把本节内容当成主线已完成事实。
+- `dev@699bf53` 尚未包含统一错误体系，不能把本节内容当成主线已完成事实。
 - PR #5：`code/feat-unified-error-system-current -> dev`，标题为“feat: 统一错误体系与前端错误归一化”。
-- PR #5 当前状态：open、mergeable，CodeQL checks 通过；未记录 reviewDecision，未合入 `dev`。
+- PR #5 当前状态：open，CodeQL checks 通过；当前 merge state 不是 clean，未记录 reviewDecision，未合入 `dev`。
 
 | 状态 | Task IDs | 当前说明 |
 |---|---|---|

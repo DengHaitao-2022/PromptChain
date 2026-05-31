@@ -1,6 +1,6 @@
 # Realtime Event Contract
 
-## 0. Current Baseline (`dev@8218f54`)
+## 0. Current Baseline (`dev@699bf53`)
 
 - `backend/graph/executor.py` 已在节点执行、Gate 等待、手动 pause/resume、completed/failed 上调用 `emit_*`。
 - `backend/routes/websocket_routes.py` 已承担 transport 层广播；REST 轮询与 trace timeline 仍是状态对账权威。

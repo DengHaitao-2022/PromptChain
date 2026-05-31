@@ -52,7 +52,7 @@ frontend/
 
 ## 当前主线能力
 
-当前主线基线为 `dev@8218f54`：
+当前主线基线为 `dev@699bf53`：
 
 - 首页通过 `workflowApi` 拉取已发布工作流、版本、模型供应商并启动任务。
 - 工作流详情页支持状态轮询、SSE 快照流、澄清、提纲审批、事实核查审批、暂停/恢复、Trace、Artifact、节点重跑、Markdown 下载和 DOCX 导出。
@@ -63,7 +63,7 @@ frontend/
 
 ## 当前边界
 
-- MVP1 的核心功能已接近验收尾声，但仍需要在 `dev@8218f54` 上完成最终 live smoke。
+- MVP1 的核心功能已接近验收尾声，但仍需要在 `dev@699bf53` 上完成最终 live smoke。
 - `frontend/src/lib/api.ts` 的统一错误归一化在 PR #5，尚未合入 `dev`。
 - `frontend/src/lib/auth.ts`、部分设置页和编辑器 hook 仍可能保留旧的 `detail` 错误解析路径，需要在统一错误体系合入后继续收口。
 - 前端 lint/build 依赖本地 `node_modules`；若依赖未安装，不能把未运行 lint/build 写成验证通过。

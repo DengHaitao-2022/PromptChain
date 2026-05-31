@@ -2,184 +2,69 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PromptChain API Contract",
-    "version": "1.0.0",
-    "description": "PromptChain 统一接口规范（v1）。\n\n本规范作为前后端联调与后续开发的唯一事实源（SSOT）。\n"
+    "description": "PromptChain 统一接口规范（v1），由当前 FastAPI app 导出，并补充 WebSocket/SSE 文档扩展。",
+    "version": "1.0.0"
   },
-  "servers": [
-    {
-      "url": "http://localhost:8000",
-      "description": "Local development"
-    }
-  ],
-  "tags": [
-    {
-      "name": "Health"
-    },
-    {
-      "name": "Workflow"
-    },
-    {
-      "name": "Trace"
-    },
-    {
-      "name": "Artifact"
-    },
-    {
-      "name": "WorkflowDefinition"
-    },
-    {
-      "name": "WorkflowVersion"
-    },
-    {
-      "name": "Auth"
-    },
-    {
-      "name": "Workspace"
-    }
-  ],
-  "x-websocket-endpoints": [
-    {
-      "path": "/ws/workflow/{workflow_run_id}",
-      "description": "推送工作流节点状态和运行状态事件"
-    },
-    {
-      "path": "/ws/user/{user_id}",
-      "description": "推送用户审批通知事件"
-    }
-  ],
-  "x-sse-endpoints": [
-    {
-      "path": "/api/workflow/{workflow_run_id}/events",
-      "description": "工作流详情页状态快照与增量内容事件流"
-    }
-  ],
   "paths": {
-    "/": {
-      "get": {
-        "tags": [
-          "Health"
-        ],
-        "summary": "Health check",
-        "operationId": "healthCheck",
-        "responses": {
-          "200": {
-            "description": "Service health",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/workflow/start": {
       "post": {
         "tags": [
-          "Workflow"
+          "workflow"
         ],
-        "summary": "启动工作流",
-        "operationId": "startWorkflow",
+        "summary": "Start Workflow",
+        "description": "启动新的内容生成工作流\n\n工作流会在需要用户输入时暂停：\n- needs_clarification: 需要澄清信息\n- awaiting_outline_approval: 等待提纲审批",
+        "operationId": "start_workflow_api_workflow_start_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StartWorkflowRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Workflow started",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WorkflowResponse"
-                },
-                "examples": {
-                  "started": {
-                    "value": {
-                      "workflow_run_id": "wf_123",
-                      "status": "running",
-                      "state": {
-                        "user_input": "写一篇关于 AI Agent 架构的文章"
-                      }
-                    }
-                  }
                 }
               }
             }
           },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/workflow/{workflow_run_id}": {
-      "get": {
-        "tags": [
-          "Workflow"
-        ],
-        "summary": "获取工作流状态（统一契约）",
-        "operationId": "getWorkflowStatus",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowRunId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Workflow status",
+          "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WorkflowResponse"
-                },
-                "examples": {
-                  "needs_clarification": {
-                    "value": {
-                      "workflow_run_id": "wf_123",
-                      "status": "needs_clarification",
-                      "state": {
-                        "clarification_questions": [
-                          {
-                            "field": "audience",
-                            "question": "目标读者是谁？",
-                            "priority": "high",
-                            "default_assumption": "通用读者"
-                          }
-                        ]
-                      }
-                    }
-                  }
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
           }
         }
       }
     },
-    "/api/workflow/{workflow_run_id}/clarify": {
+    "/api/workflow/{workflow_run_id}/pause": {
       "post": {
         "tags": [
-          "Workflow"
+          "workflow"
         ],
-        "summary": "提交澄清回答",
-        "operationId": "clarifyWorkflow",
+        "summary": "Pause Workflow",
+        "description": "用户主动暂停工作流",
+        "operationId": "pause_workflow_api_workflow__workflow_run_id__pause_post",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkflowRunId"
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
           }
         ],
         "requestBody": {
@@ -187,14 +72,14 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClarifyRequest"
+                "$ref": "#/components/schemas/PauseWorkflowRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Workflow resumed",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -203,14 +88,68 @@
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflow/{workflow_run_id}/resume": {
+      "post": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "Resume Workflow",
+        "description": "恢复用户手动暂停的工作流",
+        "operationId": "resume_workflow_api_workflow__workflow_run_id__resume_post",
+        "parameters": [
+          {
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeWorkflowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse"
+                }
+              }
+            }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -218,13 +157,20 @@
     "/api/workflow/{workflow_run_id}/approve-outline": {
       "post": {
         "tags": [
-          "Workflow"
+          "workflow"
         ],
-        "summary": "审批提纲",
-        "operationId": "approveOutline",
+        "summary": "Approve Outline",
+        "description": "处理提纲审批\n\naction 可选值：\n- approve: 确认提纲\n- modify: 修改提纲（需提供 modified_outline）\n- regenerate: 重新生成（可提供 feedback）",
+        "operationId": "approve_outline_api_workflow__workflow_run_id__approve_outline_post",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkflowRunId"
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
           }
         ],
         "requestBody": {
@@ -239,7 +185,7 @@
         },
         "responses": {
           "200": {
-            "description": "Workflow resumed after outline approval",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -248,14 +194,68 @@
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflow/{workflow_run_id}/clarify": {
+      "post": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "Clarify Intent",
+        "description": "提供澄清回答",
+        "operationId": "clarify_intent_api_workflow__workflow_run_id__clarify_post",
+        "parameters": [
+          {
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClarifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse"
+                }
+              }
+            }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -263,14 +263,20 @@
     "/api/workflow/{workflow_run_id}/approve-fact-check": {
       "post": {
         "tags": [
-          "Workflow"
+          "workflow"
         ],
-        "summary": "审批事实核查高风险项",
-        "description": "用于处理 `awaiting_fact_check_approval` 阶段的人工确认。\n",
-        "operationId": "approveFactCheck",
+        "summary": "Approve Fact Check",
+        "description": "处理事实核查高风险项审批",
+        "operationId": "approve_fact_check_api_workflow__workflow_run_id__approve_fact_check_post",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkflowRunId"
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
           }
         ],
         "requestBody": {
@@ -285,37 +291,130 @@
         },
         "responses": {
           "200": {
-            "description": "Workflow resumed after fact-check approval",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WorkflowResponse"
-                },
-                "examples": {
-                  "continued": {
-                    "value": {
-                      "workflow_run_id": "wf_123",
-                      "status": "running",
-                      "state": {
-                        "awaiting_fact_check_approval": false
-                      }
-                    }
-                  }
                 }
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflow/runs": {
+      "get": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "List Workflow Runs",
+        "description": "获取当前用户在当前工作空间可见的运行记录列表。",
+        "operationId": "list_workflow_runs_api_workflow_runs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRunListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflow/{workflow_run_id}/events": {
+      "get": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "Stream Workflow Events",
+        "description": "通过 SSE 向详情页推送运行状态和 trace 快照。",
+        "operationId": "stream_workflow_events_api_workflow__workflow_run_id__events_get",
+        "parameters": [
+          {
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflow/{workflow_run_id}": {
+      "get": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "Get Workflow Status",
+        "description": "获取工作流状态",
+        "operationId": "get_workflow_status_api_workflow__workflow_run_id__get",
+        "parameters": [
+          {
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowResponse"
+                }
+              }
+            }
           },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -323,28 +422,40 @@
     "/api/workflow/{workflow_run_id}/rerun-options": {
       "get": {
         "tags": [
-          "Workflow"
+          "workflow"
         ],
-        "summary": "获取重跑选项",
-        "operationId": "getRerunOptions",
+        "summary": "Get Rerun Options",
+        "description": "获取可重跑的节点列表",
+        "operationId": "get_rerun_options_api_workflow__workflow_run_id__rerun_options_get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkflowRunId"
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Node rerun options",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RerunOptionsResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -352,13 +463,20 @@
     "/api/workflow/{workflow_run_id}/rerun": {
       "post": {
         "tags": [
-          "Workflow"
+          "workflow"
         ],
-        "summary": "从指定节点重跑",
-        "operationId": "rerunWorkflow",
+        "summary": "Rerun Workflow",
+        "description": "从指定节点重跑工作流\n\n创建新的工作流运行，保留指定节点之前的所有 Artifact",
+        "operationId": "rerun_workflow_api_workflow__workflow_run_id__rerun_post",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkflowRunId"
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
           }
         ],
         "requestBody": {
@@ -373,20 +491,22 @@
         },
         "responses": {
           "200": {
-            "description": "New rerun workflow created",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RerunResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -394,100 +514,40 @@
     "/api/workflow/{workflow_run_id}/rerun-history": {
       "get": {
         "tags": [
-          "Workflow"
+          "workflow"
         ],
-        "summary": "获取重跑历史",
-        "operationId": "getRerunHistory",
+        "summary": "Get Rerun History",
+        "description": "获取工作流的重跑历史",
+        "operationId": "get_rerun_history_api_workflow__workflow_run_id__rerun_history_get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkflowRunId"
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Rerun history list",
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RerunHistoryResponse"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/workflow/runs": {
-      "get": {
-        "tags": [
-          "Workflow"
-        ],
-        "summary": "获取当前用户可见的运行记录列表",
-        "operationId": "listWorkflowRuns",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Visible workflow runs",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkflowRunListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/workflow/{workflow_run_id}/events": {
-      "get": {
-        "tags": [
-          "Workflow"
-        ],
-        "summary": "工作流详情页 SSE 事件流",
-        "operationId": "streamWorkflowEvents",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowRunId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Server-sent event stream",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -495,35 +555,40 @@
     "/api/workflow/{workflow_run_id}/exports/docx": {
       "get": {
         "tags": [
-          "Workflow"
+          "workflow"
         ],
-        "summary": "导出已完成工作流的最终产物 DOCX",
-        "operationId": "exportWorkflowDocx",
+        "summary": "Export Workflow Docx",
+        "description": "导出已完成工作流的最终产物 DOCX。",
+        "operationId": "export_workflow_docx_api_workflow__workflow_run_id__exports_docx_get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkflowRunId"
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "DOCX binary",
+            "description": "Successful Response",
             "content": {
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
+              "application/json": {
+                "schema": {}
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -531,31 +596,40 @@
     "/api/trace/{workflow_run_id}": {
       "get": {
         "tags": [
-          "Trace"
+          "trace"
         ],
-        "summary": "获取工作流完整追踪",
-        "operationId": "getWorkflowTrace",
+        "summary": "Get Workflow Trace",
+        "description": "获取工作流完整追踪",
+        "operationId": "get_workflow_trace_api_trace__workflow_run_id__get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkflowRunId"
+            "name": "workflow_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Run Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Workflow trace payload",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkflowTraceResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -563,31 +637,40 @@
     "/api/trace/node/{node_run_id}": {
       "get": {
         "tags": [
-          "Trace"
+          "trace"
         ],
-        "summary": "获取节点执行详情",
-        "operationId": "getNodeDetail",
+        "summary": "Get Node Detail",
+        "description": "获取节点运行详情",
+        "operationId": "get_node_detail_api_trace_node__node_run_id__get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/NodeRunId"
+            "name": "node_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Node Run Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Node detail payload",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeDetailResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -595,29 +678,40 @@
     "/api/artifact/{artifact_id}": {
       "get": {
         "tags": [
-          "Artifact"
+          "trace"
         ],
-        "summary": "获取单个 Artifact",
-        "operationId": "getArtifact",
+        "summary": "Get Artifact",
+        "description": "获取 Artifact 详情",
+        "operationId": "get_artifact_api_artifact__artifact_id__get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/ArtifactId"
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Artifact Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Artifact detail",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
+                "schema": {}
               }
             }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -625,552 +719,40 @@
     "/api/artifact/{artifact_id}/history": {
       "get": {
         "tags": [
-          "Artifact"
+          "trace"
         ],
-        "summary": "获取 Artifact 版本历史",
-        "operationId": "getArtifactHistory",
+        "summary": "Get Artifact History",
+        "description": "获取 Artifact 版本历史",
+        "operationId": "get_artifact_history_api_artifact__artifact_id__history_get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/ArtifactId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Artifact history list",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": true
-                  }
-                }
-              }
-            }
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
-    "/api/workflows": {
-      "get": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "获取当前工作空间工作流定义列表",
-        "operationId": "listWorkflowDefinitions",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "default": 50
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "default": 0
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope with workflow list",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "创建工作流定义",
-        "operationId": "createWorkflowDefinition",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WorkflowDefinitionCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Result envelope with created workflow definition",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflow_id}": {
-      "get": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "获取工作流定义详情",
-        "operationId": "getWorkflowDefinitionById",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope with workflow definition",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "更新工作流定义",
-        "operationId": "updateWorkflowDefinition",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WorkflowDefinitionUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Result envelope with updated workflow",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "删除工作流定义（软删除）",
-        "operationId": "deleteWorkflowDefinition",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflow_id}/definition": {
-      "get": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "获取工作流定义（编辑器语义路径）",
-        "operationId": "getWorkflowDefinitionAlias",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope with workflow definition",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "更新工作流定义（编辑器语义路径）",
-        "operationId": "updateWorkflowDefinitionAlias",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WorkflowDefinitionUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Result envelope with workflow definition",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflow_id}/validate": {
-      "post": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "校验工作流定义是否合法",
-        "operationId": "validateWorkflowDefinition",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope with validation payload",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflow_id}/compile": {
-      "post": {
-        "tags": [
-          "WorkflowDefinition"
-        ],
-        "summary": "编译工作流定义为可执行图",
-        "operationId": "compileWorkflowDefinition",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope with compile payload",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflow_id}/versions": {
-      "get": {
-        "tags": [
-          "WorkflowVersion"
-        ],
-        "summary": "获取工作流版本历史",
-        "operationId": "listWorkflowVersions",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope with version list",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflow_id}/versions/{version_id}": {
-      "get": {
-        "tags": [
-          "WorkflowVersion"
-        ],
-        "summary": "获取指定版本定义",
-        "operationId": "getWorkflowVersion",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          },
-          {
-            "$ref": "#/components/parameters/VersionId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope with version payload",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflow_id}/versions/compare": {
-      "get": {
-        "tags": [
-          "WorkflowVersion"
-        ],
-        "summary": "对比两个版本差异",
-        "operationId": "compareWorkflowVersions",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          },
-          {
-            "name": "version_a",
-            "in": "query",
+            "name": "artifact_id",
+            "in": "path",
             "required": true,
             "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "version_b",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer"
+              "type": "string",
+              "title": "Artifact Id"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Result envelope with diff payload",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflow_id}/versions/{version_id}/restore": {
-      "post": {
-        "tags": [
-          "WorkflowVersion"
-        ],
-        "summary": "回滚到指定版本",
-        "operationId": "restoreWorkflowVersion",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkflowId"
-          },
-          {
-            "$ref": "#/components/parameters/VersionId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Result envelope with restore payload",
+          "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResultResponse"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
@@ -1178,23 +760,24 @@
     "/api/auth/register": {
       "post": {
         "tags": [
-          "Auth"
+          "auth"
         ],
-        "summary": "用户注册",
-        "operationId": "register",
+        "summary": "Register",
+        "description": "用户注册\n\n注册成功后会发送验证邮件，用户需要验证邮箱后才能登录",
+        "operationId": "register_api_auth_register_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RegisterRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Registered",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -1203,8 +786,15 @@
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1212,47 +802,39 @@
     "/api/auth/login": {
       "post": {
         "tags": [
-          "Auth"
+          "auth"
         ],
-        "summary": "登录（设置 HttpOnly Cookie）",
-        "operationId": "login",
+        "summary": "Login",
+        "description": "用户登录\n\n登录成功后会在 Cookie 中设置 access_token 和 refresh_token",
+        "operationId": "login_api_auth_login_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/LoginRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Logged in",
-            "headers": {
-              "Set-Cookie": {
-                "description": "access_token 与 refresh_token",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LoginResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1260,23 +842,46 @@
     "/api/auth/refresh": {
       "post": {
         "tags": [
-          "Auth"
+          "auth"
         ],
-        "summary": "刷新 Access Token",
-        "operationId": "refreshToken",
+        "summary": "Refresh Token",
+        "description": "刷新 Access Token\n\n使用 Cookie 中的 refresh_token 获取新的 access_token",
+        "operationId": "refresh_token_api_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RefreshRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Access token refreshed",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1284,13 +889,14 @@
     "/api/auth/logout": {
       "post": {
         "tags": [
-          "Auth"
+          "auth"
         ],
-        "summary": "登出（清除 Cookie）",
-        "operationId": "logout",
+        "summary": "Logout",
+        "description": "用户登出\n\n撤销 Refresh Token 并清除 Cookie",
+        "operationId": "logout_api_auth_logout_post",
         "responses": {
           "200": {
-            "description": "Logged out",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -1305,23 +911,24 @@
     "/api/auth/verify-email": {
       "post": {
         "tags": [
-          "Auth"
+          "auth"
         ],
-        "summary": "验证邮箱",
-        "operationId": "verifyEmail",
+        "summary": "Verify Email",
+        "description": "验证邮箱\n\n使用邮件中的验证链接完成邮箱验证",
+        "operationId": "verify_email_api_auth_verify_email_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/VerifyEmailRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Email verified",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -1330,8 +937,57 @@
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/resend-verification-email": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Resend Verification Email",
+        "description": "重发验证邮件\n\n仅对未验证用户重发，其他情况返回中性成功，避免暴露账号状态。",
+        "operationId": "resend_verification_email_api_auth_resend_verification_email_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerificationEmailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1339,27 +995,38 @@
     "/api/auth/forgot-password": {
       "post": {
         "tags": [
-          "Auth"
+          "auth"
         ],
-        "summary": "发送重置密码邮件",
-        "operationId": "forgotPassword",
+        "summary": "Forgot Password",
+        "description": "忘记密码\n\n发送密码重置邮件",
+        "operationId": "forgot_password_api_auth_forgot_password_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ForgotPasswordRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Always returns success message",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1370,23 +1037,24 @@
     "/api/auth/reset-password": {
       "post": {
         "tags": [
-          "Auth"
+          "auth"
         ],
-        "summary": "重置密码",
-        "operationId": "resetPassword",
+        "summary": "Reset Password",
+        "description": "重置密码\n\n使用邮件中的重置链接设置新密码",
+        "operationId": "reset_password_api_auth_reset_password_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ResetPasswordRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Password reset",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -1395,8 +1063,15 @@
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1404,33 +1079,19 @@
     "/api/me": {
       "get": {
         "tags": [
-          "Auth"
+          "auth"
         ],
-        "summary": "获取当前用户信息",
-        "operationId": "getMe",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "Get Me",
+        "description": "获取当前用户信息\n\n返回当前登录用户的信息及其工作空间列表",
+        "operationId": "get_me_api_me_get",
         "responses": {
           "200": {
-            "description": "User profile with workspace context",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeResponse"
-                }
+                "schema": {}
               }
             }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -1438,69 +1099,57 @@
     "/api/workspaces": {
       "get": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "获取当前用户工作空间列表",
-        "operationId": "listWorkspaces",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "List Workspaces",
+        "description": "获取当前用户的所有工作空间",
+        "operationId": "list_workspaces_api_workspaces_get",
         "responses": {
           "200": {
-            "description": "Workspace list",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListWorkspacesResponse"
-                }
+                "schema": {}
               }
             }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
           }
         }
       },
       "post": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "创建工作空间",
-        "operationId": "createWorkspace",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "Create Workspace",
+        "description": "创建新的工作空间\n\n创建者自动成为 Owner",
+        "operationId": "create_workspace_api_workspaces_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateWorkspaceRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Created workspace",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CreateWorkspaceResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1508,60 +1157,59 @@
     "/api/workspaces/{workspace_id}": {
       "get": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "获取工作空间详情",
-        "operationId": "getWorkspace",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "Get Workspace",
+        "description": "获取工作空间详情",
+        "operationId": "get_workspace_api_workspaces__workspace_id__get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkspaceId"
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Workspace detail",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkspaceDetailResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       },
       "patch": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "更新工作空间",
-        "operationId": "updateWorkspace",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "Update Workspace",
+        "description": "更新工作空间信息\n\n需要 workspace.update 权限",
+        "operationId": "update_workspace_api_workspaces__workspace_id__patch",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkspaceId"
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
           }
         ],
         "requestBody": {
@@ -1576,23 +1224,22 @@
         },
         "responses": {
           "200": {
-            "description": "Updated",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1600,38 +1247,40 @@
     "/api/workspaces/{workspace_id}/members": {
       "get": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "获取工作空间成员",
-        "operationId": "listWorkspaceMembers",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "List Members",
+        "description": "获取工作空间成员列表",
+        "operationId": "list_members_api_workspaces__workspace_id__members_get",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkspaceId"
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Members list",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListMembersResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1639,20 +1288,20 @@
     "/api/workspaces/{workspace_id}/invite": {
       "post": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "邀请成员",
-        "operationId": "inviteWorkspaceMember",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "Invite Member",
+        "description": "邀请成员加入工作空间\n\n需要 member.manage 权限",
+        "operationId": "invite_member_api_workspaces__workspace_id__invite_post",
         "parameters": [
           {
-            "$ref": "#/components/parameters/WorkspaceId"
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
           }
         ],
         "requestBody": {
@@ -1667,23 +1316,22 @@
         },
         "responses": {
           "200": {
-            "description": "Invitation sent",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InviteMemberResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1691,43 +1339,40 @@
     "/api/workspaces/accept-invite": {
       "post": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "接受邀请",
-        "operationId": "acceptWorkspaceInvite",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "Accept Invite",
+        "description": "接受工作空间邀请",
+        "operationId": "accept_invite_api_workspaces_accept_invite_post",
         "parameters": [
           {
             "name": "token",
             "in": "query",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "title": "Token"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Invite accepted",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -1735,20 +1380,20 @@
     "/api/memberships/{membership_id}": {
       "patch": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "更新成员角色",
-        "operationId": "updateMembershipRole",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "Update Member Role",
+        "description": "更新成员角色\n\n需要 member.manage 权限",
+        "operationId": "update_member_role_api_memberships__membership_id__patch",
         "parameters": [
           {
-            "$ref": "#/components/parameters/MembershipId"
+            "name": "membership_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Membership Id"
+            }
           }
         ],
         "requestBody": {
@@ -1763,393 +1408,2650 @@
         },
         "responses": {
           "200": {
-            "description": "Updated",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       },
       "delete": {
         "tags": [
-          "Workspace"
+          "workspace"
         ],
-        "summary": "移除成员",
-        "operationId": "removeMembership",
-        "security": [
-          {
-            "cookieAuth": [
-
-            ]
-          }
-        ],
+        "summary": "Remove Member",
+        "description": "移除成员\n\n需要 member.manage 权限，不能移除 Owner",
+        "operationId": "remove_member_api_memberships__membership_id__delete",
         "parameters": [
           {
-            "$ref": "#/components/parameters/MembershipId"
+            "name": "membership_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Membership Id"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Removed",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageResponse"
-                }
+                "schema": {}
               }
             }
           },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace-context/switch": {
+      "post": {
+        "tags": [
+          "workspace"
+        ],
+        "summary": "Switch Workspace",
+        "description": "切换当前工作空间，并刷新 access_token 中的工作空间上下文。",
+        "operationId": "switch_workspace_api_workspace_context_switch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchWorkspaceRequest"
+              }
+            }
           },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/dashboard": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Dashboard",
+        "description": "获取 Dashboard 统计数据",
+        "operationId": "get_dashboard_api_admin_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users/{target_user_id}/status": {
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Update User Status",
+        "description": "更新当前工作空间中的访问状态。\n\n这里的“停用”只影响当前工作空间，不会修改全局用户账号状态。",
+        "operationId": "update_user_status_api_admin_users__target_user_id__status_patch",
+        "parameters": [
+          {
+            "name": "target_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Target User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/model-providers": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Model Providers",
+        "description": "获取模型供应商配置列表",
+        "operationId": "list_model_providers_api_admin_model_providers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Create Model Provider",
+        "description": "创建模型供应商配置",
+        "operationId": "create_model_provider_api_admin_model_providers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelProviderCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/model-providers/runtime": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Model Provider Runtime",
+        "description": "获取当前工作空间实际运行模型配置读模型。",
+        "operationId": "get_model_provider_runtime_api_admin_model_providers_runtime_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/model-providers/{provider_id}": {
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Update Model Provider",
+        "description": "更新模型供应商配置",
+        "operationId": "update_model_provider_api_admin_model_providers__provider_id__patch",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelProviderUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Model Provider",
+        "description": "删除模型供应商配置",
+        "operationId": "delete_model_provider_api_admin_model_providers__provider_id__delete",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/model-providers/{provider_id}/test": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Test Model Provider Config",
+        "description": "测试模型供应商配置，按静态校验、连通性、凭证、模型列表和短 Prompt 分步返回。",
+        "operationId": "test_model_provider_config_api_admin_model_providers__provider_id__test_post",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelProviderTestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/secrets": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Secrets",
+        "description": "获取密钥列表（仅显示名称和后4位）",
+        "operationId": "list_secrets_api_admin_secrets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Create Secret",
+        "description": "创建密钥",
+        "operationId": "create_secret_api_admin_secrets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/secrets/{secret_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Secret",
+        "description": "删除密钥",
+        "operationId": "delete_secret_api_admin_secrets__secret_id__delete",
+        "parameters": [
+          {
+            "name": "secret_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Secret Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/api-keys": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Api Keys",
+        "description": "获取 API Key 列表",
+        "operationId": "list_api_keys_api_admin_api_keys_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Create Api Key",
+        "description": "创建 API Key\n\n返回完整的 Key，仅此一次显示",
+        "operationId": "create_api_key_api_admin_api_keys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/api-keys/{key_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Revoke Api Key",
+        "description": "撤销 API Key",
+        "operationId": "revoke_api_key_api_admin_api_keys__key_id__delete",
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/audit-logs": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Audit Logs",
+        "description": "获取审计日志列表",
+        "operationId": "list_audit_logs_api_admin_audit_logs_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "user_id_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "User Id Filter"
+            }
+          },
+          {
+            "name": "target_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Type"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Id"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Time"
+            }
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows": {
+      "get": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "List Workflows",
+        "description": "获取当前工作空间的工作流列表。",
+        "operationId": "list_workflows_api_workflows_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Create Workflow",
+        "description": "创建新的工作流定义。",
+        "operationId": "create_workflow_api_workflows_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowDefinitionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/public": {
+      "get": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "List Public Workflows",
+        "description": "获取首页匿名可见的已发布工作流列表。",
+        "operationId": "list_public_workflows_api_workflows_public_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}": {
+      "get": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Get Workflow",
+        "description": "获取工作流定义详情。",
+        "operationId": "get_workflow_api_workflows__workflow_id__get",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Update Workflow",
+        "description": "更新工作流草稿。",
+        "operationId": "update_workflow_api_workflows__workflow_id__put",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowDefinitionUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Delete Workflow",
+        "description": "删除工作流定义（软删除）。",
+        "operationId": "delete_workflow_api_workflows__workflow_id__delete",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}/definition": {
+      "get": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Get Workflow Definition",
+        "description": "获取工作流草稿定义，仅设计者及以上角色可访问。",
+        "operationId": "get_workflow_definition_api_workflows__workflow_id__definition_get",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Update Workflow Definition",
+        "description": "更新工作流定义，供编辑器保存使用。",
+        "operationId": "update_workflow_definition_api_workflows__workflow_id__definition_put",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowDefinitionUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}/validate": {
+      "post": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Validate Workflow",
+        "description": "校验工作流草稿或发布可用性。",
+        "operationId": "validate_workflow_api_workflows__workflow_id__validate_post",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/WorkflowValidationMode",
+              "default": "save"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}/publish": {
+      "post": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Publish Workflow",
+        "description": "显式发布工作流当前草稿。",
+        "operationId": "publish_workflow_api_workflows__workflow_id__publish_post",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishWorkflowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}/compile": {
+      "post": {
+        "tags": [
+          "workflow-definition"
+        ],
+        "summary": "Compile Workflow",
+        "description": "编译工作流为 LangGraph 可执行图预览。",
+        "operationId": "compile_workflow_api_workflows__workflow_id__compile_post",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}/versions": {
+      "get": {
+        "tags": [
+          "workflow-version"
+        ],
+        "summary": "List Versions",
+        "description": "获取工作流的版本历史。",
+        "operationId": "list_versions_api_workflows__workflow_id__versions_get",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/public/{workflow_id}/versions": {
+      "get": {
+        "tags": [
+          "workflow-version"
+        ],
+        "summary": "List Public Versions",
+        "description": "获取首页匿名可见工作流的已发布版本。",
+        "operationId": "list_public_versions_api_workflows_public__workflow_id__versions_get",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}/versions/compare": {
+      "get": {
+        "tags": [
+          "workflow-version"
+        ],
+        "summary": "Compare Versions",
+        "description": "对比两个版本的差异。",
+        "operationId": "compare_versions_api_workflows__workflow_id__versions_compare_get",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "version_a",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version A"
+            }
+          },
+          {
+            "name": "version_b",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version B"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}/versions/{version_id}": {
+      "get": {
+        "tags": [
+          "workflow-version"
+        ],
+        "summary": "Get Version",
+        "description": "获取特定版本的工作流快照。",
+        "operationId": "get_version_api_workflows__workflow_id__versions__version_id__get",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflow_id}/versions/{version_id}/restore": {
+      "post": {
+        "tags": [
+          "workflow-version"
+        ],
+        "summary": "Restore Version",
+        "description": "恢复指定版本到新的草稿。",
+        "operationId": "restore_version_api_workflows__workflow_id__versions__version_id__restore_post",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workflow Id"
+            }
+          },
+          {
+            "name": "version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreVersionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "description": "健康检查",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           }
         }
       }
     }
   },
   "components": {
-    "securitySchemes": {
-      "cookieAuth": {
-        "type": "apiKey",
-        "in": "cookie",
-        "name": "access_token"
-      }
-    },
-    "parameters": {
-      "WorkflowRunId": {
-        "name": "workflow_run_id",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string"
-        },
-        "description": "工作流运行 ID"
-      },
-      "WorkflowId": {
-        "name": "workflow_id",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string"
-        },
-        "description": "工作流定义 ID"
-      },
-      "VersionId": {
-        "name": "version_id",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string"
-        },
-        "description": "版本 ID"
-      },
-      "NodeRunId": {
-        "name": "node_run_id",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string"
-        },
-        "description": "节点运行 ID"
-      },
-      "ArtifactId": {
-        "name": "artifact_id",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string"
-        },
-        "description": "Artifact ID"
-      },
-      "WorkspaceId": {
-        "name": "workspace_id",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string"
-        },
-        "description": "工作空间 ID"
-      },
-      "MembershipId": {
-        "name": "membership_id",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string"
-        },
-        "description": "成员关系 ID"
-      }
-    },
-    "responses": {
-      "BadRequest": {
-        "description": "Bad request",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/ErrorResponse"
-            }
-          }
-        }
-      },
-      "Unauthorized": {
-        "description": "Unauthorized",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/ErrorResponse"
-            }
-          }
-        }
-      },
-      "Forbidden": {
-        "description": "Forbidden",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/ErrorResponse"
-            }
-          }
-        }
-      },
-      "NotFound": {
-        "description": "Not found",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/ErrorResponse"
-            }
-          }
-        }
-      },
-      "Conflict": {
-        "description": "Conflict",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/ErrorResponse"
-            }
-          }
-        }
-      },
-      "InternalError": {
-        "description": "Internal server error",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/ErrorResponse"
-            }
-          }
-        }
-      }
-    },
     "schemas": {
-      "ErrorResponse": {
+      "ApiKeyCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ApiKeyScope"
+            },
+            "type": "array",
+            "title": "Scopes"
+          },
+          "expires_in_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In Days",
+            "description": "有效期（天），不填则永不过期"
+          }
+        },
         "type": "object",
         "required": [
-          "detail"
+          "name"
         ],
+        "title": "ApiKeyCreate",
+        "description": "创建 API Key"
+      },
+      "ApiKeyScope": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write",
+          "execute",
+          "all"
+        ],
+        "title": "ApiKeyScope",
+        "description": "API Key 权限范围"
+      },
+      "ApproveFactCheckRequest": {
+        "properties": {
+          "decisions": {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "confirm",
+                "use_suggestion",
+                "manual"
+              ]
+            },
+            "type": "object",
+            "title": "Decisions"
+          },
+          "manual_corrections": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Manual Corrections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "decisions"
+        ],
+        "title": "ApproveFactCheckRequest",
+        "description": "事实核查审批请求"
+      },
+      "ApproveOutlineRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "modify",
+              "regenerate"
+            ],
+            "title": "Action"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback",
+            "default": ""
+          },
+          "modified_outline": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified Outline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "ApproveOutlineRequest",
+        "description": "提纲审批请求"
+      },
+      "ClarifyRequest": {
+        "properties": {
+          "clarifications": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Clarifications"
+          }
+        },
+        "type": "object",
+        "required": [
+          "clarifications"
+        ],
+        "title": "ClarifyRequest",
+        "description": "澄清回答请求"
+      },
+      "CreateWorkspaceRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateWorkspaceRequest",
+        "description": "创建工作空间请求"
+      },
+      "EdgeData": {
+        "properties": {
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "title": "EdgeData",
+        "description": "边数据"
+      },
+      "ForgotPasswordRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "ForgotPasswordRequest",
+        "description": "忘记密码请求"
+      },
+      "HTTPValidationError": {
         "properties": {
           "detail": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string",
-            "nullable": true
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
           }
-        }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
       },
-      "HealthResponse": {
+      "InviteMemberRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MemberRole",
+            "default": "viewer"
+          }
+        },
         "type": "object",
         "required": [
-          "status",
-          "service",
-          "version"
+          "email"
         ],
-        "properties": {
-          "status": {
-            "type": "string",
-            "example": "ok"
-          },
-          "service": {
-            "type": "string",
-            "example": "PromptChain API"
-          },
-          "version": {
-            "type": "string",
-            "example": "1.0.0"
-          }
-        }
+        "title": "InviteMemberRequest",
+        "description": "邀请成员请求"
       },
-      "ResultResponse": {
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
         "type": "object",
         "required": [
-          "code",
-          "message",
-          "data"
+          "email",
+          "password"
         ],
+        "title": "LoginRequest",
+        "description": "登录请求"
+      },
+      "MemberRole": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "admin",
+          "editor",
+          "viewer"
+        ],
+        "title": "MemberRole",
+        "description": "成员角色 - Workspace 级 RBAC"
+      },
+      "MessageResponse": {
         "properties": {
-          "code": {
-            "type": "integer",
-            "example": 0
-          },
           "message": {
             "type": "string",
-            "example": "success"
-          },
-          "data": {
-            "nullable": true
+            "title": "Message"
           }
-        }
-      },
-      "ContentPreview": {
+        },
         "type": "object",
         "required": [
-          "preview",
-          "word_count"
+          "message"
         ],
+        "title": "MessageResponse",
+        "description": "通用消息响应"
+      },
+      "ModelProviderCreate": {
         "properties": {
-          "preview": {
+          "provider": {
+            "$ref": "#/components/schemas/ModelProviderType"
+          },
+          "name": {
             "type": "string",
-            "description": "内容预览（最多约100字符）"
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
           },
-          "word_count": {
-            "type": "integer",
-            "description": "预览原文长度（字符计数）"
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config",
+            "description": "配置信息，如 api_key, base_url 等"
+          },
+          "set_as_default": {
+            "type": "boolean",
+            "title": "Set As Default",
+            "description": "是否设为当前工作空间运行默认模型",
+            "default": false
           }
-        }
-      },
-      "WorkflowTraceResponse": {
+        },
         "type": "object",
         "required": [
-          "workflow",
-          "nodes",
-          "artifacts",
-          "timeline"
+          "provider",
+          "name"
         ],
-        "properties": {
-          "workflow": {
-            "type": "object",
-            "additionalProperties": true
-          },
-          "nodes": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          },
-          "artifacts": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          },
-          "timeline": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          }
-        }
+        "title": "ModelProviderCreate",
+        "description": "创建模型供应商配置"
       },
-      "NodeDetailResponse": {
+      "ModelProviderTestRequest": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "可选的短 Prompt 测试模型"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt",
+            "description": "可选的短 Prompt 内容"
+          }
+        },
+        "type": "object",
+        "title": "ModelProviderTestRequest",
+        "description": "模型供应商连通性测试请求"
+      },
+      "ModelProviderType": {
+        "type": "string",
+        "enum": [
+          "openai",
+          "anthropic",
+          "google",
+          "github",
+          "ollama",
+          "azure",
+          "local",
+          "custom"
+        ],
+        "title": "ModelProviderType",
+        "description": "模型供应商类型"
+      },
+      "ModelProviderUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          },
+          "set_as_default": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Set As Default",
+            "description": "是否设为当前工作空间运行默认模型"
+          }
+        },
+        "type": "object",
+        "title": "ModelProviderUpdate",
+        "description": "更新模型供应商配置"
+      },
+      "NodeData": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          }
+        },
         "type": "object",
         "required": [
-          "node",
-          "input_artifacts",
-          "output_artifacts"
+          "label"
         ],
-        "properties": {
-          "node": {
-            "type": "object",
-            "additionalProperties": true
-          },
-          "input_artifacts": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          },
-          "output_artifacts": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          }
-        }
+        "title": "NodeData",
+        "description": "节点数据"
       },
       "NodePosition": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          }
+        },
         "type": "object",
         "required": [
           "x",
           "y"
         ],
-        "properties": {
-          "x": {
-            "type": "number"
-          },
-          "y": {
-            "type": "number"
-          }
-        }
+        "title": "NodePosition",
+        "description": "节点位置"
       },
-      "NodeData": {
+      "PauseWorkflowRequest": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "title": "PauseWorkflowRequest",
+        "description": "手动暂停工作流请求"
+      },
+      "PublishWorkflowRequest": {
+        "properties": {
+          "change_log": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Change Log",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "PublishWorkflowRequest",
+        "description": "发布工作流请求。"
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "title": "RefreshRequest",
+        "description": "刷新 Token 请求（可选，主要通过 Cookie）"
+      },
+      "RegisterRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "title": "Password"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50,
+                "minLength": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          }
+        },
         "type": "object",
         "required": [
-          "label"
+          "email",
+          "password"
         ],
-        "properties": {
-          "label": {
-            "type": "string"
-          },
-          "config": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        }
+        "title": "RegisterRequest",
+        "description": "注册请求"
       },
-      "WorkflowNode": {
+      "RerunRequest": {
+        "properties": {
+          "from_node": {
+            "type": "string",
+            "title": "From Node"
+          },
+          "updated_input": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated Input"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "from_node"
+        ],
+        "title": "RerunRequest",
+        "description": "重跑请求"
+      },
+      "ResendVerificationEmailRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "ResendVerificationEmailRequest",
+        "description": "重发验证邮件请求"
+      },
+      "ResetPasswordRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "ResetPasswordRequest",
+        "description": "重置密码请求"
+      },
+      "RestoreVersionRequest": {
+        "properties": {
+          "change_log": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Change Log",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "RestoreVersionRequest",
+        "description": "恢复版本请求。"
+      },
+      "ResumeWorkflowRequest": {
+        "properties": {},
+        "type": "object",
+        "title": "ResumeWorkflowRequest",
+        "description": "恢复手动暂停的工作流请求"
+      },
+      "SecretCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Value",
+            "description": "密钥值，存储时加密"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "value"
+        ],
+        "title": "SecretCreate",
+        "description": "创建密钥"
+      },
+      "StartWorkflowRequest": {
+        "properties": {
+          "user_input": {
+            "type": "string",
+            "title": "User Input"
+          },
+          "workflow_definition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Definition Id"
+          },
+          "workflow_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Version Id"
+          },
+          "model_provider_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Provider Id"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_input"
+        ],
+        "title": "StartWorkflowRequest",
+        "description": "启动工作流请求"
+      },
+      "SwitchWorkspaceRequest": {
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workspace_id"
+        ],
+        "title": "SwitchWorkspaceRequest",
+        "description": "切换工作空间请求"
+      },
+      "UpdateMemberRoleRequest": {
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/MemberRole"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "UpdateMemberRoleRequest",
+        "description": "更新成员角色请求"
+      },
+      "UpdateUserStatusRequest": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/UserStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "UpdateUserStatusRequest",
+        "description": "更新当前工作空间访问状态请求"
+      },
+      "UpdateWorkspaceRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          }
+        },
+        "type": "object",
+        "title": "UpdateWorkspaceRequest",
+        "description": "更新工作空间请求"
+      },
+      "UserStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "inactive",
+          "suspended"
+        ],
+        "title": "UserStatus",
+        "description": "用户状态"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VerifyEmailRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "VerifyEmailRequest",
+        "description": "验证邮箱请求"
+      },
+      "WorkflowDefinitionCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "default": ""
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "WorkflowDefinitionCreate",
+        "description": "创建工作流定义请求"
+      },
+      "WorkflowDefinitionUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "nodes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/WorkflowNode"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodes"
+          },
+          "edges": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/WorkflowEdge"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edges"
+          },
+          "change_log": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Log"
+          }
+        },
+        "type": "object",
+        "title": "WorkflowDefinitionUpdate",
+        "description": "更新工作流定义请求"
+      },
+      "WorkflowEdge": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "default": "default"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EdgeData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
         "type": "object",
         "required": [
           "id",
-          "type",
-          "position",
-          "data"
+          "source",
+          "target"
         ],
+        "title": "WorkflowEdge",
+        "description": "工作流边（连接线）"
+      },
+      "WorkflowNode": {
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "title": "Id"
           },
           "type": {
-            "type": "string"
+            "type": "string",
+            "title": "Type"
           },
           "position": {
             "$ref": "#/components/schemas/NodePosition"
@@ -2157,371 +4059,277 @@
           "data": {
             "$ref": "#/components/schemas/NodeData"
           }
-        }
-      },
-      "EdgeData": {
-        "type": "object",
-        "properties": {
-          "condition": {
-            "type": "string",
-            "nullable": true
-          },
-          "label": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "WorkflowEdge": {
+        },
         "type": "object",
         "required": [
           "id",
-          "source",
-          "target"
+          "type",
+          "position",
+          "data"
         ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string"
-          },
-          "target": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "default": "default"
-          },
-          "data": {
-            "$ref": "#/components/schemas/EdgeData"
-          }
-        }
-      },
-      "WorkflowDefinitionCreate": {
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string",
-            "default": ""
-          },
-          "nodes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkflowNode"
-            },
-            "default": [
-
-            ]
-          },
-          "edges": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkflowEdge"
-            },
-            "default": [
-
-            ]
-          }
-        }
-      },
-      "WorkflowDefinitionUpdate": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "nullable": true
-          },
-          "description": {
-            "type": "string",
-            "nullable": true
-          },
-          "nodes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkflowNode"
-            },
-            "nullable": true
-          },
-          "edges": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkflowEdge"
-            },
-            "nullable": true
-          }
-        }
-      },
-      "WorkflowStatus": {
-        "type": "string",
-        "enum": [
-          "running",
-          "paused",
-          "needs_clarification",
-          "awaiting_outline_approval",
-          "awaiting_fact_check_approval",
-          "completed",
-          "failed"
-        ]
-      },
-      "ClarificationPriority": {
-        "type": "string",
-        "enum": [
-          "high",
-          "medium",
-          "low"
-        ]
-      },
-      "ClarificationQuestion": {
-        "type": "object",
-        "required": [
-          "field",
-          "question",
-          "priority"
-        ],
-        "properties": {
-          "field": {
-            "type": "string"
-          },
-          "question": {
-            "type": "string"
-          },
-          "priority": {
-            "$ref": "#/components/schemas/ClarificationPriority"
-          },
-          "default_assumption": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "WorkflowState": {
-        "type": "object",
-        "properties": {
-          "clarification_questions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ClarificationQuestion"
-            }
-          },
-          "outline": {
-            "type": "object",
-            "additionalProperties": true
-          },
-          "fact_check_report": {
-            "$ref": "#/components/schemas/FactCheckReport"
-          },
-          "final_content": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/ContentPreview"
-            }
-          }
-        },
-        "additionalProperties": true
+        "title": "WorkflowNode",
+        "description": "工作流节点"
       },
       "WorkflowResponse": {
+        "properties": {
+          "workflow_run_id": {
+            "type": "string",
+            "title": "Workflow Run Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "paused",
+              "needs_clarification",
+              "awaiting_outline_approval",
+              "awaiting_fact_check_approval",
+              "completed",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "final_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Artifact Id"
+          },
+          "quality_metrics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Metrics"
+          },
+          "state": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "State"
+          }
+        },
         "type": "object",
         "required": [
           "workflow_run_id",
           "status",
           "state"
         ],
+        "title": "WorkflowResponse",
+        "description": "工作流响应"
+      },
+      "WorkflowRunListItem": {
         "properties": {
-          "workflow_run_id": {
-            "type": "string"
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "workflow_name": {
+            "type": "string",
+            "title": "Workflow Name"
           },
           "status": {
-            "$ref": "#/components/schemas/WorkflowStatus"
+            "type": "string",
+            "enum": [
+              "running",
+              "paused",
+              "needs_clarification",
+              "awaiting_outline_approval",
+              "awaiting_fact_check_approval",
+              "completed",
+              "failed"
+            ],
+            "title": "Status"
           },
-          "state": {
-            "$ref": "#/components/schemas/WorkflowState"
-          }
-        }
-      },
-      "StartWorkflowRequest": {
-        "type": "object",
-        "required": [
-          "user_input"
-        ],
-        "properties": {
-          "user_input": {
-            "type": "string"
+          "current_node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Node"
           },
           "workflow_definition_id": {
-            "type": "string",
-            "nullable": true
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Definition Id"
           },
           "workflow_version_id": {
-            "type": "string",
-            "nullable": true
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Version Id"
+          },
+          "final_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Artifact Id"
+          },
+          "runtime_model": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Model"
+          },
+          "runtime_plan": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Plan"
+          },
+          "runtime_progress": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Progress"
+          },
+          "quality_metrics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Metrics"
+          },
+          "gate": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate"
+          },
+          "pause": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause"
           },
           "model_provider_id": {
-            "type": "string",
-            "nullable": true
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Provider Id"
           },
           "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "user_input": {
             "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "ClarifyRequest": {
-        "type": "object",
-        "required": [
-          "clarifications"
-        ],
-        "properties": {
-          "clarifications": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "ApproveOutlineAction": {
-        "type": "string",
-        "enum": [
-          "approve",
-          "modify",
-          "regenerate"
-        ]
-      },
-      "ApproveOutlineRequest": {
-        "type": "object",
-        "required": [
-          "action"
-        ],
-        "properties": {
-          "action": {
-            "$ref": "#/components/schemas/ApproveOutlineAction"
+            "title": "User Input"
           },
-          "feedback": {
+          "started_at": {
             "type": "string",
-            "default": ""
+            "title": "Started At"
           },
-          "modified_outline": {
-            "type": "object",
-            "additionalProperties": true,
-            "nullable": true
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "total_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Duration Ms"
           }
-        }
-      },
-      "FactCheckDecision": {
-        "type": "string",
-        "enum": [
-          "confirm",
-          "use_suggestion",
-          "manual"
-        ]
-      },
-      "ApproveFactCheckRequest": {
-        "type": "object",
-        "required": [
-          "decisions"
-        ],
-        "properties": {
-          "decisions": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/FactCheckDecision"
-            }
-          },
-          "manual_corrections": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "default": {
-            }
-          }
-        }
-      },
-      "RerunRequest": {
-        "type": "object",
-        "required": [
-          "from_node"
-        ],
-        "properties": {
-          "from_node": {
-            "type": "string"
-          },
-          "updated_input": {
-            "type": "object",
-            "additionalProperties": true,
-            "nullable": true
-          },
-          "reason": {
-            "type": "string",
-            "default": ""
-          }
-        }
-      },
-      "RerunResponse": {
-        "type": "object",
-        "required": [
-          "original_workflow_run_id",
-          "new_workflow_run_id",
-          "rerun_from_node",
-          "status",
-          "state"
-        ],
-        "properties": {
-          "original_workflow_run_id": {
-            "type": "string"
-          },
-          "new_workflow_run_id": {
-            "type": "string"
-          },
-          "rerun_from_node": {
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/WorkflowStatus"
-          },
-          "state": {
-            "$ref": "#/components/schemas/WorkflowState"
-          }
-        }
-      },
-      "RerunOptionsResponse": {
-        "type": "object",
-        "required": [
-          "options"
-        ],
-        "properties": {
-          "options": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          }
-        }
-      },
-      "RerunHistoryResponse": {
-        "type": "object",
-        "required": [
-          "history"
-        ],
-        "properties": {
-          "history": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            }
-          }
-        }
-      },
-      "WorkflowRunSummary": {
+        },
         "type": "object",
         "required": [
           "id",
@@ -2530,590 +4338,91 @@
           "user_input",
           "started_at"
         ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "workflow_name": {
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/WorkflowStatus"
-          },
-          "current_node": {
-            "type": "string",
-            "nullable": true
-          },
-          "user_input": {
-            "type": "string"
-          },
-          "started_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "completed_at": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "total_duration_ms": {
-            "type": "integer",
-            "nullable": true
-          }
-        }
+        "title": "WorkflowRunListItem",
+        "description": "控制台运行记录列表项"
       },
       "WorkflowRunListResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRunListItem"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
         "type": "object",
         "required": [
           "runs"
         ],
-        "properties": {
-          "runs": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkflowRunSummary"
-            }
-          }
-        }
+        "title": "WorkflowRunListResponse",
+        "description": "控制台运行记录列表响应"
       },
-      "FactClaim": {
-        "type": "object",
-        "required": [
-          "id",
-          "text",
-          "category",
-          "section_id"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "category": {
-            "type": "string"
-          },
-          "section_id": {
-            "type": "string"
-          }
-        }
-      },
-      "VerificationResult": {
-        "type": "object",
-        "required": [
-          "claim_id",
-          "is_verified",
-          "confidence",
-          "risk_level",
-          "verification_question",
-          "verification_answer"
-        ],
-        "properties": {
-          "claim_id": {
-            "type": "string"
-          },
-          "is_verified": {
-            "type": "boolean"
-          },
-          "confidence": {
-            "type": "number"
-          },
-          "risk_level": {
-            "type": "string",
-            "enum": [
-              "low",
-              "medium",
-              "high"
-            ]
-          },
-          "suggested_correction": {
-            "type": "string",
-            "nullable": true
-          },
-          "verification_question": {
-            "type": "string"
-          },
-          "verification_answer": {
-            "type": "string"
-          }
-        }
-      },
-      "FactCheckReport": {
-        "type": "object",
-        "required": [
-          "claims",
-          "results",
-          "total_claims",
-          "verified_count",
-          "high_risk_count"
-        ],
-        "properties": {
-          "claims": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FactClaim"
-            }
-          },
-          "results": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/VerificationResult"
-            }
-          },
-          "total_claims": {
-            "type": "integer"
-          },
-          "verified_count": {
-            "type": "integer"
-          },
-          "high_risk_count": {
-            "type": "integer"
-          }
-        }
-      },
-      "MessageResponse": {
-        "type": "object",
-        "required": [
-          "message"
-        ],
-        "properties": {
-          "message": {
-            "type": "string"
-          }
-        }
-      },
-      "RegisterRequest": {
-        "type": "object",
-        "required": [
-          "email",
-          "password"
-        ],
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email"
-          },
-          "password": {
-            "type": "string",
-            "minLength": 8
-          },
-          "username": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 50,
-            "nullable": true
-          },
-          "display_name": {
-            "type": "string",
-            "maxLength": 100,
-            "nullable": true
-          }
-        }
-      },
-      "LoginRequest": {
-        "type": "object",
-        "required": [
-          "email",
-          "password"
-        ],
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email"
-          },
-          "password": {
-            "type": "string"
-          }
-        }
-      },
-      "WorkspaceContext": {
-        "type": "object",
-        "required": [
-          "id",
-          "name"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "role": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "UserBrief": {
-        "type": "object",
-        "required": [
-          "id",
-          "email"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "username": {
-            "type": "string",
-            "nullable": true
-          },
-          "display_name": {
-            "type": "string",
-            "nullable": true
-          },
-          "avatar_url": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "LoginResponse": {
-        "type": "object",
-        "required": [
-          "message",
-          "user"
-        ],
-        "properties": {
-          "message": {
-            "type": "string"
-          },
-          "user": {
-            "$ref": "#/components/schemas/UserBrief"
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/WorkspaceContext"
-          },
-          "role": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "VerifyEmailRequest": {
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "properties": {
-          "token": {
-            "type": "string"
-          }
-        }
-      },
-      "ForgotPasswordRequest": {
-        "type": "object",
-        "required": [
-          "email"
-        ],
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email"
-          }
-        }
-      },
-      "ResetPasswordRequest": {
-        "type": "object",
-        "required": [
-          "token",
-          "password"
-        ],
-        "properties": {
-          "token": {
-            "type": "string"
-          },
-          "password": {
-            "type": "string",
-            "minLength": 8
-          }
-        }
-      },
-      "MeResponse": {
-        "type": "object",
-        "required": [
-          "user",
-          "workspaces"
-        ],
-        "properties": {
-          "user": {
-            "$ref": "#/components/schemas/UserBrief"
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/WorkspaceContext"
-          },
-          "role": {
-            "type": "string",
-            "nullable": true
-          },
-          "workspaces": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkspaceContext"
-            }
-          }
-        }
-      },
-      "WorkspaceRole": {
+      "WorkflowValidationMode": {
         "type": "string",
         "enum": [
-          "viewer",
-          "editor",
-          "admin",
-          "owner"
-        ]
-      },
-      "WorkspaceListItem": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "owner_id",
-          "role",
-          "joined_at",
-          "created_at"
+          "save",
+          "publish"
         ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string",
-            "nullable": true
-          },
-          "logo_url": {
-            "type": "string",
-            "nullable": true
-          },
-          "owner_id": {
-            "type": "string"
-          },
-          "role": {
-            "type": "string"
-          },
-          "joined_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "ListWorkspacesResponse": {
-        "type": "object",
-        "required": [
-          "workspaces"
-        ],
-        "properties": {
-          "workspaces": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkspaceListItem"
-            }
-          }
-        }
-      },
-      "CreateWorkspaceRequest": {
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100
-          },
-          "description": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "CreateWorkspaceResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "owner_id",
-          "role"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string",
-            "nullable": true
-          },
-          "owner_id": {
-            "type": "string"
-          },
-          "role": {
-            "type": "string"
-          }
-        }
-      },
-      "UpdateWorkspaceRequest": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100,
-            "nullable": true
-          },
-          "description": {
-            "type": "string",
-            "nullable": true
-          },
-          "logo_url": {
-            "type": "string",
-            "nullable": true
-          }
-        }
-      },
-      "WorkspaceDetailResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "owner_id",
-          "created_at",
-          "role"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string",
-            "nullable": true
-          },
-          "logo_url": {
-            "type": "string",
-            "nullable": true
-          },
-          "owner_id": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "role": {
-            "type": "string"
-          }
-        }
-      },
-      "MemberItem": {
-        "type": "object",
-        "required": [
-          "id",
-          "user_id",
-          "email",
-          "role",
-          "joined_at"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "user_id": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string",
-            "format": "email"
-          },
-          "display_name": {
-            "type": "string",
-            "nullable": true
-          },
-          "avatar_url": {
-            "type": "string",
-            "nullable": true
-          },
-          "role": {
-            "type": "string"
-          },
-          "joined_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "ListMembersResponse": {
-        "type": "object",
-        "required": [
-          "members"
-        ],
-        "properties": {
-          "members": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MemberItem"
-            }
-          }
-        }
-      },
-      "InviteMemberRequest": {
-        "type": "object",
-        "required": [
-          "email"
-        ],
-        "properties": {
-          "email": {
-            "type": "string",
-            "format": "email"
-          },
-          "role": {
-            "$ref": "#/components/schemas/WorkspaceRole"
-          }
-        }
-      },
-      "InviteMemberResponse": {
-        "type": "object",
-        "required": [
-          "message",
-          "invite_id"
-        ],
-        "properties": {
-          "message": {
-            "type": "string"
-          },
-          "invite_id": {
-            "type": "string"
-          }
-        }
-      },
-      "UpdateMemberRoleRequest": {
-        "type": "object",
-        "required": [
-          "role"
-        ],
-        "properties": {
-          "role": {
-            "$ref": "#/components/schemas/WorkspaceRole"
-          }
-        }
+        "title": "WorkflowValidationMode",
+        "description": "工作流校验模式"
       }
     }
-  }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "workflow",
+      "description": "内容工作流运行态 API"
+    },
+    {
+      "name": "trace",
+      "description": "Trace 与 Artifact API"
+    },
+    {
+      "name": "auth",
+      "description": "认证与当前用户上下文"
+    },
+    {
+      "name": "workspace",
+      "description": "工作空间与成员管理"
+    },
+    {
+      "name": "admin",
+      "description": "后台管理、模型配置、密钥、API Key 与审计日志"
+    },
+    {
+      "name": "workflow-definition",
+      "description": "工作流定义、校验、编译与发布"
+    },
+    {
+      "name": "workflow-version",
+      "description": "工作流版本历史、对比与恢复"
+    },
+    {
+      "name": "websocket",
+      "description": "WebSocket 实时推送"
+    }
+  ],
+  "x-websocket-endpoints": [
+    {
+      "path": "/ws/workflow/{workflow_run_id}",
+      "description": "推送工作流节点状态和运行状态事件"
+    },
+    {
+      "path": "/ws/user/{user_id}",
+      "description": "推送用户级审批通知和分配消息"
+    }
+  ],
+  "x-sse-endpoints": [
+    {
+      "path": "/api/workflow/{workflow_run_id}/events",
+      "description": "工作流详情页状态快照与增量内容事件流"
+    }
+  ]
 }
