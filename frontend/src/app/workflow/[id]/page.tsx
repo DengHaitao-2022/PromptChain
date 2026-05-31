@@ -1680,7 +1680,6 @@ export default function WorkflowDetailPage() {
 
         const target = getWorkflowFocusTarget(workflow, isContentStreaming);
         if (!target) return;
-        if (target === 'content') return;
 
         const key = `${workflowId}:${workflow.status}:${target}:${activeStreamingSectionId ?? ''}`;
 
@@ -1689,6 +1688,10 @@ export default function WorkflowDetailPage() {
         }
 
         lastAutoFocusKeyRef.current = key;
+
+        if (target === 'content') {
+            return;
+        }
 
         window.requestAnimationFrame(() => {
             let element: HTMLElement | null = null;
