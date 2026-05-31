@@ -1,11 +1,14 @@
 import asyncio
 import importlib
 import sys
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from starlette.datastructures import UploadFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -26,6 +29,7 @@ from orm.knowledge_orm import (
     KnowledgeEmbeddingORM,
 )
 from routes import knowledge_routes
+from routes.workflow_routes import _read_run_upload_documents
 from services import knowledge_index_worker
 from services.knowledge_service import KnowledgeService
 
@@ -894,6 +898,19 @@ def test_upload_rejects_empty_oversized_and_mismatched_binary_files(
             )
 
     run_with_knowledge_session(scenario)
+
+
+def test_run_upload_reuses_knowledge_file_validation():
+    async def scenario():
+        upload = UploadFile(filename="fake.pdf", file=BytesIO(b"not pdf"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _read_run_upload_documents([upload])
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "PDF 文件格式校验失败"
+
+    asyncio.run(scenario())
 
 
 def test_document_count_limit_allows_same_file_version_but_blocks_new_document(

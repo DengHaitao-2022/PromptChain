@@ -49,6 +49,7 @@ from routes.workflow_helpers import (
     _simplify_state,
 )
 from services.audit_log_service import AuditLogService
+from services.knowledge_service import validate_upload_file
 from services.workflow_event_bus import get_workflow_event_bus
 from services.workflow_export_service import build_docx, build_workflow_export_payload
 
@@ -269,12 +270,17 @@ async def _read_run_upload_documents(files: list[UploadFile] | None) -> list[dic
         content = await upload.read()
         if not content:
             continue
+        file_name = upload.filename or "untitled.txt"
+        try:
+            validate_upload_file(file_name, content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         total_bytes += len(content)
         if total_bytes > MAX_RUN_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="本次运行上传资料总大小超过 20MB")
         documents.append(
             {
-                "file_name": upload.filename or "untitled.txt",
+                "file_name": file_name,
                 "content": content,
                 "metadata": {"source": "run_upload"},
             }

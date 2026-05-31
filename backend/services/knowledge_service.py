@@ -78,6 +78,15 @@ def _validate_upload_content(file_type: str, content: bytes) -> None:
         raise ValueError("DOCX 文件格式校验失败")
 
 
+def validate_upload_file(file_name: str, content: bytes) -> str:
+    """统一校验知识库上传文件，并返回归一化后的文件类型。"""
+    file_type = _normalize_file_type(file_name)
+    if file_type not in SUPPORTED_DOCUMENT_TYPES:
+        raise ValueError(f"暂不支持的文档类型: {file_type}")
+    _validate_upload_content(file_type, content)
+    return file_type
+
+
 def _hash_content(content: bytes | str) -> str:
     raw = content.encode("utf-8") if isinstance(content, str) else content
     return hashlib.sha256(raw).hexdigest()
@@ -591,10 +600,7 @@ class KnowledgeService:
             role=role,
             action="update",
         )
-        file_type = _normalize_file_type(file_name)
-        if file_type not in SUPPORTED_DOCUMENT_TYPES:
-            raise ValueError(f"暂不支持的文档类型: {file_type}")
-        _validate_upload_content(file_type, content)
+        file_type = validate_upload_file(file_name, content)
         await self._ensure_document_limit(kb_id=kb.id, file_name=file_name)
 
         document_id = str(uuid.uuid4())
