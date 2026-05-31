@@ -16,12 +16,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from core.config import get_settings
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 from sqlalchemy import desc
 from sqlalchemy.future import select
 
+from core.config import get_settings
 from services.secret_crypto import decrypt_config_value
 from services.structured_output_prompt import build_structured_chat_prompt
 
