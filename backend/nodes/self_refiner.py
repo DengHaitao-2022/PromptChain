@@ -177,6 +177,8 @@ async def _create_final_content_artifact(
             "refinement_history": refinement_history,
             "total_iterations": len(refinement_history),
             "refinement_skipped_reason": skipped_reason,
+            "citations": state.get("citations", []),
+            "evidence_artifact_id": state.get("evidence_artifact_id"),
         },
         workflow_run_id=workflow_run_id,
         node_run_id=node_run_id,
@@ -186,6 +188,8 @@ async def _create_final_content_artifact(
             "total_iterations": len(refinement_history),
             "refinement_skipped": skipped_reason is not None,
             "refinement_skipped_reason": skipped_reason,
+            "evidence_artifact_id": state.get("evidence_artifact_id"),
+            "citation_count": len(state.get("citations", [])),
         },
     )
 

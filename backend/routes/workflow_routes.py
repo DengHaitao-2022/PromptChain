@@ -62,7 +62,11 @@ def _format_sse_event(event: str, data: dict, event_id: str | None = None) -> st
     return "\n".join(lines) + "\n\n"
 
 
-async def _build_workflow_event_snapshot(workflow_run_id: str) -> dict:
+async def _build_workflow_event_snapshot(
+    workflow_run_id: str,
+    *,
+    viewer_user_id: str | None = None,
+) -> dict:
     """构建详情页 SSE 快照，包含运行状态和完整 trace/artifacts。"""
     from services import get_trace_service
 
@@ -72,6 +76,7 @@ async def _build_workflow_event_snapshot(workflow_run_id: str) -> dict:
         status=status,
         state=graph_state,
         workflow_run=workflow_run,
+        viewer_user_id=viewer_user_id,
     )
     trace = await get_trace_service().get_workflow_trace(workflow_run_id)
 
@@ -82,6 +87,7 @@ async def _build_workflow_event_snapshot(workflow_run_id: str) -> dict:
             workflow_run=workflow_run,
             graph_state=graph_state,
             status=status,
+            viewer_user_id=viewer_user_id,
         ),
     }
 
@@ -199,6 +205,7 @@ async def _start_workflow_run(
         status=status,
         state=result["state"],
         workflow_run=workflow_run,
+        viewer_user_id=user_id,
     )
 
 
@@ -323,6 +330,7 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
                 status="paused",
                 state=graph_state,
                 workflow_run=workflow_run,
+                viewer_user_id=workflow_helpers.get_request_user_id(request),
             )
 
         result = await workflow.pause(
@@ -346,6 +354,7 @@ async def pause_workflow(workflow_run_id: str, request: Request, body: PauseWork
             status=_normalize_status(result["status"]),
             state=result["state"],
             workflow_run=refreshed_workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
         )
     except HTTPException:
         raise
@@ -394,6 +403,7 @@ async def resume_workflow(workflow_run_id: str, request: Request, _: ResumeWorkf
             status=_normalize_status(result["status"]),
             state=result["state"],
             workflow_run=refreshed_workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
         )
     except HTTPException:
         raise
@@ -452,6 +462,7 @@ async def approve_outline(workflow_run_id: str, request: Request, body: ApproveO
             status=_normalize_status(result["status"]),
             state=result["state"],
             workflow_run=refreshed_workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
         )
     except HTTPException:
         raise
@@ -496,6 +507,7 @@ async def clarify_intent(workflow_run_id: str, request: Request, body: ClarifyRe
             status=_normalize_status(result["status"]),
             state=result["state"],
             workflow_run=refreshed_workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
         )
     except HTTPException:
         raise
@@ -543,6 +555,7 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
             status=_normalize_status(result["status"]),
             state=result["state"],
             workflow_run=refreshed_workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
         )
     except HTTPException:
         raise
@@ -581,6 +594,7 @@ async def list_workflow_runs(request: Request):
 async def stream_workflow_events(workflow_run_id: str, request: Request):
     """通过 SSE 向详情页推送运行状态和 trace 快照。"""
     await workflow_helpers.require_workflow_run_access(request, workflow_run_id)
+    viewer_user_id = workflow_helpers.get_request_user_id(request)
     event_bus = get_workflow_event_bus()
     event_queue = event_bus.subscribe(workflow_run_id)
 
@@ -595,7 +609,10 @@ async def stream_workflow_events(workflow_run_id: str, request: Request):
                 # 先按固定节奏发送 snapshot，避免高频 token 事件把快照饿死。
                 if time.monotonic() >= next_snapshot_at:
                     try:
-                        snapshot = await _build_workflow_event_snapshot(workflow_run_id)
+                        snapshot = await _build_workflow_event_snapshot(
+                            workflow_run_id,
+                            viewer_user_id=viewer_user_id,
+                        )
                     except HTTPException as exc:
                         yield _format_sse_event(
                             "error",
@@ -680,6 +697,7 @@ async def get_workflow_status(workflow_run_id: str, request: Request):
         status=status,
         state=graph_state,
         workflow_run=workflow_run,
+        viewer_user_id=workflow_helpers.get_request_user_id(request),
     )
 
 
@@ -689,9 +707,14 @@ async def get_rerun_options(workflow_run_id: str, request: Request):
     from services import get_rerun_service
 
     try:
-        await workflow_helpers.require_workflow_run_access(request, workflow_run_id)
+        workflow_run = await workflow_helpers.require_workflow_run_access(request, workflow_run_id)
         rerun_service = get_rerun_service()
         options = await rerun_service.get_rerun_options(workflow_run_id)
+        options = workflow_helpers.redact_rerun_options_for_viewer(
+            options,
+            workflow_run=workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
+        )
         return {"options": options}
     except HTTPException:
         raise
@@ -754,9 +777,13 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
                 preserved_state=preserved_state,
             )
 
-        simplified_state = _simplify_state(result["state"])
         refreshed_new_workflow_run = (
             await _get_workflow_run_if_exists(new_workflow_run.id) or new_workflow_run
+        )
+        simplified_state = _simplify_state(
+            result["state"],
+            workflow_run=refreshed_new_workflow_run,
+            viewer_user_id=user_id,
         )
         await _record_workflow_audit(
             request,

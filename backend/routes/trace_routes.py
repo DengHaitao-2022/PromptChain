@@ -29,11 +29,14 @@ async def get_workflow_trace(workflow_run_id: str, request: Request):
     from services import get_artifact_store, get_trace_service
 
     try:
-        await workflow_helpers.require_workflow_run_access(request, workflow_run_id)
+        workflow_run = await workflow_helpers.require_workflow_run_access(
+            request,
+            workflow_run_id,
+        )
         trace_service = get_trace_service()
         trace = await trace_service.get_workflow_trace(workflow_run_id)
         store = get_artifact_store()
-        workflow_run = await store.get_workflow_run(workflow_run_id)
+        workflow_run = await store.get_workflow_run(workflow_run_id) or workflow_run
         if not workflow_run:
             raise ValueError(f"WorkflowRun not found: {workflow_run_id}")
 
@@ -46,6 +49,7 @@ async def get_workflow_trace(workflow_run_id: str, request: Request):
             workflow_run=workflow_run,
             graph_state=graph_state,
             status=status,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -62,10 +66,17 @@ async def get_node_detail(node_run_id: str, request: Request):
     from services import get_trace_service
 
     try:
-        await workflow_helpers.require_node_run_access(request, node_run_id)
+        node_run = await workflow_helpers.require_node_run_access(request, node_run_id)
         trace_service = get_trace_service()
         detail = await trace_service.get_node_detail(node_run_id)
-        return detail
+        from services import get_artifact_store
+
+        workflow_run = await get_artifact_store().get_workflow_run(node_run.workflow_run_id)
+        return workflow_helpers.redact_node_detail_for_viewer(
+            detail,
+            workflow_run=workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except HTTPException:
@@ -79,7 +90,15 @@ async def get_node_detail(node_run_id: str, request: Request):
 async def get_artifact(artifact_id: str, request: Request):
     """获取 Artifact 详情"""
     artifact = await workflow_helpers.require_artifact_access(request, artifact_id)
-    return normalize_api_datetime(artifact.model_dump())
+    from services import get_artifact_store
+
+    workflow_run = await get_artifact_store().get_workflow_run(artifact.workflow_run_id)
+    payload = normalize_api_datetime(artifact.model_dump())
+    return workflow_helpers._redact_artifact_payload_for_viewer(
+        payload,
+        workflow_run=workflow_run,
+        viewer_user_id=workflow_helpers.get_request_user_id(request),
+    )
 
 
 @router.get("/artifact/{artifact_id}/history")
@@ -88,10 +107,17 @@ async def get_artifact_history(artifact_id: str, request: Request):
     from services import get_trace_service
 
     try:
-        await workflow_helpers.require_artifact_access(request, artifact_id)
+        artifact = await workflow_helpers.require_artifact_access(request, artifact_id)
         trace_service = get_trace_service()
         history = await trace_service.get_artifact_history(artifact_id)
-        return history
+        from services import get_artifact_store
+
+        workflow_run = await get_artifact_store().get_workflow_run(artifact.workflow_run_id)
+        return workflow_helpers.redact_artifact_history_for_viewer(
+            history,
+            workflow_run=workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
+        )
     except HTTPException:
         raise
     except Exception as exc:

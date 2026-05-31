@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+EvidenceStatus = Literal["supported", "unsupported", "conflicting", "not_checked"]
+
 
 class FactClaim(BaseModel):
     """事实性声明"""
@@ -32,6 +34,10 @@ class VerificationResult(BaseModel):
     claim_id: str
     is_verified: bool = Field(..., description="是否已验证")
     confidence: float = Field(..., ge=0, le=1, description="置信度")
+    evidence_status: EvidenceStatus = Field(
+        default="not_checked",
+        description="基于 Evidence Artifact 的证据状态",
+    )
     source: str | None = Field(None, description="验证来源")
     suggested_correction: str | None = Field(None, description="建议修正")
     risk_level: Literal["low", "medium", "high"] = Field(default="low", description="风险等级")

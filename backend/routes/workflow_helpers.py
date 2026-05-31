@@ -5,6 +5,7 @@
 """
 
 import logging
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -167,9 +168,15 @@ def _build_workflow_response(
     status: WorkflowStatus,
     state: dict,
     workflow_run: Any | None = None,
+    viewer_user_id: str | None = None,
 ) -> WorkflowResponse:
     """构建统一工作流响应"""
-    simplified_state = _simplify_state(state, workflow_run=workflow_run, status=status)
+    simplified_state = _simplify_state(
+        state,
+        workflow_run=workflow_run,
+        status=status,
+        viewer_user_id=viewer_user_id,
+    )
     return WorkflowResponse(
         workflow_run_id=workflow_run_id,
         status=status,
@@ -399,6 +406,9 @@ async def require_workspace_permission(
         permission_service = PermissionService(session)
         role = await permission_service.require_permission(user_id, workspace_id, resource, action)
 
+    request.state.auth_user_id = user_id
+    request.state.workspace_id = workspace_id
+    request.state.workspace_role = role
     return user_id, workspace_id, role
 
 
@@ -531,11 +541,210 @@ def _assert_status(
         )
 
 
+def get_request_user_id(request: Request) -> str | None:
+    """读取已认证请求用户，用于响应脱敏等只读后处理。"""
+    return getattr(request.state, "auth_user_id", None)
+
+
+def _workflow_owner_user_id(workflow_run: Any | None) -> str | None:
+    """读取运行发起人，优先使用归属元数据。"""
+    if workflow_run is None:
+        return None
+    metadata = getattr(workflow_run, "metadata", None)
+    if isinstance(metadata, dict):
+        owner_user_id = metadata.get("user_id")
+        if owner_user_id:
+            return str(owner_user_id)
+    owner_user_id = getattr(workflow_run, "user_id", None)
+    return str(owner_user_id) if owner_user_id else None
+
+
+def _should_redact_personal_evidence(
+    workflow_run: Any | None,
+    viewer_user_id: str | None,
+) -> bool:
+    """非运行发起人查看 Trace 时，不透出 personal scope 原文。"""
+    owner_user_id = _workflow_owner_user_id(workflow_run)
+    return bool(owner_user_id and viewer_user_id and owner_user_id != viewer_user_id)
+
+
+def _redact_evidence_pack_for_viewer(
+    evidence_pack: Any,
+    *,
+    workflow_run: Any | None,
+    viewer_user_id: str | None,
+) -> Any:
+    """按当前查看者权限脱敏 Evidence Pack 中的个人知识库原文。"""
+    if hasattr(evidence_pack, "model_dump"):
+        data = evidence_pack.model_dump(mode="json")
+    elif isinstance(evidence_pack, dict):
+        data = deepcopy(evidence_pack)
+    else:
+        return evidence_pack
+
+    if not _should_redact_personal_evidence(workflow_run, viewer_user_id):
+        return data
+
+    chunks = data.get("chunks")
+    if not isinstance(chunks, list):
+        return data
+
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        if str(chunk.get("scope")) != "personal":
+            continue
+        chunk["document_name"] = "个人知识库资料"
+        chunk["content"] = "该证据来自运行发起人的个人知识库，当前账号无权查看原文。"
+        chunk["heading_path"] = []
+        chunk["page_number"] = None
+        chunk["metadata"] = {}
+        chunk["redacted"] = True
+
+    return data
+
+
+def _redact_artifact_payload_for_viewer(
+    artifact_payload: dict[str, Any],
+    *,
+    workflow_run: Any | None,
+    viewer_user_id: str | None,
+) -> dict[str, Any]:
+    """脱敏 Artifact 响应中的 Evidence Pack 内容。"""
+    if artifact_payload.get("type") != "evidence_pack":
+        return artifact_payload
+
+    redacted = deepcopy(artifact_payload)
+    redacted["content"] = _redact_evidence_pack_for_viewer(
+        redacted.get("content"),
+        workflow_run=workflow_run,
+        viewer_user_id=viewer_user_id,
+    )
+    return redacted
+
+
+def redact_trace_payload_for_viewer(
+    payload: dict[str, Any],
+    *,
+    workflow_run: Any | None,
+    viewer_user_id: str | None,
+) -> dict[str, Any]:
+    """脱敏 Trace 载荷中所有 Evidence Artifact。"""
+    if not _should_redact_personal_evidence(workflow_run, viewer_user_id):
+        return payload
+
+    redacted = deepcopy(payload)
+    artifacts = redacted.get("artifacts")
+    if isinstance(artifacts, dict):
+        for artifact_id, artifact_payload in list(artifacts.items()):
+            if isinstance(artifact_payload, dict):
+                artifacts[artifact_id] = _redact_artifact_payload_for_viewer(
+                    artifact_payload,
+                    workflow_run=workflow_run,
+                    viewer_user_id=viewer_user_id,
+                )
+    return redacted
+
+
+def redact_node_detail_for_viewer(
+    detail: dict[str, Any],
+    *,
+    workflow_run: Any | None,
+    viewer_user_id: str | None,
+) -> dict[str, Any]:
+    """脱敏节点详情中的输入、输出与版本历史 Artifact。"""
+    if not _should_redact_personal_evidence(workflow_run, viewer_user_id):
+        return detail
+
+    redacted = deepcopy(detail)
+    for collection_key in ("input_artifacts", "output_artifacts"):
+        artifacts = redacted.get(collection_key)
+        if not isinstance(artifacts, list):
+            continue
+        for index, artifact_payload in enumerate(artifacts):
+            if not isinstance(artifact_payload, dict):
+                continue
+            artifacts[index] = _redact_artifact_payload_for_viewer(
+                artifact_payload,
+                workflow_run=workflow_run,
+                viewer_user_id=viewer_user_id,
+            )
+            history = artifacts[index].get("version_history")
+            if isinstance(history, list):
+                artifacts[index]["version_history"] = [
+                    _redact_artifact_payload_for_viewer(
+                        item,
+                        workflow_run=workflow_run,
+                        viewer_user_id=viewer_user_id,
+                    )
+                    if isinstance(item, dict)
+                    else item
+                    for item in history
+                ]
+    return redacted
+
+
+def redact_artifact_history_for_viewer(
+    history: list[dict[str, Any]],
+    *,
+    workflow_run: Any | None,
+    viewer_user_id: str | None,
+) -> list[dict[str, Any]]:
+    """脱敏 Artifact 历史响应中的 Evidence Pack 内容。"""
+    if not _should_redact_personal_evidence(workflow_run, viewer_user_id):
+        return history
+
+    return [
+        _redact_artifact_payload_for_viewer(
+            item,
+            workflow_run=workflow_run,
+            viewer_user_id=viewer_user_id,
+        )
+        if isinstance(item, dict)
+        else item
+        for item in history
+    ]
+
+
+def redact_rerun_options_for_viewer(
+    options: list[dict[str, Any]],
+    *,
+    workflow_run: Any | None,
+    viewer_user_id: str | None,
+) -> list[dict[str, Any]]:
+    """脱敏重跑选项中随节点返回的 Evidence Artifact。"""
+    if not _should_redact_personal_evidence(workflow_run, viewer_user_id):
+        return options
+
+    redacted = deepcopy(options)
+    for option in redacted:
+        if not isinstance(option, dict):
+            continue
+        artifacts = option.get("output_artifacts")
+        if not isinstance(artifacts, list):
+            continue
+        option["output_artifacts"] = [
+            _redact_artifact_payload_for_viewer(
+                artifact,
+                workflow_run=workflow_run,
+                viewer_user_id=viewer_user_id,
+            )
+            if isinstance(artifact, dict)
+            else artifact
+            for artifact in artifacts
+        ]
+    return redacted
+
+
 # ==================== 状态简化 ====================
 
 
 def _simplify_state(
-    state: dict, *, workflow_run: Any | None = None, status: WorkflowStatus | None = None
+    state: dict,
+    *,
+    workflow_run: Any | None = None,
+    status: WorkflowStatus | None = None,
+    viewer_user_id: str | None = None,
 ) -> dict:
     """简化状态返回，移除大型对象"""
     simplified = {}
@@ -559,7 +768,14 @@ def _simplify_state(
                 }
             else:
                 simplified[key] = value
-        elif key == "evidence_pack" or key == "retrieval_config":
+        elif key == "evidence_pack":
+            raw_value = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+            simplified[key] = _redact_evidence_pack_for_viewer(
+                raw_value,
+                workflow_run=workflow_run,
+                viewer_user_id=viewer_user_id,
+            )
+        elif key == "retrieval_config":
             if hasattr(value, "model_dump"):
                 simplified[key] = value.model_dump(mode="json")
             else:
@@ -875,6 +1091,7 @@ def _normalize_trace_payload(
     workflow_run: Any,
     graph_state: dict,
     status: WorkflowStatus,
+    viewer_user_id: str | None = None,
 ) -> dict[str, Any]:
     """规范化 Trace 响应载荷"""
     workflow_payload = dict(trace.get("workflow") or {})
@@ -923,11 +1140,16 @@ def _normalize_trace_payload(
     if error:
         workflow_payload["error"] = error
 
-    return {
+    payload = {
         **trace,
         "workflow": workflow_payload,
         "timeline": _enrich_timeline(trace.get("timeline", []), workflow_run, graph_state, status),
     }
+    return redact_trace_payload_for_viewer(
+        payload,
+        workflow_run=workflow_run,
+        viewer_user_id=viewer_user_id,
+    )
 
 
 def _enrich_timeline(

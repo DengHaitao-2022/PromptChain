@@ -102,10 +102,14 @@ export interface FactClaim {
   section_id: string;
 }
 
+export type EvidenceStatus = 'supported' | 'unsupported' | 'conflicting' | 'not_checked';
+
 export interface VerificationResult {
   claim_id: string;
   is_verified: boolean;
   confidence: number;
+  evidence_status?: EvidenceStatus;
+  source?: string | null;
   risk_level: 'low' | 'medium' | 'high';
   suggested_correction: string | null;
   verification_question: string;
@@ -117,6 +121,7 @@ export interface FactCheckReport {
   results: VerificationResult[];
   total_claims: number;
   verified_count: number;
+  unverified_count?: number;
   high_risk_count: number;
 }
 
@@ -140,6 +145,7 @@ export interface EvidenceChunk {
   rerank_score?: number | null;
   content: string;
   metadata: Record<string, unknown>;
+  redacted?: boolean;
 }
 
 export interface EvidencePack {
