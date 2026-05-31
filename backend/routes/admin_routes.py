@@ -69,6 +69,12 @@ _RUNTIME_DEFAULT_CONFIG_KEY = "_runtime_default"
 _SENSITIVE_CONFIG_KEYWORDS = ("key", "secret", "token", "credential", "password")
 
 
+def _secret_display_suffix(value: str) -> str:
+    """密钥列表只展示不可还原的尾部提示，短密钥不暴露原文。"""
+
+    return value[-4:] if len(value) >= 4 else "*" * len(value)
+
+
 async def get_workspace_id_from_request(request: Request) -> str:
     """从请求中获取当前工作空间ID"""
     payload = await get_current_user(request)
@@ -785,7 +791,7 @@ async def create_secret(request: Request, body: SecretCreate):
 
         # 加密存储
         ciphertext = encrypt_secret(body.value)
-        last4 = body.value[-4:] if len(body.value) >= 4 else body.value
+        last4 = _secret_display_suffix(body.value)
 
         secret = SecretORM(
             id=str(uuid.uuid4()),
@@ -921,7 +927,7 @@ async def create_api_key(request: Request, body: ApiKeyCreate):
         key_prefix = key_raw[:8] + "..." + key_raw[-4:]
 
         expires_at = None
-        if body.expires_in_days:
+        if body.expires_in_days is not None:
             expires_at = utc_now_naive() + timedelta(days=body.expires_in_days)
 
         api_key = ApiKeyORM(

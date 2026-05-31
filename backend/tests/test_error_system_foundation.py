@@ -456,8 +456,8 @@ def test_workspace_invite_email_failure_returns_unified_error_envelope(monkeypat
         "details": None,
         "data": None,
     }
-    assert session.commit_called is False
-    assert session.rollback_called is True
+    assert session.commit_called is True
+    assert session.rollback_called is False
 
 
 def test_forgot_password_email_failure_keeps_neutral_success(monkeypatch):

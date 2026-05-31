@@ -464,6 +464,8 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
             },
         )
 
+        await session.commit()
+
         # 发送邀请邮件
         invite_link = f"{get_settings().APP_BASE_URL}/invite?token={token}"
 
@@ -476,10 +478,7 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
                 invite_link=invite_link,
             )
         except EmailDeliveryError as e:
-            await session.rollback()
             raise InfrastructureError(code=INFRA_EMAIL_SERVICE_ERROR, cause=e) from e
-
-        await session.commit()
 
         return {
             "message": f"邀请已发送至 {invite_email}",

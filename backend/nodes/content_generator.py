@@ -247,30 +247,29 @@ async def generate_section_streaming(
         "evidence_context": _format_evidence_context(state, section),
         "rerun_instruction": rerun_instruction,
     }
-    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    await _publish_stream_event(
-        state,
-        "section_started",
-        {
-            "node": "generate_content",
-            "section_id": section.id,
-            "section_title": section.title,
-            "mode": "generate",
-        },
-    )
-
-    chunks: list[str] = []
-    try:
+    async def _stream_once() -> tuple[list[str], dict[str, int]]:
+        attempt_chunks: list[str] = []
+        attempt_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        await _publish_stream_event(
+            state,
+            "section_started",
+            {
+                "node": "generate_content",
+                "section_id": section.id,
+                "section_title": section.title,
+                "mode": "generate",
+            },
+        )
         async for chunk in chain.astream(payload):
             chunk_usage = extract_usage_metadata(chunk)
             if chunk_usage["total_tokens"] > 0:
-                usage = chunk_usage
+                attempt_usage = chunk_usage
             token = _extract_chunk_text(chunk)
             if not token:
                 continue
 
-            chunks.append(token)
+            attempt_chunks.append(token)
             await _publish_stream_event(
                 state,
                 "token",
@@ -282,6 +281,11 @@ async def generate_section_streaming(
                     "mode": "generate",
                 },
             )
+        return attempt_chunks, attempt_usage
+
+    chunks: list[str] = []
+    try:
+        chunks, usage = await invoke_with_llm_retry(_stream_once)
     except Exception as exc:
         await _publish_stream_event(
             state,

@@ -154,6 +154,9 @@ class EmailService:
         self.session.add(token_orm)
         await self.session.flush()
 
+        # 先持久化 token，再发送链接，避免提交失败后邮件里出现不可用 token。
+        await self.session.commit()
+
         # 构建验证链接
         verification_link = f"{self._settings().APP_BASE_URL}/verify-email?token={token}"
 
@@ -185,7 +188,6 @@ class EmailService:
             subject="验证您的 PromptChain 邮箱",
             html_content=html_content,
         )
-        await self.session.commit()
         return result
 
     async def send_password_reset_email(self, user_id: str, email: str) -> bool:
@@ -212,6 +214,9 @@ class EmailService:
         )
         self.session.add(token_orm)
         await self.session.flush()
+
+        # 先持久化 token，再发送链接，避免提交失败后邮件里出现不可用 token。
+        await self.session.commit()
 
         # 构建重置链接
         reset_link = f"{self._settings().APP_BASE_URL}/reset-password?token={token}"
@@ -244,7 +249,6 @@ class EmailService:
             subject="重置您的 PromptChain 密码",
             html_content=html_content,
         )
-        await self.session.commit()
         return result
 
     async def verify_email_token(self, token: str) -> str | None:

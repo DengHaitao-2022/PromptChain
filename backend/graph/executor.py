@@ -874,12 +874,16 @@ class ContentGenerationWorkflow:
         if upload_documents:
             if not workspace_id or not user_id:
                 raise ValueError("本次运行资料上传需要用户和工作空间上下文。")
-            await self._attach_run_upload_documents(
-                workflow_run_id=workflow_run.id,
-                workspace_id=workspace_id,
-                user_id=user_id,
-                documents=upload_documents,
-            )
+            try:
+                await self._attach_run_upload_documents(
+                    workflow_run_id=workflow_run.id,
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    documents=upload_documents,
+                )
+            except Exception as exc:
+                await self._mark_failed(workflow_run.id, format_workflow_error(exc))
+                raise
 
         initial_state = await self._build_initial_state(workflow_run)
         self._schedule_drive(workflow_run.id, initial_state=initial_state)

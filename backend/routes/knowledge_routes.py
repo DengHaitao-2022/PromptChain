@@ -21,6 +21,8 @@ from models.knowledge import (
 from services.knowledge_service import KnowledgeService
 
 router = APIRouter(tags=["knowledge"])
+MAX_KNOWLEDGE_UPLOAD_BYTES = 20 * 1024 * 1024
+UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 
 class KnowledgeBaseListResponse(BaseModel):
@@ -110,6 +112,18 @@ async def _workspace_member_context(request: Request) -> tuple[str, str, object]
 def _postgres_store():
     """集中获取已支持迁移初始化的 PostgreSQL store。"""
     return get_postgres_store()
+
+
+async def _read_upload_file_bounded(file: UploadFile) -> bytes:
+    """边读边限制上传大小，避免超大文件一次性占满 worker 内存。"""
+    total_bytes = 0
+    chunks: list[bytes] = []
+    while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+        total_bytes += len(chunk)
+        if total_bytes > MAX_KNOWLEDGE_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="知识库单文件大小不能超过 20MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.get(
@@ -258,7 +272,7 @@ async def upload_knowledge_document(
 ) -> KnowledgeDocument:
     """上传并同步索引文档。"""
     user_id, workspace_id, role = await _workspace_member_context(request)
-    content = await file.read()
+    content = await _read_upload_file_bounded(file)
     metadata: dict[str, Any] = {}
     if metadata_json:
         import json

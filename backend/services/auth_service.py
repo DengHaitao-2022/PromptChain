@@ -24,7 +24,7 @@ from core.errors.codes import (
     AUTH_REGISTRATION_CONFLICT,
 )
 from core.errors.exceptions import ApplicationError, DomainError
-from core.time import utc_now_naive
+from core.time import utc_now, utc_now_naive
 from models.admin_orm import LoginAttemptORM
 from models.auth_models import MemberRole, User, UserStatus, Workspace
 from models.auth_orm import MembershipORM, RefreshTokenORM, UserORM, WorkspaceORM
@@ -114,12 +114,13 @@ def create_access_token(
     Returns:
         JWT Access Token
     """
-    expire = utc_now_naive() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    issued_at = utc_now()
+    expire = issued_at + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": user_id,
         "type": "access",
         "exp": expire,
-        "iat": utc_now_naive(),
+        "iat": issued_at,
         "jti": str(uuid.uuid4()),  # Token 唯一标识
     }
     if workspace_id:

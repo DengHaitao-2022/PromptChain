@@ -24,7 +24,7 @@ class ModelProviderORM(Base):
     provider = Column(String(50), nullable=False)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
-    enabled = Column(Boolean, default=True)
+    enabled = Column(Boolean, nullable=False, default=True)
     config = Column(JSON, default=dict)  # 加密存储敏感配置
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
@@ -119,5 +119,5 @@ class LoginAttemptORM(Base):
     id = Column(String(36), primary_key=True)
     email = Column(String(255), nullable=False, index=True)
     ip_address = Column(String(50), nullable=False, index=True)
-    success = Column(Boolean, default=False)
+    success = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=utc_now_naive, index=True)

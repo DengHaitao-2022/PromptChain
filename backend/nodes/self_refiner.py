@@ -274,30 +274,29 @@ async def refine_section(
         "feedback": feedback_text,
         "rerun_instruction": state.get("rerun_instruction") or "无额外修订要求",
     }
-    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    await _publish_stream_event(
-        state,
-        "section_started",
-        {
-            "node": "self_refine",
-            "section_id": feedback.section_id,
-            "section_title": section_title,
-            "mode": "refine",
-        },
-    )
-
-    chunks: list[str] = []
-    try:
+    async def _stream_once() -> tuple[list[str], dict[str, int]]:
+        attempt_chunks: list[str] = []
+        attempt_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        await _publish_stream_event(
+            state,
+            "section_started",
+            {
+                "node": "self_refine",
+                "section_id": feedback.section_id,
+                "section_title": section_title,
+                "mode": "refine",
+            },
+        )
         async for chunk in chain.astream(payload):
             chunk_usage = extract_usage_metadata(chunk)
             if chunk_usage["total_tokens"] > 0:
-                usage = chunk_usage
+                attempt_usage = chunk_usage
             token = _extract_chunk_text(chunk)
             if not token:
                 continue
 
-            chunks.append(token)
+            attempt_chunks.append(token)
             await _publish_stream_event(
                 state,
                 "token",
@@ -309,6 +308,11 @@ async def refine_section(
                     "mode": "refine",
                 },
             )
+        return attempt_chunks, attempt_usage
+
+    chunks: list[str] = []
+    try:
+        chunks, usage = await invoke_with_llm_retry(_stream_once)
     except Exception as exc:
         await _publish_stream_event(
             state,

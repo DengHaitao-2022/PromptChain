@@ -398,9 +398,9 @@ class KnowledgeService:
         if _is_workspace_scope(scope) and not check_permission(
             _normalize_role_value(role),
             "knowledge_base",
-            "manage",
+            "create",
         ):
-            raise ValueError("您没有 knowledge_base.manage 的权限")
+            raise ValueError("您没有 knowledge_base.create 的权限")
         owner_user_id = (
             user_id if scope in {KnowledgeScope.PERSONAL, KnowledgeScope.RUN_UPLOAD} else None
         )
@@ -543,16 +543,6 @@ class KnowledgeService:
             .limit(1)
         )
         latest_version = version_result.scalar_one_or_none() or 0
-        if latest_version:
-            await self.session.execute(
-                update(KnowledgeDocumentORM)
-                .where(
-                    KnowledgeDocumentORM.kb_id == kb.id,
-                    KnowledgeDocumentORM.file_name == file_name,
-                    KnowledgeDocumentORM.status == KnowledgeDocumentLifecycleStatus.ACTIVE.value,
-                )
-                .values(status=KnowledgeDocumentLifecycleStatus.ARCHIVED.value)
-            )
 
         document = KnowledgeDocumentORM(
             id=document_id,
@@ -579,7 +569,21 @@ class KnowledgeService:
             document.parse_status = KnowledgeDocumentStatus.READY.value
             document.index_status = KnowledgeDocumentStatus.READY.value
             document.error_message = None
+            if latest_version:
+                await self.session.execute(
+                    update(KnowledgeDocumentORM)
+                    .where(
+                        KnowledgeDocumentORM.kb_id == kb.id,
+                        KnowledgeDocumentORM.file_name == file_name,
+                        KnowledgeDocumentORM.id != document.id,
+                        KnowledgeDocumentORM.status
+                        == KnowledgeDocumentLifecycleStatus.ACTIVE.value,
+                    )
+                    .values(status=KnowledgeDocumentLifecycleStatus.ARCHIVED.value)
+                )
         except Exception as exc:
+            # 新版本解析失败时不参与检索，保留上一版 active 文档继续服务搜索。
+            document.status = KnowledgeDocumentLifecycleStatus.DISABLED.value
             document.parse_status = KnowledgeDocumentStatus.FAILED.value
             document.index_status = KnowledgeDocumentStatus.FAILED.value
             document.error_message = str(exc)

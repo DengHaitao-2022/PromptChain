@@ -190,7 +190,11 @@ class ApiKeyBase(BaseModel):
 class ApiKeyCreate(ApiKeyBase):
     """创建 API Key"""
 
-    expires_in_days: int | None = Field(None, description="有效期（天），不填则永不过期")
+    expires_in_days: int | None = Field(
+        None,
+        ge=1,
+        description="有效期（天），不填则永不过期",
+    )
 
 
 class ApiKey(ApiKeyBase):

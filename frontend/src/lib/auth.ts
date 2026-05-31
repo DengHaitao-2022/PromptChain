@@ -433,7 +433,9 @@ export async function inviteWorkspaceMember(
 /**
  * 接受工作空间邀请
  */
-export async function acceptWorkspaceInvite(token: string): Promise<{ message: string }> {
+export async function acceptWorkspaceInvite(
+  token: string,
+): Promise<{ message: string; workspace_id?: string }> {
   const response = await authenticatedFetch(
     apiUrl(`/workspaces/accept-invite?token=${encodeURIComponent(token)}`),
     {
@@ -445,7 +447,14 @@ export async function acceptWorkspaceInvite(token: string): Promise<{ message: s
     throw new Error(await parseErrorMessage(response, '接受邀请失败'));
   }
 
-  return response.json();
+  const result = (await response.json()) as { message?: string; workspace_id?: string };
+  if (result.workspace_id) {
+    persistPreferredWorkspace(result.workspace_id);
+  }
+  return {
+    message: result.message ?? '您已成功加入工作空间。',
+    workspace_id: result.workspace_id,
+  };
 }
 
 /**

@@ -21,6 +21,8 @@ COPY backend/pyproject.toml backend/uv.lock backend/README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend/app.py backend/main.py ./
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/alembic ./alembic
 COPY backend/core ./core
 COPY backend/db ./db
 COPY backend/graph ./graph

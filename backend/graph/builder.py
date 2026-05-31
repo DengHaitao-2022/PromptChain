@@ -22,7 +22,7 @@ from graph.conditions import (
     should_run_self_refine,
 )
 from graph.state import GraphState
-from models import WorkflowRunStatus
+from models import ArtifactType, WorkflowRunStatus
 from nodes import (
     approve_fact_check,
     approve_outline,
@@ -41,12 +41,43 @@ async def finalize_output(state: GraphState) -> GraphState:
     """最终处理节点"""
     store = get_artifact_store()
     workflow_run_id = state["workflow_run_id"]
+    final_artifact_id = state.get("final_content_artifact_id")
+
+    if not final_artifact_id:
+        draft_sections = state.get("draft_sections")
+        if isinstance(draft_sections, dict) and draft_sections:
+            node_runs = await store.get_node_runs_by_workflow(workflow_run_id)
+            latest_node_run = max(node_runs, key=lambda run: run.started_at, default=None)
+            section_artifact_ids = state.get("section_artifact_ids")
+            artifact = await store.create_artifact(
+                artifact_type=ArtifactType.FINAL_CONTENT,
+                content={
+                    "sections": draft_sections,
+                    "section_order": list(draft_sections.keys()),
+                    "compiled_content": state.get("generated_content") or "",
+                    "refinement_history": state.get("refinement_history") or [],
+                    "total_iterations": len(state.get("refinement_history") or []),
+                    "refinement_skipped_reason": "runtime_plan_disabled_self_refine",
+                },
+                workflow_run_id=workflow_run_id,
+                node_run_id=latest_node_run.id if latest_node_run else workflow_run_id,
+                metadata={
+                    "section_artifact_ids": (
+                        section_artifact_ids if isinstance(section_artifact_ids, dict) else {}
+                    ),
+                    "refinement_skipped": True,
+                    "refinement_skipped_reason": "runtime_plan_disabled_self_refine",
+                },
+            )
+            final_artifact_id = artifact.id
+            state["final_content"] = draft_sections
+            state["final_content_artifact_id"] = artifact.id
 
     # 更新工作流状态
     workflow_run = await store.get_workflow_run(workflow_run_id)
     if workflow_run:
         workflow_run.status = WorkflowRunStatus.COMPLETED
-        workflow_run.final_artifact_id = state.get("final_content_artifact_id")
+        workflow_run.final_artifact_id = final_artifact_id
 
         # 计算统计
         node_runs = await store.get_node_runs_by_workflow(workflow_run_id)
