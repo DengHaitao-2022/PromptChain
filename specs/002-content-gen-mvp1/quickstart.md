@@ -1,11 +1,11 @@
 # Quickstart: PromptChain 内容生成系统 MVP1
 
-本文档用于 `dev@8218f54` 的 MVP1 验收基线，重点收口 US1 / US2 / US3 / US4 / US5 的 quickstart、smoke 与 access 验证边界。本文只记录当前主线事实、外部依赖和下一轮必须执行的人工 smoke，不把“代码已合入”“静态 review 通过”或“PR 候选通过 CodeQL”误记为“集成完成”。
+本文档用于 `dev@699bf53` 的 MVP1 验收基线，重点收口 US1 / US2 / US3 / US4 / US5 的 quickstart、smoke 与 access 验证边界。本文只记录当前主线事实、外部依赖和下一轮必须执行的人工 smoke，不把“代码已合入”“静态 review 通过”或“PR 候选通过 CodeQL”误记为“集成完成”。
 
 补充说明：2026-04-10 已执行一次 current-dev 验收回归。用户口述的 latest local `dev` 为 `cb79009`，但本工作区实际执行基线为 `dev@698b80d`。本次 live 证据与 blocked 结论统一记录在 [`specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md)。
 2026-04-12 又在候选分支 `fix-homepage-mvp1@e994c86` 上执行了一轮 homepage 专项 live smoke，结果记录在 [`specs/002-content-gen-mvp1/acceptance/fix-homepage-mvp1-2026-04-12.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/fix-homepage-mvp1-2026-04-12.md)。该轮验证确认首页入口最后一个已知代码 blocker 已解除。
 
-## 0. 当前主线快照（`dev@8218f54`）
+## 0. 当前主线快照（`dev@699bf53`）
 
 - 已在当前 `dev` 合入并可作为验收前提复用：
   - Google provider 支持：`GEMINI_API_KEY` + `DEFAULT_LLM_PROVIDER=google`
@@ -16,14 +16,15 @@
   - 详情页 Gate、pause/resume、trace、意图卡 / 提纲 / 终稿展示、SSE 快照流、节点重跑、重跑历史与 DOCX 导出
   - `console/runs` 通过 `workflowApi.getRuns()` 展示真实运行记录列表
   - 工作流运行计划 `runtime_plan` 已支持把已发布可视化定义编译为当前内容生成引擎可执行的受限运行计划
+  - PR #12 控制台 Dashboard 权限修复已合入 `dev`
 - 本轮验收收口约定：
   - `T045 / T046` 视为已收口前提，本轮不再打开文案或错误路径实现
   - `T042` 只做 auth/access 验收闭环，不重复实现认证功能
   - `T037` 必须覆盖运行记录、Trace、Artifact history、rerun、SSE 快照与 DOCX 导出，不再只看占位页面
   - 若缺少外部依赖，只能记为“静态通过”或“待 smoke”，不能记为“集成完成”
 - 当前 PR 候选边界：
-  - PR #5：统一错误体系与 `frontend/src/lib/api.ts` 错误归一化，CodeQL 通过且 mergeable，但尚未合入 `dev`
-  - PR #4：生产 CI/CD 与部署基线，CodeQL 通过但 PR CI 的后端质量检查和前端质量检查失败，不能作为已完成生产部署基线
+  - PR #5：统一错误体系与 `frontend/src/lib/api.ts` 错误归一化，CodeQL 通过但当前 merge state 不是 clean，尚未合入 `dev`
+  - PR #4：生产 CI/CD 与部署基线，当前 PR 检查已通过但尚未合入 `dev`，合入前不能作为已完成生产部署基线
 
 ### 术语说明
 
@@ -71,14 +72,14 @@ MVP1 smoke 分为三层，避免把 CI、PostgreSQL/Redis、真实模型稳定�
 启动后端时显式使用 fake provider：
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 DEFAULT_LLM_PROVIDER=fake uv run uvicorn app:app --reload --port 8000
 ```
 
 另开终端运行 smoke：
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 DEFAULT_LLM_PROVIDER=fake uv run python ../scripts/smoke/acceptance_smoke.py
 ```
 
@@ -110,14 +111,14 @@ Smoke:
 ### 基础设施
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain
+cd <repo-root>
 docker compose up -d postgres redis
 ```
 
 ### 后端
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 uv sync
 uv run uvicorn app:app --reload --port 8000
 ```
@@ -125,7 +126,7 @@ uv run uvicorn app:app --reload --port 8000
 ### 前端
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/frontend
+cd frontend
 npm install
 npm run dev
 ```
@@ -329,7 +330,7 @@ npm run dev
 
 - 关联故事：US4（本轮非主签收范围）
 - 当前状态：`trace`、`artifact history`、`rerun`、SSE 快照流、DOCX 导出与 `console/runs` 真数据列表都已在 `dev`
-- 本轮结论：US4 已具备验收入口，但仍需在当前 `dev@8218f54` 上跑 live smoke 后才能签收
+- 本轮结论：US4 已具备验收入口，但仍需在当前 `dev@699bf53` 上跑 live smoke 后才能签收
 
 ### 步骤
 
@@ -413,12 +414,12 @@ curl -b viewer-cookies.txt "$API/api/trace/<other_users_workflow_run_id>"
 - LLM blocker：`backend/.env` 中 `DEFAULT_LLM_PROVIDER=anthropic` 且 `ANTHROPIC_API_KEY` 为空；虽然 `GEMINI_API_KEY` 已配置，但当前默认 provider 未切到 `google`
 - 详细证据、命令回显与日志摘录见 [`specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md`](/Users/hi/Developer/03-personal/PromptChain/specs/002-content-gen-mvp1/acceptance/current-dev-2026-04-10.md)
 
-## 13. Latest-dev 验收状态（2026-05-20，`dev@8218f54`）
+## 13. Latest-dev 验收状态（2026-05-31，`dev@cf2818a`）
 
 ### 当前结论
 
 - 实现侧：MVP1 核心功能已进入尾声，当前主线包含首页启动、工作流编辑/发布、运行详情、Gate、Trace、Artifact、Rerun、运行记录总览与 DOCX 导出。
-- 验收侧：仍不能把 MVP1 写成最终通过，因为 `dev@8218f54` 尚未补一轮完整 live smoke。
+- 验收侧：仍不能把 MVP1 写成最终通过，因为 `dev@699bf53` 尚未补一轮完整 live smoke。
 - 生产侧：仍不能写成生产可用，因为独立 worker、版本化迁移、完整 CI/CD、可观测性、限流/重试/熔断等能力还未主线闭环。
 
 ### 必跑 smoke
@@ -431,8 +432,8 @@ curl -b viewer-cookies.txt "$API/api/trace/<other_users_workflow_run_id>"
 
 ### PR 候选边界
 
-- PR #5 的统一错误体系不属于当前 `dev@8218f54` 主线事实；合入前不得把统一错误 envelope 写成已发布 API 契约。
-- PR #4 的生产 CI/CD 基线存在失败 checks；修复前不得把它写成生产交付完成。
+- PR #5 的统一错误体系不属于当前 `dev@699bf53` 主线事实；合入前不得把统一错误 envelope 写成已发布 API 契约。
+- PR #4 的生产 CI/CD 基线仍未合入 `dev`；虽然当前 PR 检查已通过，合入前仍不得写成生产交付完成。
 
 ## 14. Acceptance Review Gate
 

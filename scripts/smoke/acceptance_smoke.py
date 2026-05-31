@@ -40,6 +40,13 @@ class SmokeBlockedError(RuntimeError):
         self.evidence = evidence or {}
 
 
+class SmokeFailedError(RuntimeError):
+    def __init__(self, reason: str, evidence: dict[str, Any] | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.evidence = evidence or {}
+
+
 def _json_dump(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
 
@@ -65,9 +72,9 @@ async def _check_database() -> dict[str, Any]:
     except Exception as exc:
         raise SmokeBlockedError(
             "PostgreSQL 不可用，请先确认 DATABASE_URL 与 docker compose postgres 状态。",
-            {"database_url": _mask_database_url(database_url), "error": str(exc)},
+            {"database_url": _mask_url(database_url), "error": str(exc)},
         ) from exc
-    return {"database_url": _mask_database_url(database_url)}
+    return {"database_url": _mask_url(database_url)}
 
 
 async def _check_redis_if_enabled() -> dict[str, Any]:
@@ -91,14 +98,14 @@ async def _check_redis_if_enabled() -> dict[str, Any]:
     except Exception as exc:
         raise SmokeBlockedError(
             "Redis 不可用，请先确认 REDIS_URL 与 docker compose redis 状态。",
-            {"redis_url": settings.REDIS_URL, "error": str(exc)},
+            {"redis_url": _mask_url(settings.REDIS_URL), "error": str(exc)},
         ) from exc
     finally:
         close = getattr(client, "aclose", None) or getattr(client, "close", None)
         result = close()
         if hasattr(result, "__await__"):
             await result
-    return {"backend": "redis", "redis_url": settings.REDIS_URL, "checked": True}
+    return {"backend": "redis", "redis_url": _mask_url(settings.REDIS_URL), "checked": True}
 
 
 def _check_fake_provider_env() -> dict[str, Any]:
@@ -114,7 +121,7 @@ def _check_fake_provider_env() -> dict[str, Any]:
     return {"DEFAULT_LLM_PROVIDER": provider, "DEFAULT_MODEL_NAME": settings.DEFAULT_MODEL_NAME}
 
 
-def _mask_database_url(url: str) -> str:
+def _mask_url(url: str) -> str:
     if "@" not in url:
         return url
     prefix, suffix = url.rsplit("@", 1)
@@ -213,6 +220,16 @@ async def _wait_for_status(
             status = last_payload.get("status")
             if status in expected:
                 return last_payload
+        else:
+            last_payload = {
+                "status_code": response.status_code,
+                "body": response.text[:800],
+            }
+            if response.status_code in {401, 403, 404}:
+                raise SmokeFailedError(
+                    "读取工作流状态接口返回不可继续错误。",
+                    {"workflow_run_id": workflow_run_id, "last": last_payload},
+                )
         await asyncio.sleep(1)
     raise SmokeBlockedError(
         "等待工作流状态超时。",
@@ -251,9 +268,9 @@ async def run_smoke(api_url: str, timeout_seconds: float) -> dict[str, Any]:
                 "/api/auth/register",
                 json={"email": email, "password": password, "display_name": f"Smoke {suffix}"},
             )
-            if register_response.status_code not in {200, 400}:
-                raise SmokeBlockedError(
-                    "注册接口未返回可继续状态。",
+            if register_response.status_code != 200:
+                raise SmokeFailedError(
+                    "注册接口未返回成功状态。",
                     {
                         "status_code": register_response.status_code,
                         "body": register_response.text[:500],
@@ -370,7 +387,7 @@ async def run_smoke(api_url: str, timeout_seconds: float) -> dict[str, Any]:
                 timeout_seconds=timeout_seconds,
             )
             if outline_wait["status"] == "failed":
-                raise SmokeBlockedError("工作流进入 failed。", {"workflow": outline_wait})
+                raise SmokeFailedError("工作流进入 failed。", {"workflow": outline_wait})
             if outline_wait["status"] == "awaiting_outline_approval":
                 approve_response = await client.post(
                     f"/api/workflow/{workflow_run_id}/approve-outline",
@@ -383,10 +400,13 @@ async def run_smoke(api_url: str, timeout_seconds: float) -> dict[str, Any]:
                             "status_code": approve_response.status_code,
                             "body": approve_response.text[:1000],
                         },
-                    )
+                )
                 steps.append(_step("outline_gate", "pass", "提纲 Gate 已审批"))
             else:
-                steps.append(_step("outline_gate", "pass", "运行未停在提纲 Gate，继续后续检查"))
+                raise SmokeFailedError(
+                    "工作流未进入提纲 Gate，疑似 HITL 审批路径回归。",
+                    {"workflow": outline_wait},
+                )
 
             completed = await _wait_for_status(
                 client,
@@ -458,6 +478,9 @@ async def run_smoke(api_url: str, timeout_seconds: float) -> dict[str, Any]:
     except SmokeBlockedError as exc:
         steps.append(_step("blocked", "blocked", exc.reason, **exc.evidence))
         return _build_result("blocked", started_at, steps, api_url)
+    except SmokeFailedError as exc:
+        steps.append(_step("failed", "fail", exc.reason, **exc.evidence))
+        return _build_result("fail", started_at, steps, api_url)
     except Exception as exc:
         steps.append(_step("unexpected_error", "fail", str(exc), error_type=type(exc).__name__))
         return _build_result("fail", started_at, steps, api_url)

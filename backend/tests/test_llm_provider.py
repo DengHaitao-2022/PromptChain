@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-for-llm-provider")
 
@@ -12,10 +13,13 @@ from core.config import get_settings
 from models import IntentCard, Outline
 from services.llm_provider import (
     LLMProviderFactory,
+    _build_environment_runtime_config,
     get_current_model_info,
     get_llm,
     get_structured_llm,
 )
+
+EXPECTED_SUPPORTED_PROVIDERS = {"openai", "anthropic", "ollama", "google", "github"}
 
 
 def _reset_provider_cache(monkeypatch):
@@ -46,6 +50,28 @@ def test_fake_provider_is_registered_without_credentials(monkeypatch):
     assert provider.get_default_model_name() == "fake-smoke-model"
     assert LLMProviderFactory.get_resolved_model_name("fake") == "fake-smoke-model"
     assert info == {"provider": "fake", "model": "fake-smoke-model"}
+
+
+def test_fake_environment_runtime_config_ignores_explicit_model_name(monkeypatch):
+    _reset_provider_cache(monkeypatch)
+    monkeypatch.setenv("DEFAULT_LLM_PROVIDER", "fake")
+    monkeypatch.setenv("DEFAULT_MODEL_NAME", "gpt-4o")
+    get_settings.cache_clear()
+
+    runtime = _build_environment_runtime_config("fake", model_name="gpt-4o")
+
+    assert runtime.provider == "fake"
+    assert runtime.model == "fake-smoke-model"
+
+
+def test_fake_provider_model_instance_ignores_explicit_model_name(monkeypatch):
+    _reset_provider_cache(monkeypatch)
+    monkeypatch.setenv("DEFAULT_LLM_PROVIDER", "fake")
+    get_settings.cache_clear()
+
+    model = get_llm("fake", model="gpt-4o")
+
+    assert model.model_name == "fake-smoke-model"
 
 
 def test_fake_provider_generates_plain_chat_response(monkeypatch):
@@ -87,6 +113,39 @@ def test_fake_provider_structured_include_raw_contract(monkeypatch):
     assert isinstance(result["parsed"], Outline)
     assert result["parsed"].sections
     assert result["raw"].response_metadata["token_usage"]["total_tokens"] > 0
+
+
+class _NestedSmokeModel(BaseModel):
+    label: str
+    weight: int
+
+
+class _GenericSmokeModel(BaseModel):
+    enabled: bool
+    count: int
+    ratio: float
+    nested: _NestedSmokeModel
+    tags: list[str]
+    metadata: dict[str, str]
+
+
+def test_fake_provider_supports_nested_generic_structured_model(monkeypatch):
+    _reset_provider_cache(monkeypatch)
+    monkeypatch.setenv("DEFAULT_LLM_PROVIDER", "fake")
+    get_settings.cache_clear()
+
+    structured = get_structured_llm(_GenericSmokeModel, "fake")
+    result = structured.invoke({"topic": "nested"})
+
+    assert isinstance(result, _GenericSmokeModel)
+    assert isinstance(result.nested, _NestedSmokeModel)
+    assert result.metadata == {}
+
+
+def test_supported_provider_registry_matches_current_runtime_contract(monkeypatch):
+    _reset_provider_cache(monkeypatch)
+
+    assert set(LLMProviderFactory.get_supported_provider_names()) == EXPECTED_SUPPORTED_PROVIDERS
 
 
 def test_github_provider_is_registered(monkeypatch):

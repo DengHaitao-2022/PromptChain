@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, get_args, get_origin
 
 from langchain_core.language_models.chat_models import SimpleChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
@@ -167,18 +167,32 @@ def _build_generic_model(schema: type[BaseModel]) -> BaseModel:
     for name, field in schema.model_fields.items():
         if not field.is_required():
             continue
-        annotation = field.annotation
-        if annotation is bool:
-            values[name] = False
-        elif annotation is int:
-            values[name] = 1
-        elif annotation is float:
-            values[name] = 1.0
-        elif getattr(annotation, "__origin__", None) is list:
-            values[name] = []
-        else:
-            values[name] = f"fake_{name}"
+        values[name] = _fake_value_for_annotation(name, field.annotation)
     return schema.model_validate(values)
+
+
+def _fake_value_for_annotation(name: str, annotation: Any) -> Any:
+    origin = get_origin(annotation)
+    if origin is not None:
+        args = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if origin is list:
+            return []
+        if origin is dict:
+            return {}
+        if args:
+            return _fake_value_for_annotation(name, args[0])
+
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return _build_generic_model(annotation)
+    if annotation is bool:
+        return False
+    if annotation is int:
+        return 1
+    if annotation is float:
+        return 1.0
+    if annotation is dict:
+        return {}
+    return f"fake_{name}"
 
 
 def _raw_message(parsed: BaseModel) -> AIMessage:

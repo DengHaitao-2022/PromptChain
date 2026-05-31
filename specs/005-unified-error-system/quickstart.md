@@ -4,9 +4,9 @@
 
 ## 0. 当前状态（PR #5 候选，尚未合入 `dev`）
 
-- 当前 `dev@8218f54` 尚未包含统一错误体系；主线仍保留 FastAPI `HTTPException`、局部 `Result` 和旧 `detail` 风格。
+- 当前 `dev@699bf53` 尚未包含统一错误体系；主线仍保留 FastAPI `HTTPException`、局部 `Result` 和旧 `detail` 风格。
 - PR #5 `code/feat-unified-error-system-current -> dev` 已创建，标题为“feat: 统一错误体系与前端错误归一化”。
-- PR #5 当前 open、mergeable，CodeQL checks 通过，但尚未合入 `dev`。
+- PR #5 当前 open，CodeQL checks 通过；当前 merge state 不是 clean，尚未合入 `dev`。
 - 本 quickstart 在 PR #5 合入前只用于候选分支验收；不得把下面的统一错误 envelope 预期写成当前主线 API 事实。
 
 候选分支已知验证边界：
@@ -28,7 +28,7 @@
 若本轮只验证后端错误契约，可以先跑不依赖真实模型的 fake smoke，确认基础链路不是被 provider key 阻断：
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 uv run pytest tests/test_llm_provider.py -q
 DEFAULT_LLM_PROVIDER=fake uv run python ../scripts/smoke/acceptance_smoke.py
 ```
@@ -42,7 +42,7 @@ DEFAULT_LLM_PROVIDER=fake uv run python ../scripts/smoke/acceptance_smoke.py
 ### 后端
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/backend
+cd backend
 uv sync
 uv run uvicorn app:app --reload --port 8000
 ```
@@ -50,7 +50,7 @@ uv run uvicorn app:app --reload --port 8000
 ### 前端
 
 ```bash
-cd /Users/hi/Developer/03-personal/PromptChain/frontend
+cd frontend
 npm install
 npm run dev
 ```

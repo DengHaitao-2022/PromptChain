@@ -16,12 +16,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from core.config import get_settings
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 from sqlalchemy import desc
 from sqlalchemy.future import select
 
-from core.config import get_settings
 from services.secret_crypto import decrypt_config_value
 from services.structured_output_prompt import build_structured_chat_prompt
 
@@ -205,7 +205,7 @@ class FakeProvider(LLMProvider):
     def get_model(self, model_name: str | None = None, **kwargs) -> BaseChatModel:
         from services.fake_llm_provider import FakeSmokeChatModel
 
-        return FakeSmokeChatModel(model_name=model_name or self.get_default_model_name())
+        return FakeSmokeChatModel(model_name=self.get_default_model_name())
 
 
 @dataclass(frozen=True)
@@ -464,15 +464,10 @@ def _build_environment_runtime_config(
     base_url = _read_env("OLLAMA_BASE_URL") if registration.name == "ollama" else None
     if registration.name == "github":
         base_url = DEFAULT_GITHUB_MODELS_BASE_URL
-    resolved_model = (
-        model_name
-        or (
-            registration.default_model_name
-            if registration.name == "fake"
-            else _resolve_model_override()
-        )
-        or registration.default_model_name
-    )
+    if registration.name == "fake":
+        resolved_model = registration.default_model_name
+    else:
+        resolved_model = model_name or _resolve_model_override() or registration.default_model_name
 
     return RuntimeModelConfig(
         provider=registration.name,

@@ -21,6 +21,7 @@
   <a href="#核心能力">核心能力</a> ·
   <a href="#工作流总览">工作流总览</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#生产部署基线">生产部署基线</a> ·
   <a href="#系统架构">系统架构</a> ·
   <a href="#当前边界与后续方向">当前边界与后续方向</a>
 </p>
@@ -122,16 +123,19 @@ cp .env.example .env
 uv run uvicorn app:app --reload --port 8000
 ```
 
-`backend/.env` 至少需要配置一个可用模型提供方：
+`backend/.env` 至少需要配置一个可用模型提供方。当前运行时支持
+`openai / anthropic / google / github / ollama`，其中 Google 使用
+`GEMINI_API_KEY`，GitHub Models 使用 `GITHUB_MODEL_TOKEN`：
 
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 GITHUB_MODEL_TOKEN=your_github_models_token_here
 OLLAMA_BASE_URL=http://localhost:11434
 
-DEFAULT_LLM_PROVIDER=openai
-DEFAULT_MODEL_NAME=gpt-4o
+DEFAULT_LLM_PROVIDER=anthropic
+DEFAULT_MODEL_NAME=claude-3-5-sonnet-20241022
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain
 ```
 
@@ -149,6 +153,18 @@ npm run dev
 - 前端：`http://localhost:3000`
 - 后端：`http://localhost:8000`
 - API 文档：`http://localhost:8000/docs`
+
+## 生产部署基线
+
+仓库提供最小生产工程基线，覆盖 PR CI、后端/前端 Docker 镜像和单机 Docker Compose 示例：
+
+- PR CI：`.github/workflows/pr-ci.yml`
+- 后端镜像：`backend/Dockerfile`
+- 前端镜像：`frontend/Dockerfile`
+- 生产 Compose 示例：`docker-compose.prod.yml`
+- 部署说明：`docs/deployment.md`
+
+该基线不引入 Kubernetes 或云厂商平台流水线。PR 进入 `dev` 或 `main` 时，CI 会执行后端 `ruff + pytest`，以及前端 `lint + typecheck + build`，可在 GitHub 分支保护中作为必需状态检查。
 
 ## 典型使用路径
 
@@ -186,6 +202,8 @@ npm run dev
 ### 内容工作流
 
 - `POST /api/workflow/start`
+- `POST /api/workflow/{workflow_run_id}/pause`
+- `POST /api/workflow/{workflow_run_id}/resume`
 - `POST /api/workflow/{workflow_run_id}/clarify`
 - `POST /api/workflow/{workflow_run_id}/approve-outline`
 - `POST /api/workflow/{workflow_run_id}/approve-fact-check`
@@ -204,9 +222,10 @@ npm run dev
 
 ### 平台能力
 
-- `POST /api/auth/*`：登录、注册、刷新 Token、邮箱验证等
-- `GET/POST/PATCH /api/workspaces*`：工作空间与成员管理
-- `GET/POST/PUT /api/workflows*`：工作流定义与版本管理
+- `POST /api/auth/*`：登录、注册、刷新 Token、邮箱验证、重发验证邮件、密码重置等
+- `GET/POST/PATCH /api/workspaces*` 与 `POST /api/workspace-context/switch`：工作空间、成员管理与当前工作空间切换
+- `GET/POST/PUT /api/workflows*`：工作流定义、公开已发布工作流、发布与版本管理
+- `GET/POST/PATCH/DELETE /api/admin/*`：模型供应商、密钥、API Key、用户状态、审计日志与 Dashboard
 - `WebSocket /ws/*`：工作流与用户级实时通道
 
 ## 项目结构
@@ -240,13 +259,13 @@ PromptChain/
 - 内容工作流运行数据默认使用 PostgreSQL 持久化，服务重启后可保留历史；仅在显式切换到内存模式时才会在重启后丢失运行态数据。
 - 首页启动、工作流详情、运行记录总览、工作流编辑/发布、版本对比/恢复、Trace、Artifact、Rerun 和 DOCX 导出都已进入主线。
 - WebSocket / SSE 是实时体验增强通道；REST + Trace 仍是最终对账入口，不应把“事件已推送”当成唯一事实源。
-- MVP1 当前主要剩余项是 `dev@8218f54` 上的最终 live smoke 与验收归档，不再是核心功能补齐。
-- 统一错误体系与前端错误归一化目前在 PR #5，尚未合入 `dev`；生产 CI/CD 与部署基线在 PR #4，且仍有 PR CI 失败项。
+- MVP1 当前主要剩余项是 `dev@699bf53` 上的最终 live smoke 与验收归档，不再是核心功能补齐。
+- 统一错误体系与前端错误归一化目前在 PR #5，尚未合入 `dev`；生产 CI/CD 与部署基线在 PR #4，当前 PR 检查已通过但仍未合入主线。
 - 生产态能力仍缺少版本化数据库迁移、独立 worker/队列、通用重试/超时/熔断、完整 CI/CD、可观测性与灾难恢复闭环。
 
 下一步更合理的演进方向：
 
-1. 在 `dev@8218f54` 上完成 MVP1 最终 smoke：标准生成、Gate、pause/resume、trace/artifact history、rerun、DOCX 导出和 auth/access。
+1. 在 `dev@699bf53` 上完成 MVP1 最终 smoke：标准生成、Gate、pause/resume、trace/artifact history、rerun、DOCX 导出和 auth/access。
 2. 合入并验收统一错误体系，使后端错误 envelope、错误码和前端错误消费从 PR 候选变成主线契约。
 3. 修复生产 CI/CD PR 的质量检查失败，并补齐可复用部署说明。
 4. 引入 Alembic 等版本化迁移体系，避免继续依赖启动期 `create_all` 和手写 `ALTER TABLE`。

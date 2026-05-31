@@ -2,9 +2,9 @@
 
 ## 0. Current Baseline
 
-- `backend/core/config.py` 当前只显式声明 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`OLLAMA_BASE_URL`。
-- `backend/.env.example` 当前声明代码仅支持 `openai / anthropic / ollama`。
-- Google provider 支持尚未进入配置层权威列表，因此 quickstart 仍把 Google 视为未支持路径。
+- 003 原始基线中，`backend/core/config.py` 只显式声明 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`OLLAMA_BASE_URL`。
+- 当前 `dev@699bf53` 主线已显式声明 `GEMINI_API_KEY` 与 `GITHUB_MODEL_TOKEN`。
+- 当前 `backend/.env.example` 声明代码支持 `openai / anthropic / google / github / ollama`。
 
 ## 1. Canonical Config Fields
 
@@ -17,6 +17,7 @@
 | `OPENAI_API_KEY` | `DEFAULT_LLM_PROVIDER=openai` 或显式使用 `openai` 时 | OpenAI 凭证 |
 | `ANTHROPIC_API_KEY` | `DEFAULT_LLM_PROVIDER=anthropic` 或显式使用 `anthropic` 时 | Anthropic 凭证 |
 | `GEMINI_API_KEY` | `DEFAULT_LLM_PROVIDER=google` 或显式使用 `google` 时 | Google Gemini 凭证 |
+| `GITHUB_MODEL_TOKEN` | `DEFAULT_LLM_PROVIDER=github` 或显式使用 `github` 时 | GitHub Models 凭证 |
 | `OLLAMA_BASE_URL` | `DEFAULT_LLM_PROVIDER=ollama` 或显式使用 `ollama` 时 | Ollama 服务地址 |
 
 ## 2. Supported Provider Values
@@ -27,6 +28,7 @@
 - `anthropic`
 - `ollama`
 - `google`
+- `github`
 
 任何不在此列表中的值都必须被视为配置错误，而不是隐式回退。
 
@@ -46,6 +48,6 @@
 
 ## 5. Compatibility Notes
 
-- 新增 `GEMINI_API_KEY` 不应破坏现有 OpenAI、Anthropic、Ollama 的配置方式。
+- 新增 `GEMINI_API_KEY` 与后续 `GITHUB_MODEL_TOKEN` 不应破坏现有 OpenAI、Anthropic、Ollama 的配置方式。
 - `DEFAULT_MODEL_NAME` 继续保持“统一覆盖当前 provider 默认模型”的语义。
 - 本轮不改变其他服务配置、数据库配置或认证配置字段。

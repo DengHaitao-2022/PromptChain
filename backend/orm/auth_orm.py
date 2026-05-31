@@ -58,6 +58,7 @@ class WorkspaceORM(Base):
     secrets = relationship("SecretORM", back_populates="workspace", lazy="dynamic")
     api_keys = relationship("ApiKeyORM", back_populates="workspace", lazy="dynamic")
     audit_logs = relationship("AuditLogORM", back_populates="workspace", lazy="dynamic")
+    knowledge_bases = relationship("KnowledgeBaseORM", lazy="dynamic")
 
 
 class MembershipORM(Base):
