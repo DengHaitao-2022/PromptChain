@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import app
 from core.errors.codes import (
     AUTH_UNAUTHENTICATED,
+    COMMON_CONFLICT,
     COMMON_INTERNAL_ERROR,
     COMMON_NOT_FOUND,
     COMMON_VALIDATION_ERROR,
@@ -23,6 +24,8 @@ from core.errors.codes import (
     WORKSPACE_ACCESS_DENIED,
     WORKSPACE_CONTEXT_REQUIRED,
     WORKSPACE_MEMBER_CONFLICT,
+    get_error_definition,
+    get_legacy_numeric_code,
 )
 from core.errors.context import REQUEST_ID_HEADER
 from core.errors.exceptions import (
@@ -47,7 +50,7 @@ def test_install_error_infrastructure_returns_unified_domain_error_envelope():
     async def _raise_domain_error():
         raise DomainError(code=COMMON_NOT_FOUND, message="工作流不存在")
 
-    client = TestClient(application)
+    client = TestClient(application, raise_server_exceptions=False)
     response = client.get(
         "/_tests/domain-error",
         headers={REQUEST_ID_HEADER: "req-domain-001"},
@@ -117,6 +120,24 @@ def test_map_exception_falls_back_when_promptchain_error_code_is_unregistered():
     assert mapped.envelope.message == "服务器开小差了，请稍后重试"
     assert mapped.envelope.details is None
     assert mapped.context.internal_cause == "未注册错误码: TYPO_UNREGISTERED_CODE"
+
+
+def test_error_registry_lookup_and_legacy_numeric_code_use_safe_fallbacks():
+    assert get_error_definition("TYPO_UNREGISTERED_CODE").code == COMMON_INTERNAL_ERROR
+    assert get_legacy_numeric_code("TYPO_UNREGISTERED_CODE") == 50000
+    assert get_legacy_numeric_code(COMMON_CONFLICT) == 40900
+
+
+def test_raw_local_os_error_maps_to_internal_error_not_retryable_infra():
+    mapped = map_exception(
+        FileNotFoundError("missing local template"),
+        request_id="req-local-os-error-001",
+        path="/api/_tests",
+        method="GET",
+    )
+
+    assert mapped.http_status == 500
+    assert mapped.envelope.code == COMMON_INTERNAL_ERROR
 
 
 def test_validation_failed_error_maps_to_validation_error_status():
@@ -230,6 +251,31 @@ def test_me_without_auth_returns_unified_auth_error_envelope():
         "details": None,
         "data": None,
     }
+
+
+def test_error_handler_logs_mapped_errors(caplog):
+    application = FastAPI()
+    install_error_infrastructure(application)
+
+    @application.get("/_tests/unexpected-error")
+    async def _raise_unexpected_error():
+        raise RuntimeError("boom")
+
+    client = TestClient(application, raise_server_exceptions=False)
+
+    with caplog.at_level("ERROR", logger="core.errors.handlers"):
+        response = client.get(
+            "/_tests/unexpected-error",
+            headers={REQUEST_ID_HEADER: "req-log-001"},
+        )
+
+    assert response.status_code == 500
+    assert any(
+        record.request_id == "req-log-001"
+        and record.error_code == COMMON_INTERNAL_ERROR
+        and record.exc_info
+        for record in caplog.records
+    )
 
 
 class _NoMembershipResult:

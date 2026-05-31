@@ -1,11 +1,12 @@
 # Runtime API Contract
 
-## 0. Current Baseline (`dev@c396a48`)
+## 0. Current Baseline (`dev@699bf53`)
 
 - 当前后端 canonical 落点是 `backend/routes/workflow_routes.py` 与 `backend/routes/workflow_helpers.py`；`backend/main.py` 只保留兼容入口。
-- `POST /api/workflow/start` 现已支持可选的 `workflow_definition_id` 与 `workflow_version_id`，用于从已发布工作流版本启动任务。
-- pause/resume、clarify、outline approval、fact-check approval、rerun、rerun-history 均已进入主线。
-- 当前契约侧剩余主线主要落在 `T005/T011`：首页仍直接 `fetch` 列表/版本/启动接口，而不是完全复用 `frontend/src/lib/api.ts`。
+- `POST /api/workflow/start` 现已支持可选的 `workflow_definition_id`、`workflow_version_id`、`model_provider_id` 与 `model_name`，用于从已发布工作流版本和指定模型配置启动任务。
+- pause/resume、clarify、outline approval、fact-check approval、runs list、SSE events、rerun、rerun-history、DOCX export 均已进入主线。
+- 首页已通过 `frontend/src/lib/api.ts` 的 `workflowApi` / `workflowDefinitionApi` / `modelProviderApi` 读取列表、版本、模型供应商并启动任务，不再把 `T005/T011` 视为主线实现残口。
+- 当前契约侧剩余工作是 live smoke 与验收归档，而不是继续补运行态 API 主链路。
 
 ## 1. Canonical Envelope
 

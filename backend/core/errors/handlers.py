@@ -2,6 +2,7 @@
 统一错误处理器与请求上下文挂接。
 """
 
+import logging
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, HTTPException, Request
@@ -17,6 +18,8 @@ from core.errors.context import (
 from core.errors.exceptions import PromptChainError
 from core.errors.mapping import MappedError, map_exception
 
+logger = logging.getLogger(__name__)
+
 
 def _build_json_response(mapped_error: MappedError) -> JSONResponse:
     """把统一错误映射结果转换为 JSON 响应。"""
@@ -25,6 +28,30 @@ def _build_json_response(mapped_error: MappedError) -> JSONResponse:
         status_code=mapped_error.http_status,
         content=mapped_error.envelope.model_dump(),
         headers={REQUEST_ID_HEADER: mapped_error.envelope.request_id},
+    )
+
+
+def _log_mapped_error(request: Request, exc: Exception, mapped_error: MappedError) -> None:
+    """记录统一错误出口日志，确保 500 错误保留服务端排障线索。"""
+
+    log_context = {
+        "request_id": mapped_error.context.request_id,
+        "error_code": mapped_error.envelope.code,
+        "http_status": mapped_error.http_status,
+        "path": str(request.url.path),
+        "http_method": request.method,
+    }
+    if mapped_error.http_status >= 500:
+        logger.error(
+            "统一错误处理器捕获服务端异常",
+            exc_info=(type(exc), exc, exc.__traceback__),
+            extra=log_context,
+        )
+        return
+
+    logger.warning(
+        "统一错误处理器返回客户端错误",
+        extra=log_context,
     )
 
 
@@ -66,6 +93,7 @@ def register_error_handlers(application: FastAPI) -> None:
             path=str(request.url.path),
             method=request.method,
         )
+        _log_mapped_error(request, exc, mapped_error)
         return _build_json_response(mapped_error)
 
     application.add_exception_handler(PromptChainError, _handle_error)

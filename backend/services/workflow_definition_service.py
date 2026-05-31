@@ -12,6 +12,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import to_utc_iso, utc_now_iso, utc_now_naive
+from db.postgres_store import _legacy_schema_init_enabled
 from graph.runtime_plan import compile_workflow_runtime_plan
 from models.workflow_definition import (
     WorkflowCompileResult,
@@ -126,12 +127,20 @@ class WorkflowDefinitionService:
 
     @classmethod
     async def ensure_schema(cls, session: AsyncSession) -> None:
-        """对齐工作流定义相关表结构。"""
+        """对齐工作流定义相关表结构。
+
+        生产环境关闭 DATABASE_AUTO_SCHEMA_INIT 后，此处不再执行运行态 DDL，
+        工作流定义表结构由 Alembic baseline/revision 统一管理。
+        """
         if cls._schema_ready:
             return
 
         bind = session.get_bind()
         if bind is None or bind.dialect.name != "postgresql":
+            cls._schema_ready = True
+            return
+
+        if not _legacy_schema_init_enabled():
             cls._schema_ready = True
             return
 

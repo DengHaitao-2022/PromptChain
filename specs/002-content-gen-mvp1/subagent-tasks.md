@@ -5,9 +5,10 @@
 
 ## Dispatch Baseline
 
-- 当前派工事实源固定为 `dev@c396a48`、[tasks.md](./tasks.md) 顶部状态快照，以及 canonical 协作文件。
+- 当前派工事实源固定为 `dev@699bf53`、[tasks.md](./tasks.md) 顶部状态快照，以及 canonical 协作文件。
 - 旧的 `1 个 coordinator + Agent 0-5` owner 表与批次编排已经完成历史使命；它们解释了“代码怎么进 dev”，但不再适合作为“下一轮怎么派工”的依据。
 - 如果后续需要重新拆分多 agent 队列，应基于本文件的剩余缺口重新建队列，而不是恢复 2026-03-08 那版 owner 分配。
+- PR #5 是统一错误体系候选，PR #4 是生产 CI/CD 候选；二者尚未合入 `dev`，不能当成主线事实。PR #4 当前检查已通过，但仍需合并 gate。
 
 ## Current Mainline Snapshot
 
@@ -16,13 +17,13 @@
 | 运行态契约与持久化 | `T004`, `T006`, `T007`, `T008`, `T010`, `T012`, `T013`, `T018`, `T021`, `T032`, `T033` | 已在 `dev` | `WorkflowResponse`、pause/resume、Gate continuation、PostgreSQL 默认运行态存储、trace timeline 补偿和 WebSocket emit 都已进入主线 |
 | 内容节点与 Gate 数据 | `T014`, `T019`, `T020` | 已在 `dev` | `backend/nodes/*` 已完成意图卡/提纲/正文/事实核查产物持久化与审批结果回写 |
 | 认证闭环与会话入口 | `T039`, `T042` | auth-flow 已在 `dev`，验收仍待收口 | `register -> verify-email -> login` 与 `forgot-password -> reset-password -> login` 页面链路、Cookie 会话与 `GET /api/me` 都已进入主线；`T042` 只剩 auth/access 验收闭环 |
-| 运行台首页与详情页 | `T015`, `T016`, `T022`, `T023`, `T035` | 已在 `dev` | 首页已支持已发布工作流/版本选择；详情页已接通 Gate、pause/resume、trace、意图卡/提纲/终稿展示 |
+| 运行台首页与详情页 | `T015`, `T016`, `T022`, `T023`, `T035` | 已在 `dev` | 首页已通过 `workflowApi` 支持已发布工作流/版本/模型选择；详情页已接通 Gate、pause/resume、trace、意图卡/提纲/终稿展示、SSE 快照流、节点重跑与 DOCX 导出 |
 | 工作流编辑/发布闭环 | `T025`, `T026`, `T027`, `T028`, `T029`, `T030` | 已在 `dev` | 工作流 CRUD、validate、publish、versions/compare/restore、控制台工作流列表与编辑页都已并主线 |
 | 权限与管理后台 | `T009`, `T038`, `T039`, `T040`, `T041` | 已在 `dev` | viewer/editor/admin/owner 权限矩阵、成员管理页、运行态/trace 归属校验已并主线 |
-| 运行记录总览页 | `T036`, `T037` | 未收口 | `frontend/src/app/console/runs/page.tsx` 仍是占位实现，当前不要把它当作监控验收入口 |
-| 共享前端运行态客户端 | `T005`, `T011` | 部分在 `dev` | 共享类型与 Gate/pause API 已有，但首页仍直接 `fetch` 工作流列表/版本/启动接口，尚未完全收拢到统一客户端 |
-| Quickstart / Contracts / 协作文档 | `T043`, `T044`, `T047`, `T048` | 本轮已回填 | 文档现已按 `dev@c396a48` 对齐，不再沿用旧任务表结论 |
-| 验收与 polish | `T017`, `T024`, `T031`, `T042`, `T045`, `T046` | 仍待继续 | 当前剩余主线只保留验收、文案与错误路径收口，不再包含 auth-flow、publish/version 或 Gate 主链路的缺失实现 |
+| 运行记录总览页 | `T036`, `T037` | 已在 `dev`，待 smoke | `frontend/src/app/console/runs/page.tsx` 通过 `workflowApi.getRuns()` 读取真实运行记录；仍需 live smoke 验证监控、回放、重跑和导出 |
+| 共享前端运行态客户端 | `T005`, `T011` | 已在 `dev` | 首页列表、版本、模型供应商和启动路径已收拢到 `frontend/src/lib/api.ts` 的 runtime client |
+| Quickstart / Contracts / 协作文档 | `T043`, `T044`, `T047`, `T048` | 本轮已回填 | 文档现已按 `dev@699bf53` 对齐，不再沿用旧任务表结论 |
+| 验收与 polish | `T017`, `T024`, `T031`, `T037`, `T042` | 仍待继续 | 当前剩余主线只保留最终 live smoke 与验收归档，不再包含 auth-flow、publish/version、Gate、runs 或 runtime client 的缺失实现 |
 
 ## Branch And Worktree State
 
@@ -31,31 +32,35 @@
   - `code/feat-runtime-contract-guard`
   - `code/feat-auth-flow-closure`
   - `code/feat-home-ui-ux-redesign`
+  - `code/feat-runtime-client-and-runs-ui-refresh`
+  - `code/feat-home-light-theme-contrast`
+  - `code/feat-workflow-editor-canvas-consistency`
+  - `code/feat-workflow-detail-reader-export`
 - 已吸收并清理的历史实现线：
   - `code/feat-content-nodes-gate`
   - `code/feat-runtime-frontend-polish`
   - `code/feat-rbac-admin-boundaries`
   - 各类临时 integration / merge worktree
-- 当前 MVP1 不存在仍在推进中的核心实现分支；下一轮若继续开发，应直接从 `dev@c396a48` 新建干净分支。
+- 当前 MVP1 不存在仍在推进中的核心实现分支；下一轮若继续开发，应直接从 `dev@699bf53` 新建干净分支。
 - 根工作区中的 `.cunzhi-memory/*`、`specs/002-content-gen-mvp1/*.jsonl`、`update.py` 属于本地运行态或协作工件，不能当作“已经进入 dev”的功能证据；`backend/orm/*` 已是当前仓库跟踪内容，不再视为未入主线目录。
 
 ## Next Dispatch Queue
 
-1. `T036 + T037`
-   - 目标：把 `frontend/src/app/console/runs/page.tsx` 接到真实数据，补齐运行记录总览页的监控/回放入口。
-   - 现状：详情页内 trace/progress 已可用，但总览页仍是 mock。
+1. `T017 + T024 + T031 + T037 + T042`
+   - 目标：在 `dev@699bf53` 上完成最终 live smoke：标准生成、Gate、pause/resume、发布可见性、运行记录、Trace、Artifact history、Rerun、SSE、DOCX 导出、auth/access。
+   - 现状：实现侧已进入主线，缺当前基线的可复用验收证据。
 
-2. `T005 + T011`
-   - 目标：把首页当前的直接 `fetch` 收拢回共享前端客户端，消除 `frontend/src/lib/api.ts` 与页面实现的双轨状态。
-   - 现状：后端接口已支持 `workflow_definition_id` / `workflow_version_id`，但共享 helper 还不是首页唯一入口。
+2. PR #5 merge gate
+   - 目标：等待/处理统一错误体系 PR 的评审与 CI/CD gate。
+   - 现状：CodeQL 通过但当前 merge state 不是 clean，尚未合入 `dev`；合入前不得把统一错误 envelope 写成主线 API 契约。
 
-3. `T045 + T046`
-   - 目标：完成运行台/编辑器/成员页的中文文案与错误路径最终收口。
-   - 现状：主要能力已经在 `dev`，但仍有最后一轮 polish 空间。
+3. PR #4 合并前 gate
+   - 目标：完成生产 CI/CD 分支的 review / merge gate。
+   - 现状：当前 PR 检查已通过，但尚未合入 `dev`；合入前不能作为生产部署基线归档。
 
-4. `T017 + T024 + T031 + T042`
-   - 目标：把 US1/US2/US3/US5 的验收步骤沉淀成可复用结果，而不是停留在“代码已在主线”的状态。
-   - 现状：这几项目前主要缺系统化验收闭环。
+4. MVP2 后续派工
+   - 目标：统一错误体系合入后继续 legacy-alignment / frontend-consumer；生产化方向继续 migration / worker queue / observability。
+   - 现状：不要在 MVP1 验收未归档时继续往 MVP1 内堆需求。
 
 ## Canonical Collaboration Rules
 

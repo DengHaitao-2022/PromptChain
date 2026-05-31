@@ -392,6 +392,13 @@ async def invite_member(request: Request, workspace_id: str, body: InviteMemberR
         permission_service = PermissionService(session)
         await permission_service.require_permission(user_id, workspace_id, "member", "manage")
 
+        # Owner 必须通过专门的转让流程产生，邀请入口只允许普通协作角色。
+        if body.role == MemberRole.OWNER:
+            raise ApplicationError(
+                code=WORKSPACE_MEMBER_STATE_INVALID,
+                message="不能邀请 Owner 角色，请使用转让功能",
+            )
+
         # 统一使用小写邀请邮箱，避免大小写差异导致成员匹配和邀请记录漂移。
         invite_email = normalize_email(body.email)
 
@@ -503,7 +510,23 @@ async def accept_invite(request: Request, response: Response, token: str):
 
         invite_id = invite.id
         invite_workspace_id = invite.workspace_id
-        invite_role = invite.role
+        try:
+            invite_role = MemberRole(invite.role)
+        except ValueError as exc:
+            raise ApplicationError(
+                code=WORKSPACE_INVITE_INVALID,
+                message="邀请角色无效",
+                cause=exc,
+            ) from exc
+
+        # 接受邀请时再次兜底，防止历史异常邀请或绕过创建入口的数据提升为 Owner。
+        if invite_role == MemberRole.OWNER:
+            raise ApplicationError(
+                code=WORKSPACE_INVITE_INVALID,
+                message="Owner 邀请无效，请联系工作空间拥有者重新邀请",
+            )
+
+        invite_role_value = invite_role.value
         invite_invited_by = invite.invited_by
         invite_accepted_at = invite.accepted_at
         if invite.expires_at <= utc_now_naive() and invite_accepted_at is None:
@@ -572,7 +595,7 @@ async def accept_invite(request: Request, response: Response, token: str):
             id=str(uuid.uuid4()),
             user_id=user_id,
             workspace_id=invite_workspace_id,
-            role=invite_role,
+            role=invite_role_value,
             invited_by=invite_invited_by,
         )
         session.add(membership)
@@ -586,11 +609,11 @@ async def accept_invite(request: Request, response: Response, token: str):
             request=request,
             target_type="membership",
             target_id=membership.id,
-            detail={"invite_id": invite_id, "accepted": True, "role": invite_role},
+            detail={"invite_id": invite_id, "accepted": True, "role": invite_role_value},
             target_snapshot={
                 "id": membership.id,
                 "user_id": user_id,
-                "role": invite_role,
+                "role": invite_role_value,
                 "workspace_id": invite_workspace_id,
             },
         )
@@ -622,7 +645,7 @@ async def accept_invite(request: Request, response: Response, token: str):
         return {
             "message": "您已成功加入工作空间",
             "workspace_id": invite_workspace_id,
-            "role": invite_role,
+            "role": invite_role_value,
             "already_member": False,
         }
 

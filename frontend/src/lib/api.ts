@@ -333,6 +333,109 @@ export interface FactCheckReport {
   high_risk_count: number;
 }
 
+export type KnowledgeScope = 'workspace' | 'personal' | 'run_upload';
+export type KnowledgeBaseStatus = 'active' | 'disabled' | 'archived';
+export type KnowledgeDocumentLifecycleStatus = 'active' | 'disabled' | 'archived';
+export type KnowledgeDocumentStatus = 'pending' | 'processing' | 'ready' | 'failed';
+export type RetrievalMode = 'vector' | 'keyword' | 'hybrid';
+
+export interface EvidenceChunk {
+  chunk_id: string;
+  document_id: string;
+  knowledge_base_id: string;
+  document_name: string;
+  scope: KnowledgeScope;
+  page_number?: number | null;
+  heading_path: string[];
+  score: number;
+  vector_score?: number | null;
+  keyword_score?: number | null;
+  rerank_score?: number | null;
+  content: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface EvidencePack {
+  query: string;
+  rewritten_queries: string[];
+  scopes: KnowledgeScope[];
+  chunks: EvidenceChunk[];
+  conflicts: Array<{
+    topic: string;
+    chunk_ids: string[];
+    reason: string;
+  }>;
+  unverified_points: string[];
+  retrieval_mode: RetrievalMode;
+  generated_at: string;
+}
+
+export interface RetrievalConfig {
+  enabled: boolean;
+  use_workspace_kb: boolean;
+  use_personal_kb: boolean;
+  use_run_upload: boolean;
+  top_k: number;
+  min_score: number;
+  mode: RetrievalMode;
+  enable_query_rewrite: boolean;
+  enable_multi_query: boolean;
+  enable_rerank: boolean;
+  enable_context_compression: boolean;
+  enable_conflict_detection: boolean;
+}
+
+export interface KnowledgeBase {
+  id: string;
+  workspace_id: string;
+  owner_user_id?: string | null;
+  workflow_run_id?: string | null;
+  scope: KnowledgeScope;
+  name: string;
+  description?: string | null;
+  status: KnowledgeBaseStatus;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  kb_id: string;
+  workspace_id: string;
+  owner_user_id?: string | null;
+  workflow_run_id?: string | null;
+  file_name: string;
+  file_type: string;
+  storage_uri?: string | null;
+  checksum: string;
+  version: number;
+  status: KnowledgeDocumentLifecycleStatus;
+  parse_status: KnowledgeDocumentStatus;
+  index_status: KnowledgeDocumentStatus;
+  error_message?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeSearchRequest {
+  workspace_id?: string | null;
+  query: string;
+  scopes: KnowledgeScope[];
+  top_k?: number;
+  min_score?: number;
+  mode?: RetrievalMode;
+  filters?: Record<string, unknown>;
+  enable_query_rewrite?: boolean;
+  enable_multi_query?: boolean;
+  enable_rerank?: boolean;
+  enable_context_compression?: boolean;
+  enable_conflict_detection?: boolean;
+  workflow_run_id?: string | null;
+  node_run_id?: string | null;
+}
+
 export interface WorkflowTrace {
   workflow: Record<string, unknown>;
   nodes: Record<string, unknown>[];
@@ -477,6 +580,8 @@ export interface ModelProviderSummary {
 export interface StartWorkflowOptions {
   modelProviderId?: string;
   modelName?: string;
+  retrievalConfig?: RetrievalConfig;
+  runUploadFiles?: File[];
 }
 
 export interface WorkflowRunSummary {
@@ -708,8 +813,42 @@ export const workflowApi = {
     workflowDefinitionId?: string,
     workflowVersionId?: string,
     options: StartWorkflowOptions = {}
-  ) =>
-    request<WorkflowResponse>('/workflow/start', {
+  ) => {
+    if (options.runUploadFiles?.length) {
+      const formData = new FormData();
+      formData.append('user_input', userInput);
+      if (workflowDefinitionId) {
+        formData.append('workflow_definition_id', workflowDefinitionId);
+      }
+      if (workflowVersionId) {
+        formData.append('workflow_version_id', workflowVersionId);
+      }
+      if (options.modelProviderId) {
+        formData.append('model_provider_id', options.modelProviderId);
+      }
+      if (options.modelName) {
+        formData.append('model_name', options.modelName);
+      }
+      if (options.retrievalConfig) {
+        formData.append('retrieval_config', JSON.stringify(options.retrievalConfig));
+      }
+      for (const file of options.runUploadFiles) {
+        formData.append('files', file);
+      }
+
+      return authenticatedFetch(apiUrl('/workflow/start-with-uploads'), {
+        method: 'POST',
+        body: formData,
+      }).then(async (response) => {
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+          throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+        return response.json() as Promise<WorkflowResponse>;
+      });
+    }
+
+    return request<WorkflowResponse>('/workflow/start', {
       method: 'POST',
       body: JSON.stringify({
         user_input: userInput,
@@ -717,8 +856,10 @@ export const workflowApi = {
         workflow_version_id: workflowVersionId,
         model_provider_id: options.modelProviderId,
         model_name: options.modelName,
+        retrieval_config: options.retrievalConfig,
       }),
-    }),
+    });
+  },
 
   // 获取运行记录列表
   getRuns: () => request<{ runs: WorkflowRunSummary[] }>('/workflow/runs'),
@@ -943,6 +1084,92 @@ export const auditLogApi = {
 
     return request<AuditLogListResponse>(`/admin/audit-logs?${params.toString()}`);
   },
+};
+
+// 知识库 API
+export const knowledgeApi = {
+  list: (workspaceId: string, scopes?: KnowledgeScope[]) => {
+    const params = new URLSearchParams();
+    if (scopes?.length) {
+      params.set('scopes', scopes.join(','));
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return request<{ knowledge_bases: KnowledgeBase[] }>(
+      `/workspaces/${workspaceId}/knowledge-bases${suffix}`
+    );
+  },
+
+  create: (
+    workspaceId: string,
+    body: { name: string; description?: string | null; scope: KnowledgeScope }
+  ) =>
+    request<KnowledgeBase>(`/workspaces/${workspaceId}/knowledge-bases`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  update: (
+    knowledgeBaseId: string,
+    body: { name?: string; description?: string | null; status?: KnowledgeBaseStatus }
+  ) =>
+    request<KnowledgeBase>(`/knowledge-bases/${knowledgeBaseId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  delete: (knowledgeBaseId: string) =>
+    request<{ message: string }>(`/knowledge-bases/${knowledgeBaseId}`, {
+      method: 'DELETE',
+    }),
+
+  listDocuments: (knowledgeBaseId: string) =>
+    request<{ documents: KnowledgeDocument[] }>(
+      `/knowledge-bases/${knowledgeBaseId}/documents`
+    ),
+
+  uploadDocument: (knowledgeBaseId: string, file: File, metadata?: Record<string, unknown>) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (metadata) {
+      formData.append('metadata_json', JSON.stringify(metadata));
+    }
+
+    return authenticatedFetch(apiUrl(`/knowledge-bases/${knowledgeBaseId}/documents`), {
+      method: 'POST',
+      body: formData,
+    }).then(async (response) => {
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(error.detail || `HTTP ${response.status}`);
+      }
+      return response.json() as Promise<KnowledgeDocument>;
+    });
+  },
+
+  deleteDocument: (documentId: string) =>
+    request<{ message: string }>(`/documents/${documentId}`, {
+      method: 'DELETE',
+    }),
+
+  reindexDocument: (documentId: string) =>
+    request<KnowledgeDocument>(`/documents/${documentId}/reindex`, {
+      method: 'POST',
+    }),
+
+  updateDocument: (documentId: string, body: { status: KnowledgeDocumentLifecycleStatus }) =>
+    request<KnowledgeDocument>(`/documents/${documentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  search: (body: KnowledgeSearchRequest) =>
+    request<{ evidence_pack: EvidencePack; retrieval_log_id?: string | null }>(
+      '/knowledge/search',
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }
+    ),
 };
 
 // Artifact API

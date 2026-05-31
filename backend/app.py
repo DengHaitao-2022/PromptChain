@@ -83,6 +83,11 @@ def _register_routes(application: FastAPI) -> None:
 
     application.include_router(version_router, prefix="/api", tags=["workflow-version"])
 
+    # 知识库路由
+    from routes.knowledge_routes import router as knowledge_router
+
+    application.include_router(knowledge_router, prefix="/api", tags=["knowledge"])
+
     # WebSocket 路由
     from routes.websocket_routes import router as ws_router
 

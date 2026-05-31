@@ -2,6 +2,7 @@
 统一异常映射逻辑。
 """
 
+import socket
 from dataclasses import dataclass
 from typing import Any
 
@@ -96,7 +97,7 @@ def _infer_raw_infrastructure_code(exc: BaseException) -> str | None:
     if isinstance(exc, aiosmtplib.errors.SMTPException):
         return INFRA_EMAIL_SERVICE_ERROR
 
-    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+    if isinstance(exc, (ConnectionError, TimeoutError, socket.gaierror, socket.timeout)):
         module_name = exc.__class__.__module__.lower()
         cause_text = f"{exc.__class__.__name__} {exc}".lower()
         model_markers = (

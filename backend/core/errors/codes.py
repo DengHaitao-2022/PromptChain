@@ -429,7 +429,7 @@ LEGACY_NUMERIC_ERROR_CODES: dict[str, int] = {
 def get_error_definition(code: str) -> ErrorCodeDefinition:
     """按稳定错误码读取注册项。"""
 
-    return ERROR_REGISTRY[code]
+    return ERROR_REGISTRY.get(code, ERROR_REGISTRY[COMMON_INTERNAL_ERROR])
 
 
 def is_registered_error_code(code: str) -> bool:
@@ -447,4 +447,19 @@ def get_fallback_code_for_status(http_status: int) -> str:
 def get_legacy_numeric_code(code: str) -> int:
     """兼容旧 Result 风格的数字错误码。"""
 
-    return LEGACY_NUMERIC_ERROR_CODES.get(code, 50000)
+    legacy_code = LEGACY_NUMERIC_ERROR_CODES.get(code)
+    if legacy_code is not None:
+        return legacy_code
+
+    http_status = int(get_error_definition(code).http_status)
+    if http_status == HTTPStatus.UNAUTHORIZED:
+        return 40100
+    if http_status == HTTPStatus.FORBIDDEN:
+        return 40300
+    if http_status == HTTPStatus.NOT_FOUND:
+        return 40400
+    if http_status == HTTPStatus.CONFLICT:
+        return 40900
+    if http_status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+        return 50000
+    return 40000

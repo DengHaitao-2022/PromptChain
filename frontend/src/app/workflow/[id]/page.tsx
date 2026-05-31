@@ -25,6 +25,15 @@ import {
     Sparkles,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import {
+    Background,
+    Controls,
+    MarkerType,
+    ReactFlow,
+    type Edge,
+    type Node,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 import styles from './page.module.css';
 import {
     workflowApi,
@@ -40,6 +49,9 @@ import {
     type WorkflowSectionEvent,
     type RerunOption,
     type RerunHistoryItem,
+    type EvidencePack,
+    type KnowledgeScope,
+    type WorkflowGateType,
 } from '@/lib/api';
 import { formatAppDateTime, toEpochMilliseconds } from '@/lib/date-time';
 import {
@@ -130,17 +142,40 @@ interface StreamingSectionState {
     mode?: string;
 }
 
+interface RuntimeProgressStep {
+    id: string;
+    label: string;
+    index: number;
+}
+
+interface RuntimeProgressSummary {
+    currentStepId: string | null;
+    completedStepCount: number | null;
+    steps: RuntimeProgressStep[];
+}
+
+interface TraceStepFact {
+    status?: WorkflowStep['status'];
+    durationMs?: number;
+    artifactCount?: number;
+    order: number;
+}
+
 const RERUN_NODE_LABELS: Record<string, string> = {
     parse_intent: '意图解析',
+    retrieve_knowledge: '知识检索',
     generate_outline: '提纲生成',
+    approve_outline: '提纲审批',
     generate_content: '内容生成',
     self_refine: '自检修订',
     check_facts: '事实核查',
+    approve_fact_check: '事实核查审批',
     finalize: '最终输出',
 };
 
 const RERUN_NODE_DESCRIPTIONS: Record<string, string> = {
     parse_intent: '重新解析用户输入，适合大幅调整主题、受众或目标。',
+    retrieve_knowledge: '保留意图卡，重新检索知识库证据，适合资料更新或调整知识来源后使用。',
     generate_outline: '保留意图卡，从提纲重新生成，适合调整结构和章节重点。',
     generate_content: '保留已确认提纲，从正文生成重新开始。',
     self_refine: '保留正文草稿，从自检修订重新开始。',
@@ -164,6 +199,12 @@ function getRerunStatusLabel(status?: string): string {
             return status ?? '可重跑';
     }
 }
+
+const KNOWLEDGE_SCOPE_LABELS: Record<KnowledgeScope, string> = {
+    workspace: '工作空间',
+    personal: '个人',
+    run_upload: '本次运行',
+};
 
 function getStatusMeta(status?: WorkflowStatus): StatusMeta {
     switch (status) {
@@ -401,8 +442,19 @@ function getLatestArtifactByType(
     }
 
     return artifacts
-        .filter((artifact) => artifact.type === type)
+        .filter((artifact) => artifactMatchesType(artifact, type))
         .sort((a, b) => getArtifactTimestamp(b) - getArtifactTimestamp(a))[0] ?? null;
+}
+
+function artifactMatchesType(artifact: Record<string, unknown>, type: string): boolean {
+    const rawType = artifact.type;
+    if (rawType === type) {
+        return true;
+    }
+    if (isRecord(rawType)) {
+        return rawType.value === type;
+    }
+    return typeof rawType === 'string' && rawType.toLowerCase() === type.toLowerCase();
 }
 
 function buildSectionsFromFinalArtifact(
@@ -544,6 +596,118 @@ function buildContentSections(
     }));
 }
 
+function buildEvidencePack(
+    workflow: WorkflowResponse | null,
+    trace: WorkflowTrace | null
+): EvidencePack | null {
+    const stateEvidence = workflow?.state.evidence_pack;
+    if (isRecord(stateEvidence) && Array.isArray(stateEvidence.chunks)) {
+        return stateEvidence as unknown as EvidencePack;
+    }
+
+    const evidenceArtifactId = workflow?.state.evidence_artifact_id;
+    const evidenceArtifact = getLatestArtifactByType(trace, 'evidence_pack', evidenceArtifactId);
+    if (isRecord(evidenceArtifact?.content) && Array.isArray(evidenceArtifact.content.chunks)) {
+        return evidenceArtifact.content as unknown as EvidencePack;
+    }
+
+    return null;
+}
+
+function getRuntimeProgress(workflow: WorkflowResponse | null): RuntimeProgressSummary | null {
+    const rawProgress = workflow?.state.runtime_progress;
+    if (!isRecord(rawProgress) || !Array.isArray(rawProgress.steps)) {
+        return null;
+    }
+
+    const steps = rawProgress.steps
+        .map((step, index): RuntimeProgressStep | null => {
+            if (!isRecord(step) || typeof step.id !== 'string') {
+                return null;
+            }
+            return {
+                id: step.id,
+                label:
+                    typeof step.label === 'string'
+                        ? step.label
+                        : RERUN_NODE_LABELS[step.id] ?? formatEntryLabel(step.id),
+                index:
+                    typeof step.index === 'number'
+                        ? step.index
+                        : index,
+            };
+        })
+        .filter((step): step is RuntimeProgressStep => Boolean(step));
+
+    if (steps.length === 0) {
+        return null;
+    }
+
+    return {
+        currentStepId:
+            typeof rawProgress.current_step_id === 'string'
+                ? rawProgress.current_step_id
+                : null,
+        completedStepCount:
+            typeof rawProgress.completed_step_count === 'number'
+                ? rawProgress.completed_step_count
+                : null,
+        steps,
+    };
+}
+
+function normalizeTraceNodeStatus(status: unknown): WorkflowStep['status'] | undefined {
+    switch (status) {
+        case 'completed':
+            return 'completed';
+        case 'running':
+            return 'running';
+        case 'failed':
+            return 'failed';
+        case 'interrupted':
+            return 'interrupted';
+        default:
+            return undefined;
+    }
+}
+
+function buildTraceStepFacts(trace: WorkflowTrace | null): Map<string, TraceStepFact> {
+    const facts = new Map<string, TraceStepFact>();
+    if (!trace) {
+        return facts;
+    }
+
+    trace.nodes.forEach((node, order) => {
+        const nodeName =
+            typeof node.node_name === 'string'
+                ? node.node_name
+                : typeof node.name === 'string'
+                    ? node.name
+                    : typeof node.node === 'string'
+                        ? node.node
+                        : null;
+        if (!nodeName) {
+            return;
+        }
+
+        const existing = facts.get(nodeName);
+        if (existing && existing.order > order) {
+            return;
+        }
+
+        facts.set(nodeName, {
+            status: normalizeTraceNodeStatus(node.status),
+            durationMs: typeof node.duration_ms === 'number' ? node.duration_ms : undefined,
+            artifactCount: Array.isArray(node.output_artifact_ids)
+                ? node.output_artifact_ids.length
+                : undefined,
+            order,
+        });
+    });
+
+    return facts;
+}
+
 function buildFinalMarkdown(
     title: string,
     abstract: string | undefined,
@@ -671,6 +835,72 @@ function formatStepStatus(step: WorkflowStep): string {
         default:
             return '待开始';
     }
+}
+
+function getGateStepId(
+    gateType: WorkflowGateType | undefined,
+    stepIds: string[]
+): string | null {
+    if (gateType === 'clarification') {
+        return 'parse_intent';
+    }
+    if (gateType === 'outline_approval') {
+        return stepIds.includes('approve_outline') ? 'approve_outline' : 'generate_outline';
+    }
+    if (gateType === 'fact_check') {
+        return stepIds.includes('approve_fact_check') ? 'approve_fact_check' : 'check_facts';
+    }
+    return null;
+}
+
+function buildWorkflowGraph(
+    steps: WorkflowStep[],
+    currentStep: string | undefined
+): { nodes: Node[]; edges: Edge[] } {
+    const nodes: Node[] = steps.map((step, index) => {
+        const row = Math.floor(index / 5);
+        const column = index % 5;
+        const isCurrent = currentStep === step.id;
+
+        return {
+            id: step.id,
+            type: 'default',
+            position: {
+                x: column * 230 + (row % 2 === 1 ? 90 : 0),
+                y: row * 150,
+            },
+            data: {
+                label: (
+                    <div className={styles.flowNodeLabel}>
+                        <span className={styles.flowNodeTitle}>{step.label}</span>
+                        <span className={styles.flowNodeMeta}>
+                            {isCurrent ? '当前节点' : formatStepStatus(step)}
+                        </span>
+                    </div>
+                ),
+            },
+            className: `${styles.flowNode} ${styles[`flowNode${step.status[0].toUpperCase()}${step.status.slice(1)}`]} ${
+                isCurrent ? styles.flowNodeCurrent : ''
+            }`,
+            draggable: false,
+            selectable: true,
+        };
+    });
+
+    const edges: Edge[] = steps.slice(0, -1).map((step, index) => {
+        const target = steps[index + 1];
+        const isActiveEdge = step.id === currentStep || target.id === currentStep;
+        return {
+            id: `${step.id}-${target.id}`,
+            source: step.id,
+            target: target.id,
+            animated: isActiveEdge,
+            markerEnd: { type: MarkerType.ArrowClosed },
+            className: isActiveEdge ? styles.flowEdgeActive : styles.flowEdge,
+        };
+    });
+
+    return { nodes, edges };
 }
 
 export default function WorkflowDetailPage() {
@@ -1180,49 +1410,71 @@ export default function WorkflowDetailPage() {
     }, [workflowId, selectedRerunNode, rerunInstruction, router, startRerunNavigation]);
 
     const calculateSteps = (): WorkflowStep[] => {
-        const stepNames = [
+        const fallbackStepNames = [
             'parse_intent',
+            'retrieve_knowledge',
             'generate_outline',
             'generate_content',
             'self_refine',
             'check_facts',
             'finalize',
         ];
-        const stepLabels: Record<string, string> = {
-            parse_intent: '意图解析',
-            generate_outline: '提纲生成',
-            generate_content: '内容生成',
-            self_refine: '自检修订',
-            check_facts: '事实核查',
-            finalize: '最终输出',
-        };
 
         if (!workflow) {
-            return stepNames.map((name) => ({
+            return fallbackStepNames.map((name) => ({
                 id: name,
                 name,
-                label: stepLabels[name],
+                label: RERUN_NODE_LABELS[name] ?? formatEntryLabel(name),
                 status: 'pending' as const,
             }));
         }
 
         const state = workflow.state;
         const currentWorkflowStatus = workflow.status;
-        const isGateWaiting = Boolean(state.gate);
-        const gateType = state.gate?.gate_type;
+        const runtimeProgress = getRuntimeProgress(workflow);
+        const traceFacts = buildTraceStepFacts(trace);
+        const runtimeSteps = runtimeProgress?.steps;
+        const stepDefinitions = runtimeSteps && runtimeSteps.length > 0
+            ? runtimeSteps
+            : fallbackStepNames.map((id, index) => ({
+                id,
+                label: RERUN_NODE_LABELS[id] ?? formatEntryLabel(id),
+                index,
+            }));
+        const stepNames = stepDefinitions.map((step) => step.id);
+        const gateType: WorkflowGateType | undefined =
+            state.gate?.gate_type ??
+            (currentWorkflowStatus === 'needs_clarification'
+                ? 'clarification'
+                : currentWorkflowStatus === 'awaiting_outline_approval'
+                    ? 'outline_approval'
+                    : currentWorkflowStatus === 'awaiting_fact_check_approval'
+                        ? 'fact_check'
+                        : undefined);
+        const gateStepId = getGateStepId(gateType, stepNames);
 
         const isStepComplete = (stepName: string) => {
             switch (stepName) {
                 case 'parse_intent':
                     return Boolean(state.intent_card);
+                case 'retrieve_knowledge':
+                    return Boolean(state.evidence_pack) || Boolean(state.evidence_artifact_id);
                 case 'generate_outline':
                     return Boolean(state.outline);
+                case 'approve_outline':
+                    return Boolean(state.outline_approved);
                 case 'generate_content':
-                    return Boolean(state.generated_content);
+                    return (
+                        Boolean(state.generated_content) ||
+                        Boolean(state.final_content) ||
+                        (isRecord(state.draft_sections) && Object.keys(state.draft_sections).length > 0)
+                    );
                 case 'self_refine':
-                    return Boolean(state.final_content);
+                    return Boolean(state.final_content) || currentWorkflowStatus === 'completed';
                 case 'check_facts':
                     return Boolean(state.fact_check_report);
+                case 'approve_fact_check':
+                    return !state.awaiting_fact_check_approval && Boolean(state.fact_check_report);
                 case 'finalize':
                     return currentWorkflowStatus === 'completed';
                 default:
@@ -1230,39 +1482,43 @@ export default function WorkflowDetailPage() {
             }
         };
 
-        const runningStepId =
-            currentWorkflowStatus === 'running'
-                ? stepNames.find((stepName) => !isStepComplete(stepName))
-                : undefined;
+        const currentStepId =
+            runtimeProgress?.currentStepId ??
+            (typeof state.current_node === 'string' ? state.current_node : null) ??
+            (currentWorkflowStatus === 'running'
+                ? stepNames.find((stepName) => !isStepComplete(stepName)) ?? null
+                : null);
         const failedStepId =
             currentWorkflowStatus === 'failed'
-                ? stepNames.find((stepName) => !isStepComplete(stepName)) ?? 'finalize'
+                ? currentStepId ?? stepNames.find((stepName) => !isStepComplete(stepName)) ?? 'finalize'
                 : undefined;
 
-        return stepNames.map((name) => {
+        return stepDefinitions.map((step, index) => {
+            const name = step.id;
+            const traceFact = traceFacts.get(name);
             let status: WorkflowStep['status'] = 'pending';
 
-            if (isStepComplete(name)) {
+            if (
+                currentWorkflowStatus === 'completed' ||
+                traceFact?.status === 'completed' ||
+                isStepComplete(name) ||
+                (typeof runtimeProgress?.completedStepCount === 'number' &&
+                    index < runtimeProgress.completedStepCount)
+            ) {
                 status = 'completed';
             }
 
-            if (currentWorkflowStatus === 'paused') {
-                // If the entire workflow is paused, all steps that are not completed should be 'paused'
+            if (traceFact?.status === 'interrupted' && status !== 'completed') {
+                status = 'interrupted';
+            }
+
+            if (gateStepId && name === gateStepId && currentWorkflowStatus !== 'completed') {
+                status = 'gate_waiting';
+            } else if (currentWorkflowStatus === 'paused') {
                 if (status !== 'completed') {
                     status = 'paused';
                 }
-            } else if (isGateWaiting) {
-                // If gate is waiting, specific steps should be marked as 'gate_waiting'
-                if (name === 'parse_intent' && gateType === 'clarification') {
-                    status = 'gate_waiting';
-                }
-                if (name === 'generate_outline' && gateType === 'outline_approval') {
-                    status = 'gate_waiting';
-                }
-                if (name === 'check_facts' && gateType === 'fact_check') {
-                    status = 'gate_waiting';
-                }
-            } else if (currentWorkflowStatus === 'running' && name === runningStepId) {
+            } else if (currentWorkflowStatus === 'running' && name === currentStepId) {
                 status = 'running';
             }
 
@@ -1270,44 +1526,31 @@ export default function WorkflowDetailPage() {
                 status = 'failed';
             }
 
-            // Fallback for states that were previously 'interrupted' but now map to 'gate_waiting'
-            if (
-                currentWorkflowStatus === 'needs_clarification' &&
-                name === 'parse_intent' &&
-                status !== 'completed'
-            ) {
-                status = 'gate_waiting';
-            }
-            if (
-                currentWorkflowStatus === 'awaiting_outline_approval' &&
-                name === 'generate_outline' &&
-                status !== 'completed'
-            ) {
-                status = 'gate_waiting';
-            }
-            if (
-                currentWorkflowStatus === 'awaiting_fact_check_approval' &&
-                name === 'check_facts' &&
-                status !== 'completed'
-            ) {
-                status = 'gate_waiting';
-            }
-
-
             return {
                 id: name,
                 name,
-                label: stepLabels[name],
+                label: step.label,
                 status,
+                durationMs: traceFact?.durationMs,
+                artifactCount: traceFact?.artifactCount,
             };
         });
     };
 
     const steps = calculateSteps();
-    const currentStep = steps.find(
-        (step) => step.status === 'running' || step.status === 'interrupted' || step.status === 'gate_waiting' || step.status === 'paused'
-    )?.id;
+    const currentStep =
+        steps.find(
+            (step) =>
+                step.status === 'running' ||
+                step.status === 'gate_waiting' ||
+                step.status === 'paused'
+        )?.id ??
+        steps.find((step) => step.status === 'interrupted')?.id;
     const currentStepLabel = steps.find((step) => step.id === currentStep)?.label;
+    const workflowGraph = React.useMemo(
+        () => buildWorkflowGraph(steps, currentStep),
+        [steps, currentStep]
+    );
     const statusMeta = getStatusMeta(workflow?.status);
     const contentSections = React.useMemo(
         () => buildContentSections(workflow, trace),
@@ -1326,6 +1569,10 @@ export default function WorkflowDetailPage() {
     const finalWordCount = React.useMemo(
         () => contentSections.reduce((sum, entry) => sum + (entry.wordCount || 0), 0),
         [contentSections]
+    );
+    const evidencePack = React.useMemo(
+        () => buildEvidencePack(workflow, trace),
+        [workflow, trace]
     );
     const activeStreamingSectionId = React.useMemo(
         () =>
@@ -1433,7 +1680,6 @@ export default function WorkflowDetailPage() {
 
         const target = getWorkflowFocusTarget(workflow, isContentStreaming);
         if (!target) return;
-        if (target === 'content') return;
 
         const key = `${workflowId}:${workflow.status}:${target}:${activeStreamingSectionId ?? ''}`;
 
@@ -1442,6 +1688,10 @@ export default function WorkflowDetailPage() {
         }
 
         lastAutoFocusKeyRef.current = key;
+
+        if (target === 'content') {
+            return;
+        }
 
         window.requestAnimationFrame(() => {
             let element: HTMLElement | null = null;
@@ -1454,9 +1704,6 @@ export default function WorkflowDetailPage() {
                     break;
                 case 'fact_check':
                     element = factCheckRef.current;
-                    break;
-                case 'content':
-                    element = contentSectionRef.current;
                     break;
                 case 'running':
                     element = runningStageRef.current;
@@ -1563,6 +1810,93 @@ export default function WorkflowDetailPage() {
             </div>
         </div>
     );
+
+    const renderEvidencePanel = () => {
+        if (!evidencePack) {
+            return null;
+        }
+
+        return (
+            <div className={styles.evidencePanel}>
+                <div className={styles.evidenceHeader}>
+                    <div>
+                        <p className={styles.evidenceEyebrow}>Evidence Artifact</p>
+                        <h3>知识检索证据</h3>
+                        <p>{evidencePack.query || '未记录检索 query'}</p>
+                    </div>
+                    <div className={styles.evidenceStats}>
+                        <span>{evidencePack.chunks.length} 条命中</span>
+                        <span>{evidencePack.conflicts.length} 条冲突</span>
+                        <span>{evidencePack.unverified_points.length} 个未验证点</span>
+                    </div>
+                </div>
+
+                {evidencePack.scopes.length > 0 ? (
+                    <div className={styles.evidenceScopes}>
+                        {evidencePack.scopes.map((scope) => (
+                            <span key={scope}>
+                                {KNOWLEDGE_SCOPE_LABELS[scope] ?? scope}
+                            </span>
+                        ))}
+                    </div>
+                ) : null}
+
+                {evidencePack.chunks.length > 0 ? (
+                    <div className={styles.evidenceGrid}>
+                        {evidencePack.chunks.map((chunk) => (
+                            <article key={chunk.chunk_id} className={styles.evidenceCard}>
+                                <header>
+                                    <strong>{chunk.document_name}</strong>
+                                    <span>
+                                        {KNOWLEDGE_SCOPE_LABELS[chunk.scope] ?? chunk.scope} · {chunk.score.toFixed(3)}
+                                    </span>
+                                </header>
+                                <p>{chunk.content}</p>
+                                <footer>
+                                    {chunk.page_number ? <span>第 {chunk.page_number} 页</span> : null}
+                                    {chunk.heading_path.length > 0 ? (
+                                        <span>{chunk.heading_path.join(' / ')}</span>
+                                    ) : null}
+                                </footer>
+                            </article>
+                        ))}
+                    </div>
+                ) : (
+                    <div className={styles.emptyState}>
+                        <FileText className={styles.emptyStateIcon} aria-hidden="true" />
+                        <div>
+                            <h3>未检索到可用证据</h3>
+                            <p>后续节点会把相关主题标记为未验证，避免强行编造来源。</p>
+                        </div>
+                    </div>
+                )}
+
+                {evidencePack.unverified_points.length > 0 ? (
+                    <div className={styles.evidenceNotice}>
+                        <strong>未验证点</strong>
+                        <ul>
+                            {evidencePack.unverified_points.map((point) => (
+                                <li key={point}>{point}</li>
+                            ))}
+                        </ul>
+                    </div>
+                ) : null}
+
+                {evidencePack.conflicts.length > 0 ? (
+                    <div className={styles.evidenceNotice}>
+                        <strong>证据冲突</strong>
+                        <ul>
+                            {evidencePack.conflicts.map((conflict) => (
+                                <li key={`${conflict.topic}-${conflict.chunk_ids.join('-')}`}>
+                                    {conflict.topic}: {conflict.reason}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                ) : null}
+            </div>
+        );
+    };
 
     const renderPausedStage = () => {
         const pauseInfo = workflow?.state?.pause;
@@ -2240,6 +2574,34 @@ export default function WorkflowDetailPage() {
                         </div>
                     </section>
 
+                    <section className={styles.flowShell} aria-label="工作流可视化运行图">
+                        <div className={styles.flowHeader}>
+                            <div>
+                                <p className={styles.stageEyebrow}>React Flow</p>
+                                <h2 className={styles.flowTitle}>运行图谱</h2>
+                            </div>
+                            <span className={styles.flowSummary}>
+                                {steps.filter((step) => step.status === 'completed').length}/{steps.length} 已完成
+                            </span>
+                        </div>
+                        <div className={styles.flowCanvas}>
+                            <ReactFlow
+                                nodes={workflowGraph.nodes}
+                                edges={workflowGraph.edges}
+                                fitView
+                                fitViewOptions={{ padding: 0.2 }}
+                                nodesDraggable={false}
+                                nodesConnectable={false}
+                                elementsSelectable
+                                panOnScroll
+                                proOptions={{ hideAttribution: true }}
+                            >
+                                <Background gap={18} size={1} />
+                                <Controls showInteractive={false} />
+                            </ReactFlow>
+                        </div>
+                    </section>
+
                     <section className={styles.stageShell}>
                         <div className={styles.stageHeader}>
                             <div className={styles.stageHeaderMain}>
@@ -2273,7 +2635,7 @@ export default function WorkflowDetailPage() {
                         </div>
                     </section>
 
-                    {(workflow?.state.intent_card || workflow?.state.outline || displayContentSections.length > 0 || trace) && (
+                    {(workflow?.state.intent_card || evidencePack || workflow?.state.outline || displayContentSections.length > 0 || trace) && (
                         <section className={styles.stageShell} style={{ marginTop: '2rem' }}>
                             <div className={styles.stageHeader}>
                                 <div className={styles.stageHeaderMain}>
@@ -2286,6 +2648,11 @@ export default function WorkflowDetailPage() {
                                     <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <h3 style={{ marginBottom: '1rem', fontSize: '1.125rem', fontWeight: 600 }}>意图分析</h3>
                                         <IntentCardViewer intentCard={workflow.state.intent_card as IntentCard} />
+                                    </div>
+                                ) : null}
+                                {evidencePack ? (
+                                    <div className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
+                                        {renderEvidencePanel()}
                                     </div>
                                 ) : null}
                                 {workflow?.state.outline && workflow.status !== 'awaiting_outline_approval' && (

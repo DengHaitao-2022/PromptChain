@@ -1,9 +1,11 @@
 # Realtime Event Contract
 
-## 0. Current Baseline (`dev@c396a48`)
+## 0. Current Baseline (`dev@699bf53`)
 
 - `backend/graph/executor.py` 已在节点执行、Gate 等待、手动 pause/resume、completed/failed 上调用 `emit_*`。
 - `backend/routes/websocket_routes.py` 已承担 transport 层广播；REST 轮询与 trace timeline 仍是状态对账权威。
+- `backend/routes/workflow_routes.py` 已提供 `GET /api/workflow/{workflow_run_id}/events` SSE 快照流，用于详情页同步状态、Trace 与增量内容。
+- `frontend/src/app/workflow/[id]/page.tsx` 已消费 SSE snapshot、token、section、stream_error、heartbeat 与 done 事件；仍保留 REST 状态读取作为兜底。
 - 已知兼容点：`backend/graph/executor.py` 的 fact-check Gate 某条 emit 路径仍写出 `fact_check_approval`；对外契约与前端共享静态类型继续以 `fact_check` 为准，并由 REST/trace 读模型归一化兜底。
 
 ## 1. Channels
@@ -60,10 +62,11 @@
 
 ## 4. Source-of-Truth Rule
 
-1. WebSocket 不是运行态的唯一事实源。
+1. WebSocket / SSE 都不是运行态的唯一事实源。
 2. `GET /api/workflow/{workflow_run_id}` 仍是状态读取的权威接口。
 3. 客户端在收到关键事件后，应使用 REST 状态接口进行对账，防止漏事件或顺序错乱。
 4. `frontend/src/lib/api.ts` 中导出的 `WorkflowRealtimeEvent` 是前端消费端的静态契约基线，即使个别事件的后端 emit 尚未全部打通。
+5. `GET /api/trace/{workflow_run_id}` 是回放和产物对账的权威入口；SSE snapshot 只是详情页实时体验增强。
 
 ## 5. Delivery Rules
 

@@ -40,6 +40,9 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 必须包含: {must_include}
 禁止内容: {must_exclude}
 
+## 可用证据
+{evidence_context}
+
 ## 要求
 1. 提纲应包含3-7个主要章节
 2. 每个章节应有明确的目标和字数分配
@@ -47,6 +50,7 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 4. 确保覆盖所有"必须包含"的项目
 5. 避免"禁止内容"中的项目
 6. 总字数分配应接近目标字数
+7. 如果存在可用证据，优先围绕证据组织章节；证据不足的主题不要虚构来源
 
 ## 输出格式
 请生成完整的提纲结构，包括：
@@ -54,6 +58,38 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 - abstract: 概述/导语（50-100字的内容摘要）
 - sections: 章节列表，每个章节包含 id, title, summary, target_words
 - total_target_words: 总目标字数"""
+
+
+def _format_evidence_context(state: dict, *, max_chunks: int = 6) -> str:
+    """把 EvidencePack 压缩成适合写入 prompt 的上下文。"""
+    evidence_pack = state.get("evidence_pack")
+    if not evidence_pack:
+        return "未启用知识库或未检索到可用证据。"
+
+    chunks = getattr(evidence_pack, "chunks", None)
+    if chunks is None and isinstance(evidence_pack, dict):
+        chunks = evidence_pack.get("chunks")
+    if not chunks:
+        unverified = getattr(evidence_pack, "unverified_points", None)
+        if unverified is None and isinstance(evidence_pack, dict):
+            unverified = evidence_pack.get("unverified_points")
+        if unverified:
+            return f"未检索到足够证据；需标记未验证点：{', '.join(map(str, unverified))}"
+        return "未启用知识库或未检索到可用证据。"
+
+    lines: list[str] = []
+    for index, chunk in enumerate(chunks[:max_chunks], start=1):
+        document_name = getattr(chunk, "document_name", None)
+        content = getattr(chunk, "content", None)
+        score = getattr(chunk, "score", None)
+        if isinstance(chunk, dict):
+            document_name = chunk.get("document_name")
+            content = chunk.get("content")
+            score = chunk.get("score")
+        if not content:
+            continue
+        lines.append(f"[{index}] 来源：{document_name or '未知文档'}；分数：{score}\n{content}")
+    return "\n\n".join(lines) if lines else "未启用知识库或未检索到可用证据。"
 
 
 def _now_iso() -> str:
@@ -118,7 +154,12 @@ async def generate_outline(state: dict) -> dict:
         started_at=utc_now_naive(),
         status=NodeRunStatus.RUNNING,
         input_artifact_ids=[
-            artifact_id for artifact_id in [state.get("intent_card_artifact_id")] if artifact_id
+            artifact_id
+            for artifact_id in [
+                state.get("intent_card_artifact_id"),
+                state.get("evidence_artifact_id"),
+            ]
+            if artifact_id
         ],
     )
     await store.create_node_run(node_run)
@@ -153,6 +194,7 @@ async def generate_outline(state: dict) -> dict:
                     "length": intent_card.length,
                     "must_include": ", ".join(intent_card.must_include) or "无特殊要求",
                     "must_exclude": ", ".join(intent_card.must_exclude) or "无",
+                    "evidence_context": _format_evidence_context(state),
                 },
             )
         )
@@ -195,6 +237,7 @@ async def generate_outline(state: dict) -> dict:
             metadata={
                 "feedback": outline_feedback,
                 "rerun_instruction": rerun_instruction,
+                "evidence_artifact_id": state.get("evidence_artifact_id"),
                 "section_count": len(outline.get_flat_sections()),
                 "awaiting_approval": outline_gate_enabled,
             },

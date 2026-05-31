@@ -18,6 +18,7 @@ import {
 import styles from './TraceViewer.module.css';
 import type { WorkflowGateState, WorkflowTrace, TimelineEvent } from '@/lib/api';
 import { formatAppTime } from '@/lib/date-time';
+import { MarkdownRenderer } from '@/components/MarkdownRenderer/MarkdownRenderer';
 
 interface TraceViewerProps {
     trace: WorkflowTrace;
@@ -41,6 +42,18 @@ function asNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function isWorkflowGateState(value: unknown): value is WorkflowGateState {
+    if (!isRecord(value)) {
+        return false;
+    }
+
+    const gateType = value.gate_type;
+    return (
+        (gateType === 'clarification' || gateType === 'outline_approval' || gateType === 'fact_check') &&
+        Array.isArray(value.questions)
+    );
+}
+
 function formatTime(timestamp: unknown): string {
     if (typeof timestamp !== 'string' || !timestamp) {
         return '-';
@@ -60,35 +73,86 @@ function formatDuration(value: unknown): string {
     return `${(ms / 1000).toFixed(2)}s`;
 }
 
-function getArtifactText(content: unknown): string {
+type ArtifactPreview = {
+    content: string;
+    format: 'markdown' | 'json';
+};
+
+// 统一抽取产物预览内容，Markdown 交给专用渲染器，结构化对象保留 JSON 视图。
+function getArtifactPreview(content: unknown): ArtifactPreview {
     if (typeof content === 'string') {
-        return content;
+        return {
+            content,
+            format: looksLikeJson(content) ? 'json' : 'markdown',
+        };
     }
 
     if (!isRecord(content)) {
-        return JSON.stringify(content ?? {}, null, 2);
+        return {
+            content: JSON.stringify(content ?? {}, null, 2),
+            format: 'json',
+        };
     }
 
     if (typeof content.compiled_content === 'string') {
-        return content.compiled_content;
+        return {
+            content: content.compiled_content,
+            format: 'markdown',
+        };
     }
 
-    if (typeof content.content === 'string') {
-        return content.content;
+    const textField = getFirstStringField(content, ['content', 'markdown', 'text']);
+    if (textField) {
+        return {
+            content: textField,
+            format: looksLikeJson(textField) ? 'json' : 'markdown',
+        };
     }
 
     if (isRecord(content.sections)) {
-        return Object.entries(content.sections)
-            .map(([sectionId, sectionContent]) => {
-                const text = typeof sectionContent === 'string'
-                    ? sectionContent
-                    : JSON.stringify(sectionContent, null, 2);
-                return `## ${sectionId}\n${text}`;
-            })
-            .join('\n\n');
+        return {
+            content: Object.entries(content.sections)
+                .map(([sectionId, sectionContent]) => {
+                    const text = typeof sectionContent === 'string'
+                        ? sectionContent
+                        : JSON.stringify(sectionContent, null, 2);
+                    return `## ${sectionId}\n${text}`;
+                })
+                .join('\n\n'),
+            format: 'markdown',
+        };
     }
 
-    return JSON.stringify(content, null, 2);
+    return {
+        content: JSON.stringify(content, null, 2),
+        format: 'json',
+    };
+}
+
+function getFirstStringField(
+    record: Record<string, unknown>,
+    fields: string[]
+): string | null {
+    for (const field of fields) {
+        const value = record[field];
+        if (typeof value === 'string' && value.trim()) {
+            return value;
+        }
+    }
+
+    return null;
+}
+
+function looksLikeJson(value: string): boolean {
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return false;
+    }
+
+    return (
+        (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    );
 }
 
 function getNodeStatusTone(status: string): string {
@@ -156,9 +220,7 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
     const [expandedNodeId, setExpandedNodeId] = React.useState<string | null>(
         focusedNodeId ?? null
     );
-    const gate = isRecord(trace.workflow.gate)
-        ? (trace.workflow.gate as WorkflowGateState)
-        : null;
+    const gate = isWorkflowGateState(trace.workflow.gate) ? trace.workflow.gate : null;
 
     React.useEffect(() => {
         if (focusedNodeId) {
@@ -345,19 +407,37 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
             <div className={styles.timelineSection}>
                 <h4 className={styles.sectionTitle}>执行时间线</h4>
                 <div className={styles.timeline}>
-                    {trace.timeline.map((event, index) => (
-                        <div key={`${event.event}-${event.timestamp}-${index}`} className={styles.timelineItem}>
-                            <div className={styles.timelineTime}>{formatTime(event.timestamp)}</div>
-                            <div className={styles.timelineDot} />
-                            <div className={styles.timelineContent}>
-                                <span className={styles.timelineIcon}>{getEventIcon(event.event)}</span>
-                                <span className={styles.timelineText}>{getEventDescription(event)}</span>
+                    {trace.timeline.map((event, index) => {
+                        const timelineArtifact = typeof event.artifact_id === 'string'
+                            ? trace.artifacts[event.artifact_id]
+                            : undefined;
+
+                        return (
+                            <div key={`${event.event}-${event.timestamp}-${index}`} className={styles.timelineItem}>
+                                <div className={styles.timelineTime}>{formatTime(event.timestamp)}</div>
+                                <div className={styles.timelineDot} />
+                                <div className={styles.timelineContent}>
+                                    <div className={styles.timelineEventHeader}>
+                                        <span className={styles.timelineIcon}>{getEventIcon(event.event)}</span>
+                                        <span className={styles.timelineText}>{getEventDescription(event)}</span>
+                                    </div>
+                                    {/* 时间线产物直接复用 trace 快照，避免为展开预览额外请求接口。 */}
+                                    {timelineArtifact ? (
+                                        <TimelineArtifactPreview artifact={timelineArtifact} />
+                                    ) : null}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
         </div>
+    );
+}
+
+function TimelineArtifactPreview({ artifact }: { artifact: Record<string, unknown> }) {
+    return (
+        <ArtifactCard artifact={artifact} className={styles.timelineArtifactCard} />
     );
 }
 
@@ -379,19 +459,40 @@ function ArtifactList({
                 {artifacts.map((artifact, index) => {
                     const artifactId = asString(artifact.id, `artifact-${index}`);
                     return (
-                        <details key={artifactId} className={styles.artifactCard}>
-                            <summary>
-                                <span>{asString(artifact.type, 'artifact')}</span>
-                                <code>{artifactId.slice(0, 8)}...</code>
-                                {typeof artifact.version === 'number' && (
-                                    <small>v{artifact.version}</small>
-                                )}
-                            </summary>
-                            <pre>{getArtifactText(artifact.content)}</pre>
-                        </details>
+                        <ArtifactCard key={artifactId} artifact={artifact} className={styles.artifactCard} />
                     );
                 })}
             </div>
         </div>
+    );
+}
+
+function ArtifactCard({
+    artifact,
+    className,
+}: {
+    artifact: Record<string, unknown>;
+    className: string;
+}) {
+    const artifactId = asString(artifact.id, 'artifact');
+    const preview = getArtifactPreview(artifact.content);
+
+    return (
+        <details className={className}>
+            <summary>
+                <span>{asString(artifact.type, 'artifact')}</span>
+                <code>{artifactId.slice(0, 8)}...</code>
+                {typeof artifact.version === 'number' && (
+                    <small>v{artifact.version}</small>
+                )}
+            </summary>
+            <div className={styles.artifactBody}>
+                {preview.format === 'markdown' ? (
+                    <MarkdownRenderer content={preview.content} compact />
+                ) : (
+                    <pre>{preview.content}</pre>
+                )}
+            </div>
+        </details>
     );
 }
