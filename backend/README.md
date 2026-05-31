@@ -63,6 +63,17 @@ pre-commit install
 pre-commit run --all-files
 ```
 
+### 数据库迁移
+
+生产环境 schema 由 Alembic 管理，不由应用启动自动改库：
+
+```bash
+cd backend
+uv run alembic upgrade head
+```
+
+本地开发仍保留 `create_all` 兼容路径；生产部署建议设置 `DATABASE_AUTO_SCHEMA_INIT=false`，并在应用启动前完成 Alembic upgrade。更多边界见 `../docs/database-migration.md`。
+
 ## 项目结构
 
 ```

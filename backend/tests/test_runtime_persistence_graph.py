@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import services.artifact_store as artifact_store_module
+import services.workflow_definition_service as workflow_definition_service_module
 from db import postgres_store as postgres_store_module
 from db.postgres_store import PostgresArtifactStore
 from graph.conditions import should_proceed_after_fact_check, should_regenerate_outline
@@ -77,12 +78,63 @@ def test_runtime_schema_statements_include_workflow_reference_columns():
     assert any("ADD COLUMN IF NOT EXISTS workflow_version_id" in stmt for stmt in statements)
 
 
+def test_runtime_schema_statements_match_audit_log_baseline_index():
+    statements = postgres_store_module._runtime_upgrade_statements(
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
+    )
+
+    assert any(
+        stmt == "CREATE INDEX IF NOT EXISTS ix_audit_logs_event_id ON audit_logs (event_id)"
+        for stmt in statements
+    )
+    assert not any(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_audit_logs_event_id" in stmt for stmt in statements
+    )
+
+
 def test_runtime_schema_statements_prepare_pgvector_before_metadata_create_all():
     statements = postgres_store_module._runtime_schema_statements(
         "postgresql+asyncpg://postgres:postgres@localhost:5432/promptchain"
     )
 
     assert "CREATE EXTENSION IF NOT EXISTS vector" in statements
+
+
+@pytest.mark.asyncio
+async def test_workflow_definition_schema_guard_skips_runtime_ddl(monkeypatch):
+    class FakeDialect:
+        name = "postgresql"
+
+    class FakeBind:
+        dialect = FakeDialect()
+
+    class FakeSession:
+        executed: list[str]
+        committed: bool
+
+        def __init__(self):
+            self.executed = []
+            self.committed = False
+
+        def get_bind(self):
+            return FakeBind()
+
+        async def execute(self, statement):
+            self.executed.append(str(statement))
+
+        async def commit(self):
+            self.committed = True
+
+    monkeypatch.setenv("DATABASE_AUTO_SCHEMA_INIT", "false")
+    workflow_definition_service_module.WorkflowDefinitionService._schema_ready = False
+    session = FakeSession()
+
+    await workflow_definition_service_module.WorkflowDefinitionService.ensure_schema(session)
+
+    assert session.executed == []
+    assert session.committed is False
+    assert workflow_definition_service_module.WorkflowDefinitionService._schema_ready is True
+    workflow_definition_service_module.WorkflowDefinitionService._schema_ready = False
 
 
 def test_split_migration_statements_handles_transactions_comments_and_do_blocks():
