@@ -672,26 +672,19 @@ class PostgresArtifactStore:
             )
         )
 
-    async def _run_with_session_retry(
+    async def _run_with_session(
         self,
         operation: Callable[[AsyncSession], Awaitable[T]],
     ) -> T:
-        """执行短生命周期数据库操作；若命中断连则清池后重试一次。"""
+        """执行短生命周期数据库操作。
+
+        写路径不能在断连后重放整个操作体，否则提交成功但响应丢失时会重复写入。
+        断连恢复交给 SQLAlchemy 的 pool_pre_ping / pool_recycle 处理。
+        """
         await self._ensure_initialized()
 
-        for attempt in range(2):
-            try:
-                async with self.async_session() as session:
-                    return await operation(session)
-            except Exception as exc:
-                should_retry = attempt == 0 and self._is_retryable_disconnect(exc)
-                if not should_retry:
-                    raise
-
-                # 旧连接已失效时，先清空连接池，下一次 checkout 才会重新建连。
-                await self.dispose()
-
-        raise RuntimeError("database operation retry loop exhausted unexpectedly")
+        async with self.async_session() as session:
+            return await operation(session)
 
     async def create_artifact(
         self,
@@ -757,7 +750,7 @@ class PostgresArtifactStore:
 
             return artifact
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_artifact(self, artifact_id: str) -> Artifact | None:
         """获取指定 Artifact"""
@@ -767,7 +760,7 @@ class PostgresArtifactStore:
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_version_history(self, artifact_id: str) -> list[Artifact]:
         """获取 Artifact 的完整版本历史链"""
@@ -792,7 +785,7 @@ class PostgresArtifactStore:
             await session.commit()
             return node_run
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def update_node_run(self, node_run: NodeRun) -> NodeRun:
         """更新节点运行记录"""
@@ -817,7 +810,7 @@ class PostgresArtifactStore:
                 await session.commit()
             return node_run
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_node_run(self, node_run_id: str) -> NodeRun | None:
         """获取节点运行记录"""
@@ -827,7 +820,7 @@ class PostgresArtifactStore:
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_node_runs_by_workflow(self, workflow_run_id: str) -> list[NodeRun]:
         """获取工作流的所有节点运行记录"""
@@ -841,7 +834,7 @@ class PostgresArtifactStore:
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_latest_node_run(self, workflow_run_id: str) -> NodeRun | None:
         """获取工作流最近一次节点运行。"""
@@ -855,7 +848,7 @@ class PostgresArtifactStore:
             orm = result.scalars().first()
             return orm.to_model() if orm else None
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def create_workflow_run(self, workflow_run: WorkflowRun) -> WorkflowRun:
         """创建工作流运行记录"""
@@ -866,7 +859,7 @@ class PostgresArtifactStore:
             await session.commit()
             return workflow_run
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def update_workflow_run(self, workflow_run: WorkflowRun) -> WorkflowRun:
         """更新工作流运行记录"""
@@ -891,7 +884,7 @@ class PostgresArtifactStore:
                 await session.commit()
             return workflow_run
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_workflow_run(self, workflow_run_id: str) -> WorkflowRun | None:
         """获取工作流运行记录"""
@@ -903,7 +896,7 @@ class PostgresArtifactStore:
             orm = result.scalar_one_or_none()
             return orm.to_model() if orm else None
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def list_workflow_runs(
         self,
@@ -925,7 +918,7 @@ class PostgresArtifactStore:
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_all_workflow_runs(self) -> list[WorkflowRun]:
         """获取所有工作流运行记录"""
@@ -937,7 +930,7 @@ class PostgresArtifactStore:
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_artifacts_by_workflow(self, workflow_run_id: str) -> list[Artifact]:
         """获取工作流的所有 Artifacts"""
@@ -949,7 +942,7 @@ class PostgresArtifactStore:
             orms = result.scalars().all()
             return [orm.to_model() for orm in orms]
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
     async def get_workflow_context(
         self,
@@ -1023,7 +1016,7 @@ class PostgresArtifactStore:
                 "edges": getattr(version, "edges", None),
             }
 
-        return await self._run_with_session_retry(_operation)
+        return await self._run_with_session(_operation)
 
 
 class PostgresGraphCheckpointSaver(BaseCheckpointSaver[str]):

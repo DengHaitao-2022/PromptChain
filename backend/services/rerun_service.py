@@ -135,6 +135,27 @@ class RerunService:
                             content
                         )
                         preserved_state["fact_check_artifact_id"] = aid
+                    elif artifact_type == ArtifactType.EVIDENCE_PACK.value:
+                        preserved_state["evidence_pack"] = content
+                        preserved_state["evidence_artifact_id"] = aid
+                        if isinstance(content, dict):
+                            preserved_state["citations"] = [
+                                {
+                                    "chunk_id": chunk.get("chunk_id"),
+                                    "document_id": chunk.get("document_id"),
+                                    "document_name": chunk.get("document_name"),
+                                    "score": chunk.get("score"),
+                                    "scope": chunk.get("scope"),
+                                    "page_number": chunk.get("page_number"),
+                                    "heading_path": chunk.get("heading_path") or [],
+                                }
+                                for chunk in content.get("chunks") or []
+                                if isinstance(chunk, dict)
+                            ]
+                            preserved_state["knowledge_conflicts"] = content.get("conflicts") or []
+                            preserved_state["unverified_points"] = (
+                                content.get("unverified_points") or []
+                            )
                     elif artifact_type == ArtifactType.FINAL_CONTENT.value:
                         preserved_state["final_content"] = content.get("sections", {})
                         preserved_state["final_content_artifact_id"] = aid
@@ -176,6 +197,7 @@ class RerunService:
                 "requested_model_provider_id",
                 "requested_model_name",
                 "runtime_plan",
+                "retrieval_config",
             )
             if key in original_metadata
         }

@@ -470,9 +470,9 @@ class KnowledgeService:
         if _is_workspace_scope(scope) and not check_permission(
             _normalize_role_value(role),
             "knowledge_base",
-            "manage",
+            "create",
         ):
-            raise ValueError("您没有 knowledge_base.manage 的权限")
+            raise ValueError("您没有 knowledge_base.create 的权限")
         owner_user_id = (
             user_id if scope in {KnowledgeScope.PERSONAL, KnowledgeScope.RUN_UPLOAD} else None
         )

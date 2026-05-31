@@ -40,6 +40,8 @@ services:
       API_PORT: 8000
       DEBUG: "false"
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?SECRETS_ENCRYPTION_KEY is required}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-promptchain}
       REDIS_URL: redis://redis:6379/0
       WORKFLOW_EVENT_BUS_BACKEND: ${WORKFLOW_EVENT_BUS_BACKEND:-redis}
@@ -72,10 +74,10 @@ services:
       KNOWLEDGE_INDEX_WORKER_ENABLED: ${KNOWLEDGE_INDEX_WORKER_ENABLED:-true}
       KNOWLEDGE_INDEX_WORKER_INTERVAL_SECONDS: ${KNOWLEDGE_INDEX_WORKER_INTERVAL_SECONDS:-2}
       KNOWLEDGE_INDEX_WORKER_BATCH_SIZE: ${KNOWLEDGE_INDEX_WORKER_BATCH_SIZE:-5}
-    volumes:
-      - knowledge_data:/app/.data/knowledge
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - knowledge_data:/app/.data/knowledge
     depends_on:
       postgres:
         condition: service_healthy

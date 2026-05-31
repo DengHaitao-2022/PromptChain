@@ -157,7 +157,7 @@ def _get_latest_artifact_by_type(
 
     if isinstance(preferred_id, str):
         preferred = artifacts.get(preferred_id)
-        if _is_record(preferred):
+        if _is_record(preferred) and preferred.get("type") == artifact_type:
             return preferred
 
     candidates = [

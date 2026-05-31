@@ -512,7 +512,7 @@ async def test_model_provider(
                 "static_validation",
                 "静态校验",
                 "failed",
-                f"模型供应商配置无效：{exc}",
+                f"模型供应商配置无效：{_sanitize_message(str(exc), None)}",
             )
         )
         steps.extend(

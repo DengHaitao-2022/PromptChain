@@ -6,7 +6,7 @@
 
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Edge, Node } from '@xyflow/react';
 import type { WebsocketProvider } from 'y-websocket';
 import { yNodes, yEdges, yMeta, ydoc, resetSharedDocument } from './ydoc';
@@ -44,8 +44,7 @@ export function useYjsBindings(
     const store = useWorkflowStoreInstance();
     const [status, setStatus] = useState<ConnectionStatus>('disconnected');
     const [providerInstance, setProviderInstance] = useState<WebsocketProvider | null>(null);
-    const draftRoomId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
-    const draftRoomRef = useRef(`draft-${draftRoomId}`);
+    const draftRoomRef = useRef<string | null>(null);
     const initialSourceRef = useRef<InitialSource>({
         nodes: initialNodes ?? [],
         edges: initialEdges ?? [],
@@ -61,7 +60,18 @@ export function useYjsBindings(
     }, [initialNodes, initialEdges, initialSnapshotKey]);
 
     useEffect(() => {
+        if (!workflowId && draftRoomRef.current === null) {
+            const randomId =
+                typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                    ? crypto.randomUUID()
+                    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            draftRoomRef.current = `draft-${randomId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+        }
+
         const docId = workflowId || draftRoomRef.current;
+        if (!docId) {
+            return;
+        }
         const { nodes: snapshotNodes, edges: snapshotEdges, snapshotKey } = initialSourceRef.current;
         resetSharedDocument();
 

@@ -23,7 +23,6 @@ from core.errors.codes import (
 from core.errors.exceptions import ApplicationError, DomainError
 from core.time import to_utc_iso, to_utc_iso_or_none
 from graph.runtime_plan import canonical_runtime_plan
-from models.artifact import WorkflowRunStatus
 from models.auth_models import MemberRole
 from models.knowledge import RetrievalConfig
 
@@ -520,13 +519,11 @@ async def _load_runtime_context(workflow_run_id: str) -> tuple[Any, Any, Any, di
     workflow = get_workflow()
     graph_state = await _get_graph_state(workflow, workflow_run_id)
     if graph_state.get("state_read_error"):
-        # checkpoint 读取失败必须进入运行记录，避免列表页继续把异常伪装成 running。
+        # checkpoint 读取失败只记录诊断信息，不把一次读路径异常固化成终态失败。
         metadata = _ensure_workflow_metadata(workflow_run)
         metadata["error"] = graph_state.get("error")
         metadata["state_read_error"] = graph_state.get("state_read_error")
-        metadata["last_public_status"] = "failed"
         workflow_run.metadata = metadata
-        workflow_run.status = WorkflowRunStatus.FAILED
         await store.update_workflow_run(workflow_run)
     status = _extract_workflow_status(workflow, workflow_run, graph_state)
     return store, workflow, workflow_run, graph_state, status
@@ -871,7 +868,7 @@ def _extract_workflow_status(workflow: Any, workflow_run: Any, graph_state: dict
             return graph_status
         if graph_status in {"completed", "failed"}:
             return graph_status
-        if graph_state.get("error"):
+        if graph_state.get("error") and not graph_state.get("state_read_error"):
             return "failed"
 
     raw_status = _get_workflow_run_status(workflow_run)

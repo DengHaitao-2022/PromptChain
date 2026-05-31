@@ -176,11 +176,11 @@ def test_personal_documents_are_hidden_from_other_workspace_members(run_with_kno
     run_with_knowledge_session(scenario)
 
 
-def test_workspace_kb_requires_manage_and_update_permissions(run_with_knowledge_session):
+def test_workspace_kb_requires_create_and_update_permissions(run_with_knowledge_session):
     async def scenario(knowledge_session):
         service = KnowledgeService(knowledge_session)
 
-        with pytest.raises(ValueError, match=r"knowledge_base\.manage"):
+        with pytest.raises(ValueError, match=r"knowledge_base\.create"):
             await service.create_knowledge_base(
                 workspace_id="ws-1",
                 user_id="user-owner",
@@ -189,6 +189,16 @@ def test_workspace_kb_requires_manage_and_update_permissions(run_with_knowledge_
                 description=None,
                 scope=KnowledgeScope.WORKSPACE,
             )
+
+        editor_kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.EDITOR,
+            name="编辑资料",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        assert editor_kb.name == "编辑资料"
 
         kb = await service.create_knowledge_base(
             workspace_id="ws-1",

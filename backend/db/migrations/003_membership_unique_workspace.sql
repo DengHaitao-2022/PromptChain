@@ -5,15 +5,22 @@ BEGIN;
 
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1
+    WITH ranked_memberships AS (
+        SELECT
+            id,
+            ROW_NUMBER() OVER (
+                PARTITION BY user_id, workspace_id
+                ORDER BY joined_at NULLS LAST, id
+            ) AS row_number
         FROM memberships
-        GROUP BY user_id, workspace_id
-        HAVING COUNT(*) > 1
-    ) THEN
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_user_workspace
-            ON memberships (user_id, workspace_id);
-    END IF;
+    )
+    DELETE FROM memberships
+    USING ranked_memberships
+    WHERE memberships.id = ranked_memberships.id
+      AND ranked_memberships.row_number > 1;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_membership_user_workspace
+        ON memberships (user_id, workspace_id);
 END $$;
 
 COMMIT;

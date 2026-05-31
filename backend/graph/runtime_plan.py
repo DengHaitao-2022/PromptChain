@@ -161,22 +161,33 @@ def compile_workflow_runtime_plan(workflow_context: dict[str, Any] | None) -> di
     fact_gate = (
         _first_gate(gate_nodes, after_index=checker_index) if checker_index is not None else None
     )
+    retrieval_process_types = {"knowledge", "rag_retrieve"}
+    retrieval_node = _first_process_node(process_nodes, retrieval_process_types)
+    content_process_nodes = [
+        node for node in process_nodes if node.get("raw_type") not in retrieval_process_types
+    ]
 
     steps: list[dict[str, Any]] = [
         _step("parse_intent", source_node=(input_nodes[0] if input_nodes else None)),
         _step(
             "retrieve_knowledge",
-            source_node=_first_process_node(process_nodes, {"knowledge", "rag_retrieve"}),
+            source_node=retrieval_node,
         ),
-        _step("generate_outline", source_node=(process_nodes[0] if process_nodes else None)),
+        _step(
+            "generate_outline",
+            source_node=(content_process_nodes[0] if content_process_nodes else None),
+        ),
     ]
 
     if outline_gate is not None:
         steps.append(_step("approve_outline", source_node=outline_gate))
 
-    self_refine_node = process_nodes[1] if len(process_nodes) > 1 else None
+    self_refine_node = content_process_nodes[1] if len(content_process_nodes) > 1 else None
     steps.append(
-        _step("generate_content", source_node=(process_nodes[0] if process_nodes else None))
+        _step(
+            "generate_content",
+            source_node=(content_process_nodes[0] if content_process_nodes else None),
+        )
     )
     if self_refine_node is not None:
         steps.append(_step("self_refine", source_node=self_refine_node))
@@ -194,7 +205,7 @@ def compile_workflow_runtime_plan(workflow_context: dict[str, Any] | None) -> di
         "steps": steps,
         "features": {
             "knowledge_retrieval": any(
-                node.get("raw_type") in {"knowledge", "rag_retrieve"} for node in typed_nodes
+                node.get("raw_type") in retrieval_process_types for node in typed_nodes
             ),
             "outline_gate": outline_gate is not None,
             "self_refine": self_refine_node is not None,

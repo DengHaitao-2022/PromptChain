@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
+from core.config import get_settings
 from core.errors.codes import (
     AUTH_ACCOUNT_SUSPENDED,
     AUTH_EMAIL_NOT_VERIFIED,
@@ -561,7 +562,8 @@ async def resend_verification_email(body: ResendVerificationEmailRequest):
         except EmailDeliveryError as e:
             await session.rollback()
             logger.exception("验证邮件重发失败，user_id=%s", user_id)
-            raise InfrastructureError(code=INFRA_EMAIL_SERVICE_ERROR, cause=e) from e
+            if get_settings().DEBUG:
+                raise InfrastructureError(code=INFRA_EMAIL_SERVICE_ERROR, cause=e) from e
 
         return MessageResponse(message="如果该邮箱需要验证，您将收到验证邮件")
 

@@ -9,6 +9,7 @@ from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from core.config import get_settings
 from services.auth_service import JWT_SECRET_KEY
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,12 @@ def _get_fernet() -> Fernet:
     if configured_key:
         return Fernet(configured_key.encode("utf-8"))
 
-    # 未配置专用密钥时，用 JWT_SECRET_KEY 派生，避免模型配置明文落库。
-    logger.warning("SECRETS_ENCRYPTION_KEY 未配置，使用 JWT_SECRET_KEY 派生临时密钥")
+    settings = get_settings()
+    if not settings.DEBUG:
+        raise RuntimeError("生产环境必须配置 SECRETS_ENCRYPTION_KEY 用于敏感配置加密")
+
+    # 开发模式保留兜底，避免本地调试时模型配置明文落库。
+    logger.warning("SECRETS_ENCRYPTION_KEY 未配置，开发模式使用 JWT_SECRET_KEY 派生临时密钥")
     return Fernet(_derive_fernet_key(JWT_SECRET_KEY))
 
 

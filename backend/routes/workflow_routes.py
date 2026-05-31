@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 INTERNAL_SERVER_ERROR = "Internal server error"
 MAX_RUN_UPLOAD_FILES = 5
 MAX_RUN_UPLOAD_BYTES = 20 * 1024 * 1024
+UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 
 def _format_sse_event(event: str, data: dict, event_id: str | None = None) -> str:
@@ -267,7 +268,13 @@ async def _read_run_upload_documents(files: list[UploadFile] | None) -> list[dic
     documents: list[dict] = []
     total_bytes = 0
     for upload in uploads:
-        content = await upload.read()
+        chunks: list[bytes] = []
+        while chunk := await upload.read(UPLOAD_CHUNK_SIZE):
+            total_bytes += len(chunk)
+            if total_bytes > MAX_RUN_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="本次运行上传资料总大小超过 20MB")
+            chunks.append(chunk)
+        content = b"".join(chunks)
         if not content:
             continue
         file_name = upload.filename or "untitled.txt"
@@ -275,9 +282,6 @@ async def _read_run_upload_documents(files: list[UploadFile] | None) -> list[dic
             validate_upload_file(file_name, content)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        total_bytes += len(content)
-        if total_bytes > MAX_RUN_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="本次运行上传资料总大小超过 20MB")
         documents.append(
             {
                 "file_name": file_name,
@@ -913,7 +917,7 @@ async def export_workflow_docx(workflow_run_id: str, request: Request):
 
     try:
         await workflow_helpers.require_workflow_run_access(
-            request, workflow_run_id, resource="workflow", action="read"
+            request, workflow_run_id, resource="workflow_run", action="export"
         )
         _, _, workflow_run, graph_state, status = await _load_runtime_context(workflow_run_id)
 
