@@ -23,6 +23,8 @@ from models.autonomous_agent import (
     AgentStep,
     AgentStepStatus,
     AgentStepType,
+    MemoryRecord,
+    MemoryType,
     ToolRiskLevel,
 )
 from services.artifact_store import ArtifactStore
@@ -135,6 +137,34 @@ def test_planner_failure_enters_clarification_gate_and_can_resume():
         assert clarified.error_message is None
         assert plans
         assert plans[0].metadata["artifact_id"]
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_memory_search_uses_partial_keywords_and_ranking():
+    async def _scenario(runtime, store, _):
+        await store.create_memory(
+            MemoryRecord(
+                workspace_id="ws-1",
+                memory_type=MemoryType.SEMANTIC,
+                content="发票自动化流程偏向结构化抽取和审批流，不适合作为当前 Agent 路线参考。",
+                confidence=0.95,
+            )
+        )
+        await store.create_memory(
+            MemoryRecord(
+                workspace_id="ws-1",
+                memory_type=MemoryType.PROCEDURAL,
+                content="Autonomous Agent 技术路线应优先覆盖 Planner、工具调用、评估和重规划闭环。",
+                confidence=0.8,
+            )
+        )
+
+        memories = await store.search_memories("ws-1", "Agent 技术路线 调研", limit=2)
+
+        assert memories
+        assert memories[0].memory_type == MemoryType.PROCEDURAL
+        assert "Planner" in memories[0].content
 
     asyncio.run(_with_runtime(_scenario))
 

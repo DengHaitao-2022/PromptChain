@@ -352,20 +352,30 @@ class AutonomousAgentStore:
         memory_types: list[MemoryType] | None = None,
         limit: int = 8,
     ) -> list[MemoryRecord]:
-        """按简单关键词检索记忆，后续可替换为向量检索。"""
+        """按多关键词召回并本地重排记忆，后续可替换为向量检索。"""
         filters = [MemoryRecordORM.workspace_id == workspace_id]
         if memory_types:
             filters.append(MemoryRecordORM.memory_type.in_([item.value for item in memory_types]))
-        if query.strip():
-            filters.append(MemoryRecordORM.content.ilike(f"%{query.strip()}%"))
+        query_terms = _memory_query_terms(query)
+        if query_terms:
+            filters.append(
+                or_(*[MemoryRecordORM.content.ilike(f"%{term}%") for term in query_terms])
+            )
 
         result = await self.session.execute(
             select(MemoryRecordORM)
             .where(*filters)
             .order_by(desc(MemoryRecordORM.confidence), desc(MemoryRecordORM.created_at))
-            .limit(limit)
+            .limit(max(limit * 3, limit))
         )
-        return [orm.to_model() for orm in result.scalars().all()]
+        memories = [orm.to_model() for orm in result.scalars().all()]
+        if not query_terms:
+            return memories[:limit]
+        return sorted(
+            memories,
+            key=lambda memory: _memory_rank(memory, query_terms),
+            reverse=True,
+        )[:limit]
 
     async def list_memories(self, workspace_id: str, limit: int = 50) -> list[MemoryRecord]:
         """列出工作空间记忆。"""
@@ -395,3 +405,34 @@ class AutonomousAgentStore:
     async def _get_run_orm(self, run_id: str) -> AgentRunORM | None:
         result = await self.session.execute(select(AgentRunORM).where(AgentRunORM.id == run_id))
         return result.scalar_one_or_none()
+
+
+def _memory_query_terms(query: str) -> list[str]:
+    """抽取可用于数据库召回的轻量关键词。"""
+    normalized = (
+        query.replace("，", " ")
+        .replace("。", " ")
+        .replace("、", " ")
+        .replace(",", " ")
+        .replace(".", " ")
+        .replace("/", " ")
+        .replace("\n", " ")
+    )
+    terms: list[str] = []
+    for token in normalized.split():
+        term = token.strip().lower()
+        if len(term) < 2 or term in terms:
+            continue
+        terms.append(term)
+        if len(terms) >= 8:
+            break
+    return terms
+
+
+def _memory_rank(memory: MemoryRecord, query_terms: list[str]) -> tuple[float, float]:
+    """按关键词覆盖率和置信度重排召回结果。"""
+    content = memory.content.lower()
+    metadata = str(memory.metadata or {}).lower()
+    matched = sum(1 for term in query_terms if term in content or term in metadata)
+    coverage = matched / max(len(query_terms), 1)
+    return (coverage, memory.confidence)
