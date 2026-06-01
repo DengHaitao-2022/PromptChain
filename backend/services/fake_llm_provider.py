@@ -230,6 +230,7 @@ def _build_structured_payload(schema: type[BaseModel], payload: Any) -> BaseMode
                             "description": "核查事实风险。",
                             "depends_on": ["generate_content"],
                             "tool_name": "fact_check",
+                            "input": {"mode": "auto"},
                             "expected_output": "事实核查结果",
                             "acceptance_criteria": ["输出风险项"],
                             "risk_level": "low",

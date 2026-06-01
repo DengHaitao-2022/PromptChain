@@ -516,6 +516,7 @@ class AutonomousPlanner:
                 description="对主体产物进行事实风险和绝对化表述核查。",
                 depends_on=["generate_content"],
                 tool_name="fact_check",
+                input={"mode": "auto"},
                 expected_output="事实风险核查结果",
                 acceptance_criteria=[
                     "核查结果包含风险项和修正建议",

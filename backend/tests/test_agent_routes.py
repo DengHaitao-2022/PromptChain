@@ -71,6 +71,8 @@ def test_agent_run_api_returns_full_autonomous_runtime_snapshot(monkeypatch):
     body = response.json()
     assert body["run"]["goal"].startswith("请围绕当前项目")
     assert body["run"]["metadata"]["planner_mode"] == "auto"
+    assert body["run"]["metadata"]["generation_mode"] == "auto"
+    assert body["run"]["metadata"]["fact_check_mode"] == "cove"
     assert body["plans"][0]["goal_card"]["task_type"] == "research_report"
     assert body["plans"][0]["metadata"]["planner_mode"] == "llm"
     assert body["plans"][0]["metadata"]["selected_template"] == "fake_llm_dynamic_plan"

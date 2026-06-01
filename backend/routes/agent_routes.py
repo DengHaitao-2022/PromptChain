@@ -38,6 +38,8 @@ class StartAgentRunRequest(BaseModel):
     budget_limit: dict[str, Any] = Field(default_factory=dict)
     auto_execute: bool = True
     planner_mode: str = Field(default="auto")
+    generation_mode: str = Field(default="auto")
+    fact_check_mode: str = Field(default="cove")
     model_provider_id: str | None = None
     model_provider_name: str | None = None
     model_name: str | None = None
@@ -180,6 +182,8 @@ async def start_agent_run(request: Request, body: StartAgentRunRequest):
                 auto_execute=body.auto_execute,
                 allowed_tool_permissions=_allowed_tool_permissions_for_role(role),
                 planner_mode=body.planner_mode,
+                generation_mode=body.generation_mode,
+                fact_check_mode=body.fact_check_mode,
                 model_provider_id=body.model_provider_id,
                 model_provider_name=body.model_provider_name,
                 model_name=body.model_name,

@@ -57,6 +57,12 @@ class Settings:
         self.AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED: bool = os.getenv(
             "AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED", "false"
         ).lower() in {"1", "true", "yes", "on"}
+        self.AUTONOMOUS_AGENT_LLM_GENERATION_ENABLED: bool = os.getenv(
+            "AUTONOMOUS_AGENT_LLM_GENERATION_ENABLED", "false"
+        ).lower() in {"1", "true", "yes", "on"}
+        self.AUTONOMOUS_AGENT_COVE_FACT_CHECK_ENABLED: bool = os.getenv(
+            "AUTONOMOUS_AGENT_COVE_FACT_CHECK_ENABLED", "false"
+        ).lower() in {"1", "true", "yes", "on"}
         self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
         self.ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
         self.GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

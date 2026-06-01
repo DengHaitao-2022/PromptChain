@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.prompts import ChatPromptTemplate
+
+from core.config import get_settings
 from core.time import utc_now_naive
 from models.artifact import ArtifactType, NodeRun, NodeRunStatus, WorkflowRun, WorkflowRunStatus
 from models.autonomous_agent import (
@@ -25,6 +28,36 @@ from services.autonomous_agent_evaluation import AgentEvaluator, AgentReflector,
 from services.autonomous_agent_planner import AutonomousPlanner
 from services.autonomous_agent_store import AutonomousAgentStore
 from services.autonomous_agent_tools import ToolExecutor, build_default_tool_registry
+from services.llm_provider import get_current_model_info_for_workspace, get_llm_for_workspace
+from services.llm_retry import invoke_with_llm_retry
+from services.llm_usage import ensure_usage_metadata, extract_usage_metadata
+
+AGENT_GENERATION_PROMPT = """你是 PromptChain 的 Autonomous Agent Generation 节点。
+
+请基于目标卡、动态计划图、上下文窗口和已收集证据生成可交付内容。
+
+## 用户目标
+{goal}
+
+## GoalCard
+{goal_card}
+
+## 动态计划图
+{plan_graph}
+
+## 当前上下文窗口
+{context_window}
+
+## 节点验收标准
+{acceptance_criteria}
+
+## 生成要求
+1. 直接生成完整主体内容，不要只复述计划。
+2. 内容必须覆盖 GoalCard 中的 deliverables、constraints、success_criteria。
+3. 若上下文或证据不足，明确标注“不确定/证据不足”，不要编造事实。
+4. 使用清晰标题和分节结构，适合后续 fact_check、evaluate 和 finalize 复用。
+5. 默认使用中文输出。
+"""
 
 
 class AutonomousAgentRuntime:
@@ -62,6 +95,8 @@ class AutonomousAgentRuntime:
         auto_execute: bool = True,
         allowed_tool_permissions: list[str] | None = None,
         planner_mode: str | None = None,
+        generation_mode: str | None = None,
+        fact_check_mode: str | None = None,
         model_provider_id: str | None = None,
         model_provider_name: str | None = None,
         model_name: str | None = None,
@@ -77,6 +112,8 @@ class AutonomousAgentRuntime:
         }
         for key, value in {
             "planner_mode": planner_mode,
+            "generation_mode": generation_mode,
+            "fact_check_mode": fact_check_mode,
             "model_provider_id": model_provider_id,
             "model_provider_name": model_provider_name,
             "model_name": model_name,
@@ -640,11 +677,23 @@ class AutonomousAgentRuntime:
             payload = {
                 **node.input,
                 "workspace_id": run.workspace_id,
+                "user_id": run.user_id,
                 "workflow_run_id": run.id,
                 "goal": run.goal,
+                "model_provider_id": self._metadata_str(run, "model_provider_id"),
+                "model_provider_name": self._metadata_str(run, "model_provider_name"),
+                "model_name": self._metadata_str(run, "model_name"),
             }
             if node.tool_name == "fact_check" and "text" not in payload:
                 payload["text"] = await self._latest_step_text(run.id)
+            if node.tool_name == "fact_check":
+                run_fact_check_mode = self._fact_check_mode(run)
+                if not payload.get("mode") or run_fact_check_mode != "auto":
+                    payload["mode"] = run_fact_check_mode
+                payload.setdefault(
+                    "evidence_context",
+                    await self._fact_check_evidence_context(run.id),
+                )
             tool_call = await self.tool_executor.execute(
                 run_id=run.id,
                 tool_name=node.tool_name,
@@ -656,7 +705,7 @@ class AutonomousAgentRuntime:
             return self._tool_output(tool_call)
         if node.step_type == AgentStepType.GENERATION:
             context_window = await self.memory.build_context_window(run=run)
-            content = self._build_generated_content(run, plan, context_window)
+            content = await self._build_generation_payload(run, plan, node, context_window)
             tool_call = await self.tool_executor.execute(
                 run_id=run.id,
                 tool_name=node.tool_name or "write_artifact",
@@ -1003,6 +1052,19 @@ class AutonomousAgentRuntime:
                 return text
         return ""
 
+    async def _fact_check_evidence_context(self, run_id: str) -> str:
+        """把前序证据类步骤压缩为 CoVe 可消费的 Evidence Context。"""
+        steps = await self.store.list_steps(run_id)
+        evidence_chunks: list[str] = []
+        for step in steps:
+            if step.node_id not in {"retrieve_memory", "collect_evidence", "collect_trace"}:
+                continue
+            text = self._flatten_text(step.output).strip()
+            if not text:
+                continue
+            evidence_chunks.append(f"### {step.title}\n{text[:1800]}")
+        return "\n\n".join(evidence_chunks[-4:])
+
     def _flatten_text(self, value: Any) -> str:
         """把嵌套输出压缩为可传给工具的文本。"""
         if value is None:
@@ -1015,11 +1077,94 @@ class AutonomousAgentRuntime:
             return " ".join(self._flatten_text(item) for item in value)
         return str(value)
 
+    async def _build_generation_payload(
+        self,
+        run: AgentRun,
+        plan: AgentPlan,
+        node: PlanNode,
+        context_window: dict[str, Any],
+    ) -> dict[str, Any]:
+        """按配置优先使用 LLM 生成主体内容，失败时降级到确定性模板。"""
+        if not self._should_use_llm_generation(run):
+            return self._build_generated_content(
+                run,
+                plan,
+                context_window,
+                generation_mode="template",
+            )
+
+        try:
+            return await self._generate_content_with_llm(run, plan, node, context_window)
+        except Exception as exc:
+            content = self._build_generated_content(
+                run,
+                plan,
+                context_window,
+                generation_mode="template_fallback",
+            )
+            content["fallback_reason"] = str(exc)[:1000]
+            return content
+
+    async def _generate_content_with_llm(
+        self,
+        run: AgentRun,
+        plan: AgentPlan,
+        node: PlanNode,
+        context_window: dict[str, Any],
+    ) -> dict[str, Any]:
+        """调用运行时模型生成真实主体交付物。"""
+        model_provider_id = self._metadata_str(run, "model_provider_id")
+        model_provider_name = self._metadata_str(run, "model_provider_name")
+        model_name = self._metadata_str(run, "model_name")
+        llm = await get_llm_for_workspace(
+            run.workspace_id,
+            model=model_name,
+            model_provider_id=model_provider_id,
+            model_provider_name=model_provider_name,
+            temperature=0.7,
+        )
+        model_info = await get_current_model_info_for_workspace(
+            run.workspace_id,
+            model_provider_id=model_provider_id,
+            model_provider_name=model_provider_name,
+            model=model_name,
+        )
+        prompt = ChatPromptTemplate.from_template(AGENT_GENERATION_PROMPT)
+        chain = prompt | llm
+        prompt_payload = {
+            "goal": run.goal,
+            "goal_card": plan.goal_card.model_dump(mode="json"),
+            "plan_graph": plan.plan_graph.model_dump(mode="json"),
+            "context_window": context_window,
+            "acceptance_criteria": node.acceptance_criteria,
+        }
+        result = await invoke_with_llm_retry(lambda: chain.ainvoke(prompt_payload))
+        generated_text = str(getattr(result, "content", result)).strip()
+        usage = ensure_usage_metadata(
+            extract_usage_metadata(result),
+            prompt_text=str(prompt_payload),
+            completion_text=generated_text,
+        )
+        return {
+            "goal": run.goal,
+            "title": f"{plan.goal_card.task_type} 自主生成草案",
+            "deliverables": plan.goal_card.deliverables,
+            "context_window": context_window,
+            "body": generated_text,
+            "success_criteria": plan.goal_card.success_criteria,
+            "generation_mode": "llm",
+            "generation_prompt_version": "autonomous-agent-generation-v1",
+            "llm_usage": usage,
+            "llm_model": model_info,
+        }
+
     def _build_generated_content(
         self,
         run: AgentRun,
         plan: AgentPlan,
         context_window: dict[str, Any],
+        *,
+        generation_mode: str = "template",
     ) -> dict[str, Any]:
         return {
             "goal": run.goal,
@@ -1039,7 +1184,32 @@ class AutonomousAgentRuntime:
                 "每次工具调用、评估结果和重规划记录都会被持久化，便于回放和审计。"
             ),
             "success_criteria": plan.goal_card.success_criteria,
+            "generation_mode": generation_mode,
         }
+
+    def _should_use_llm_generation(self, run: AgentRun) -> bool:
+        """判断生成节点是否启用真实 LLM；auto 模式失败会自动回退模板。"""
+        mode = str(run.metadata.get("generation_mode") or "").strip().lower()
+        if mode in {"template", "rule", "disabled", "off"}:
+            return False
+        if mode in {"llm", "auto"}:
+            return True
+        env_value = str(
+            getattr(get_settings(), "AUTONOMOUS_AGENT_LLM_GENERATION_ENABLED", False)
+        ).lower()
+        return env_value in {"1", "true", "yes", "on"}
+
+    def _fact_check_mode(self, run: AgentRun) -> str:
+        """读取事实核查模式；默认 auto，由工具自行决定 CoVe 或兜底扫描。"""
+        mode = str(run.metadata.get("fact_check_mode") or "").strip().lower()
+        return mode if mode else "auto"
+
+    def _metadata_str(self, run: AgentRun, key: str) -> str | None:
+        """读取可选模型元数据。"""
+        value = run.metadata.get(key)
+        if value in (None, ""):
+            return None
+        return str(value)
 
     def _latest_artifact_id(self, steps: list[AgentStep]) -> str | None:
         for step in reversed(steps):

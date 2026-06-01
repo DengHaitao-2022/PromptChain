@@ -149,6 +149,7 @@ def test_llm_planner_generates_dynamic_plan_with_fake_provider():
                 user_id="user-1",
                 workspace_id="ws-1",
                 auto_execute=False,
+                model_provider_name="fake",
             )
             detail = await runtime.get_detail(run.id)
 
@@ -171,6 +172,58 @@ def test_llm_planner_generates_dynamic_plan_with_fake_provider():
             else:
                 os.environ["AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED"] = original_llm_planner
             get_settings.cache_clear()
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_generation_node_uses_llm_with_fake_provider():
+    async def _scenario(runtime, _, __):
+        run = await runtime.start(
+            goal="请生成一份 Autonomous Agent 真实生成链路验收材料",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=True,
+            generation_mode="llm",
+            fact_check_mode="lightweight",
+            model_provider_name="fake",
+        )
+        detail = await runtime.get_detail(run.id)
+        generated_step = next(
+            step for step in detail["steps"] if step["node_id"] == "generate_content"
+        )
+        content = generated_step["output"]["artifact"]["content"]
+
+        assert content["generation_mode"] == "llm"
+        assert "fake provider" in content["body"]
+        assert content["llm_usage"]["total_tokens"] > 0
+        assert content["llm_model"]["provider"] == "fake"
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_fact_check_tool_uses_cove_with_fake_provider():
+    async def _scenario(runtime, _, __):
+        run = await runtime.start(
+            goal="验证 CoVe fact_check 工具",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=False,
+        )
+        tool_call = await runtime.tool_executor.execute(
+            run_id=run.id,
+            tool_name="fact_check",
+            payload={
+                "text": "PromptChain 在 2026 年支持 Autonomous Agent 运行态。",
+                "mode": "cove",
+                "model_provider_name": "fake",
+                "evidence_context": "PromptChain 已实现 AgentRun、PlanGraph、ToolCall 审计。",
+            },
+        )
+
+        assert tool_call.status.value == "completed"
+        assert tool_call.output["fact_check_mode"] == "cove"
+        assert tool_call.output["claim_count"] == 0
+        assert tool_call.output["llm_usage"]["total_tokens"] > 0
 
     asyncio.run(_with_runtime(_scenario))
 

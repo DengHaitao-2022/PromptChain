@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.config import get_settings
 from core.time import utc_now_naive
 from models.artifact import ArtifactType
 from models.autonomous_agent import (
@@ -17,6 +18,7 @@ from models.autonomous_agent import (
     ToolDefinition,
     ToolRiskLevel,
 )
+from models.fact_check import FactCheckReport
 from models.knowledge import KnowledgeScope, KnowledgeSearchRequest
 from services.artifact_store import ArtifactStore
 from services.autonomous_agent_store import AutonomousAgentStore
@@ -189,6 +191,143 @@ def _preview(value: Any, *, limit: int = 480) -> str:
     """把结构化证据压缩为短预览，避免工具输出过大。"""
     text = str(value)
     return text if len(text) <= limit else f"{text[:limit]}..."
+
+
+def _wants_cove_fact_check(payload: dict[str, Any]) -> bool:
+    """根据 payload 和配置判断是否运行 CoVe 核查链。"""
+    mode = str(payload.get("mode") or "auto").strip().lower()
+    if mode in {"lightweight", "keyword", "scan", "disabled"}:
+        return False
+    if mode == "cove":
+        return True
+    return get_settings().AUTONOMOUS_AGENT_COVE_FACT_CHECK_ENABLED
+
+
+def _lightweight_fact_check(text: str) -> dict[str, Any]:
+    """保留低成本关键词扫描，作为无模型或 CoVe 失败时的兜底。"""
+    risky_terms = ["绝对", "唯一", "保证", "100%", "从不"]
+    findings = [
+        {"term": term, "risk": "medium", "suggestion": "改为更可验证的限定表述"}
+        for term in risky_terms
+        if term in text
+    ]
+    return {
+        "passed": not findings,
+        "findings": findings,
+        "checked_length": len(text),
+        "fact_check_mode": "lightweight",
+    }
+
+
+def _format_agent_fact_evidence(payload: dict[str, Any], *, limit: int = 6000) -> str:
+    """把 Agent 工具 payload 中的证据压缩为 CoVe Evidence Context。"""
+    explicit = payload.get("evidence_context")
+    if explicit:
+        text = str(explicit)
+        return text[:limit]
+
+    evidence: list[str] = []
+    for key in ("knowledge_evidence", "artifact_evidence", "trace_evidence", "tool_evidence"):
+        value = payload.get(key)
+        if not value:
+            continue
+        evidence.append(f"## {key}\n{_preview(value, limit=1600)}")
+
+    return "\n\n".join(evidence)[:limit] or "未启用知识库或未检索到可用证据。"
+
+
+async def _run_cove_fact_check(payload: dict[str, Any], text: str) -> dict[str, Any]:
+    """复用内容链路 CoVe 四步核查，生成可审计事实核查报告。"""
+    from nodes.fact_checker import (
+        evaluate_claim_accuracy,
+        execute_verification,
+        extract_fact_claims,
+        generate_verification_question,
+    )
+
+    workspace_id = _optional_str(payload.get("workspace_id"))
+    model_provider_id = _optional_str(payload.get("model_provider_id"))
+    model_provider_name = _optional_str(payload.get("model_provider_name"))
+    model_name = _optional_str(payload.get("model_name"))
+    evidence_context = _format_agent_fact_evidence(payload)
+    max_claims = max(1, min(int(payload.get("max_claims") or 8), 20))
+
+    claims, usage = await extract_fact_claims(
+        text,
+        str(payload.get("section_id") or "agent_output"),
+        workspace_id,
+        model_provider_id,
+        model_provider_name,
+        model_name,
+    )
+    all_usage = dict(usage)
+    results = []
+    trace: list[dict[str, Any]] = []
+
+    for claim in claims[:max_claims]:
+        question, question_usage = await generate_verification_question(
+            claim,
+            workspace_id,
+            model_provider_id,
+            model_provider_name,
+            model_name,
+        )
+        answer, answer_usage = await execute_verification(
+            question,
+            workspace_id,
+            model_provider_id,
+            model_provider_name,
+            model_name,
+            evidence_context=evidence_context,
+        )
+        result, evaluation_usage = await evaluate_claim_accuracy(
+            claim,
+            question,
+            answer,
+            workspace_id,
+            model_provider_id,
+            model_provider_name,
+            model_name,
+        )
+        results.append(result)
+        trace.append(
+            {
+                "claim_id": claim.id,
+                "claim": claim.text,
+                "question": question,
+                "answer": answer,
+                "risk_level": result.risk_level,
+                "is_verified": result.is_verified,
+                "confidence": result.confidence,
+                "suggested_correction": result.suggested_correction,
+            }
+        )
+        for current_usage in (question_usage, answer_usage, evaluation_usage):
+            for key, value in current_usage.items():
+                all_usage[key] = int(all_usage.get(key, 0)) + int(value or 0)
+
+    report = FactCheckReport(claims=claims[:max_claims], results=results)
+    report.compute_stats()
+    findings = [
+        {
+            "claim_id": item.claim_id,
+            "risk": item.risk_level,
+            "suggestion": item.suggested_correction or "补充证据或改写为限定表述",
+        }
+        for item in results
+        if item.risk_level in {"medium", "high"} or not item.is_verified
+    ]
+    return {
+        "passed": not report.has_high_risk_items(),
+        "findings": findings,
+        "checked_length": len(text),
+        "fact_check_mode": "cove",
+        "claim_count": len(report.claims),
+        "report": report.model_dump(mode="json"),
+        "verification_trace": trace,
+        "llm_usage": all_usage,
+        "evidence_context_preview": _preview(evidence_context, limit=1000),
+    }
 
 
 class ToolRegistry:
@@ -518,17 +657,15 @@ def build_default_tool_registry(
 
     async def fact_check(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
         text = str(payload.get("text") or "")
-        risky_terms = ["绝对", "唯一", "保证", "100%", "从不"]
-        findings = [
-            {"term": term, "risk": "medium", "suggestion": "改为更可验证的限定表述"}
-            for term in risky_terms
-            if term in text
-        ]
-        return {
-            "passed": not findings,
-            "findings": findings,
-            "checked_length": len(text),
-        }
+        if not _wants_cove_fact_check(payload):
+            return _lightweight_fact_check(text)
+        try:
+            return await _run_cove_fact_check(payload, text)
+        except Exception as exc:
+            fallback = _lightweight_fact_check(text)
+            fallback["fact_check_mode"] = "lightweight_fallback"
+            fallback["fallback_reason"] = str(exc)[:1000]
+            return fallback
 
     async def export_docx(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
         return {
@@ -601,7 +738,7 @@ def build_default_tool_registry(
     registry.register(
         ToolDefinition(
             name="fact_check",
-            description="对文本进行轻量事实风险核查。",
+            description="对文本进行 CoVe 事实核查；无模型或失败时回退轻量风险扫描。",
             input_schema={"type": "object", "required": ["text"]},
             output_schema={"type": "object"},
             risk_level=ToolRiskLevel.LOW,
