@@ -228,6 +228,149 @@ def test_fact_check_tool_uses_cove_with_fake_provider():
     asyncio.run(_with_runtime(_scenario))
 
 
+def test_evaluator_flags_fact_check_and_evidence_failures():
+    async def _scenario(runtime, store, _):
+        run = await runtime.start(
+            goal="验证 Autonomous Agent 事实核查和证据评估",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=False,
+        )
+        plan = await store.get_plan(run.current_plan_id)
+        assert plan is not None
+
+        fact_step = AgentStep(
+            run_id=run.id,
+            plan_id=plan.id,
+            node_id="fact_check_content",
+            step_type=AgentStepType.TOOL_CALL,
+            title="事实核查",
+            description="构造未通过的事实核查",
+            status=AgentStepStatus.COMPLETED,
+            output={
+                "passed": False,
+                "fact_check_mode": "cove",
+                "findings": [{"risk": "high"}],
+                "report": {"high_risk_count": 1, "unverified_count": 1, "total_claims": 1},
+            },
+        )
+        fact_eval = runtime.evaluator.evaluate_step(run, fact_step)
+        assert not fact_eval.passed
+        assert any(issue["code"] == "FACT_CHECK_FAILED" for issue in fact_eval.issues)
+        assert any(
+            suggestion["action"] == "collect_evidence_and_recheck"
+            for suggestion in fact_eval.suggestions
+        )
+
+        evidence_step = AgentStep(
+            run_id=run.id,
+            plan_id=plan.id,
+            node_id="collect_evidence",
+            step_type=AgentStepType.TOOL_CALL,
+            title="收集证据",
+            description="构造空证据输出",
+            status=AgentStepStatus.COMPLETED,
+            output={"artifact_count": 0, "artifacts": []},
+        )
+        evidence_eval = runtime.evaluator.evaluate_step(run, evidence_step)
+        assert not evidence_eval.passed
+        assert any(issue["code"] == "EVIDENCE_INSUFFICIENT" for issue in evidence_eval.issues)
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_replanner_selects_repair_strategy_by_root_cause():
+    async def _scenario(runtime, store, _):
+        run = await runtime.start(
+            goal="验证 Autonomous Agent 重规划策略",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=False,
+        )
+        plan = await store.get_plan(run.current_plan_id)
+        assert plan is not None
+
+        fact_step = await store.create_step(
+            AgentStep(
+                run_id=run.id,
+                plan_id=plan.id,
+                node_id="fact_check_content",
+                step_type=AgentStepType.TOOL_CALL,
+                title="事实核查",
+                description="构造事实核查失败",
+                status=AgentStepStatus.COMPLETED,
+                output={
+                    "passed": False,
+                    "fact_check_mode": "cove",
+                    "report": {"high_risk_count": 1, "unverified_count": 1, "total_claims": 1},
+                },
+            )
+        )
+        eval_result = runtime.evaluator.evaluate_step(run, fact_step)
+        reflection = runtime.reflector.reflect(
+            run=run,
+            step=fact_step,
+            eval_result=eval_result,
+        )
+
+        new_plan = await runtime._replan(run, plan, fact_step, reflection)
+        repair_node = next(
+            node for node in new_plan.plan_graph.nodes if node.id.startswith("repair_2_")
+        )
+
+        assert new_plan.metadata["repair_strategy"] == "fact_check_repair"
+        assert repair_node.tool_name == "fact_check"
+        assert repair_node.input["mode"] == "cove"
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_final_evaluator_requires_final_artifact_and_resolved_fact_risk():
+    async def _scenario(runtime, store, _):
+        run = await runtime.start(
+            goal="验证 Autonomous Agent 最终交付评估",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=False,
+        )
+        plan = await store.get_plan(run.current_plan_id)
+        assert plan is not None
+        steps = [
+            AgentStep(
+                run_id=run.id,
+                plan_id=plan.id,
+                node_id="generate_content",
+                step_type=AgentStepType.GENERATION,
+                title="生成内容",
+                description="构造内容",
+                status=AgentStepStatus.COMPLETED,
+                output={"body": "验证 Autonomous Agent 最终交付评估"},
+            ),
+            AgentStep(
+                run_id=run.id,
+                plan_id=plan.id,
+                node_id="fact_check_content",
+                step_type=AgentStepType.TOOL_CALL,
+                title="事实核查",
+                description="构造高风险事实核查",
+                status=AgentStepStatus.COMPLETED,
+                output={
+                    "passed": False,
+                    "fact_check_mode": "cove",
+                    "report": {"high_risk_count": 1, "unverified_count": 1, "total_claims": 1},
+                },
+            ),
+        ]
+
+        final_eval = runtime.evaluator.evaluate_final_output(run, steps, [])
+
+        assert not final_eval.passed
+        assert any(issue["code"] == "FINAL_FACTUAL_RISK_UNRESOLVED" for issue in final_eval.issues)
+        assert any(issue["code"] == "FINAL_ARTIFACT_MISSING" for issue in final_eval.issues)
+
+    asyncio.run(_with_runtime(_scenario))
+
+
 def test_llm_planner_falls_back_when_schema_is_invalid():
     async def _scenario(runtime, _, __):
         original_provider = os.environ.get("DEFAULT_LLM_PROVIDER")

@@ -238,7 +238,7 @@ def _format_agent_fact_evidence(payload: dict[str, Any], *, limit: int = 6000) -
 
 async def _run_cove_fact_check(payload: dict[str, Any], text: str) -> dict[str, Any]:
     """复用内容链路 CoVe 四步核查，生成可审计事实核查报告。"""
-    from nodes.fact_checker import (
+    from services.cove_fact_check import (
         evaluate_claim_accuracy,
         execute_verification,
         extract_fact_claims,

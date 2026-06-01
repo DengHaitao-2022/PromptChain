@@ -326,6 +326,9 @@ class AutonomousPlanner:
         edges = [edge.model_copy(deep=True) for edge in previous_plan.plan_graph.edges]
         repair_node_id = f"repair_{next_version}_{failed_node_id}"
         evaluate_node_id = f"evaluate_repair_{next_version}_{failed_node_id}"
+        repair_strategy = self._repair_strategy(reflection)
+        repair_step_type = repair_strategy["step_type"]
+        repair_tool_name = repair_strategy.get("tool_name")
 
         # 将失败节点的直接下游改为等待修复复评，避免新计划绕过修复步骤继续执行。
         for node in nodes:
@@ -343,14 +346,14 @@ class AutonomousPlanner:
         nodes.append(
             PlanNode(
                 id=repair_node_id,
-                title="补充修复步骤",
-                step_type=AgentStepType.TOOL_CALL,
-                description=reflection.get("repair_action")
-                or "根据失败原因补充资料、修正输出并保留证据。",
+                title=repair_strategy["title"],
+                step_type=repair_step_type,
+                description=reflection.get("repair_action") or repair_strategy["description"],
                 depends_on=[failed_node_id],
-                tool_name="write_artifact",
-                expected_output="修复后的中间产物",
-                acceptance_criteria=["修复产物明确回应失败原因", "修复内容可被后续评估引用"],
+                tool_name=repair_tool_name,
+                input=repair_strategy.get("input", {}),
+                expected_output=repair_strategy["expected_output"],
+                acceptance_criteria=repair_strategy["acceptance_criteria"],
                 risk_level=ToolRiskLevel.LOW,
             )
         )
@@ -391,8 +394,67 @@ class AutonomousPlanner:
             ),
             created_by="replanner",
             reason=reflection.get("summary") or "step_quality_replan",
-            metadata={"failed_node_id": failed_node_id, "reflection": reflection},
+            metadata={
+                "failed_node_id": failed_node_id,
+                "reflection": reflection,
+                "repair_strategy": repair_strategy["id"],
+            },
         )
+
+    def _repair_strategy(self, reflection: dict[str, Any]) -> dict[str, Any]:
+        """按失败原因选择最小可行修复节点，避免所有重规划都走同一种策略。"""
+        root_cause = str(reflection.get("root_cause") or "")
+        if root_cause == "EVIDENCE_INSUFFICIENT":
+            return {
+                "id": "collect_more_evidence",
+                "title": "补充证据",
+                "step_type": AgentStepType.TOOL_CALL,
+                "tool_name": "retrieve_trace",
+                "description": "读取更多 Trace/Artifact 证据，补齐后续生成或核查上下文。",
+                "input": {"limit": 30},
+                "expected_output": "补充证据摘要",
+                "acceptance_criteria": ["输出包含 Trace 或 Artifact 来源", "证据可供后续步骤引用"],
+            }
+        if root_cause == "FACT_CHECK_FAILED":
+            return {
+                "id": "fact_check_repair",
+                "title": "事实风险修复",
+                "step_type": AgentStepType.TOOL_CALL,
+                "tool_name": "fact_check",
+                "description": "基于补充证据重新执行事实核查，定位需改写的事实风险。",
+                "input": {"mode": "cove"},
+                "expected_output": "复核后的事实风险报告",
+                "acceptance_criteria": ["事实核查报告可审计", "高风险项数量下降或明确修正建议"],
+            }
+        if root_cause == "LOW_GOAL_COVERAGE":
+            return {
+                "id": "rewrite_generation",
+                "title": "补写目标覆盖内容",
+                "step_type": AgentStepType.GENERATION,
+                "tool_name": "write_artifact",
+                "description": "围绕缺失目标关键词重新生成或补写主体内容。",
+                "expected_output": "补写后的主体内容",
+                "acceptance_criteria": ["覆盖缺失目标", "产物可被后续事实核查引用"],
+            }
+        if root_cause in {"TOOL_RESULT_ERROR", "STEP_ERROR"}:
+            return {
+                "id": "tool_retry_repair",
+                "title": "工具调用修复",
+                "step_type": AgentStepType.TOOL_CALL,
+                "tool_name": "read_artifact",
+                "description": "更换为低风险读工具收集上下文，避免原工具错误继续阻断计划。",
+                "expected_output": "工具修复上下文",
+                "acceptance_criteria": ["工具输出无 error 字段", "修复上下文可用于后续步骤"],
+            }
+        return {
+            "id": "write_repair_artifact",
+            "title": "补充修复步骤",
+            "step_type": AgentStepType.TOOL_CALL,
+            "tool_name": "write_artifact",
+            "description": "根据失败原因补充资料、修正输出并保留证据。",
+            "expected_output": "修复后的中间产物",
+            "acceptance_criteria": ["修复产物明确回应失败原因", "修复内容可被后续评估引用"],
+        }
 
     def _build_candidate_plan_graphs(
         self, goal_card: GoalCard, memory_hits: list[dict]
