@@ -51,6 +51,16 @@ function getDocumentReadyCount(documents: KnowledgeDocument[]) {
   return documents.filter((document) => document.index_status === 'ready').length;
 }
 
+function hasIndexingDocuments(documents: KnowledgeDocument[]) {
+  return documents.some(
+    (document) =>
+      document.parse_status === 'pending' ||
+      document.parse_status === 'processing' ||
+      document.index_status === 'pending' ||
+      document.index_status === 'processing',
+  );
+}
+
 export default function KnowledgePage() {
   const { user, workspace, hasPermission } = useAuth();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
@@ -98,6 +108,7 @@ export default function KnowledgePage() {
   const activeCount = knowledgeBases.filter((item) => item.status === 'active').length;
   const personalCount = knowledgeBases.filter((item) => item.scope === 'personal').length;
   const readyDocumentCount = getDocumentReadyCount(documents);
+  const shouldPollDocumentStatus = hasIndexingDocuments(documents);
   const averageChunksPerSearch = usageStats?.average_chunks_per_search ?? 0;
 
   const loadKnowledgeBases = useCallback(async () => {
@@ -157,6 +168,19 @@ export default function KnowledgePage() {
   useEffect(() => {
     void loadDocuments(selectedKbId);
   }, [loadDocuments, selectedKbId]);
+
+  useEffect(() => {
+    if (!selectedKbId || !shouldPollDocumentStatus) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadDocuments(selectedKbId);
+      void loadKnowledgeBases();
+    }, 3000);
+
+    return () => window.clearInterval(intervalId);
+  }, [loadDocuments, loadKnowledgeBases, selectedKbId, shouldPollDocumentStatus]);
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -545,7 +569,12 @@ export default function KnowledgePage() {
             <div key={document.id} className={styles.tableRow}>
               <span className={styles.documentName}>
                 <FileText size={16} aria-hidden="true" />
-                {document.file_name}
+                <span>
+                  {document.file_name}
+                  {document.error_message ? (
+                    <small className={styles.documentError}>{document.error_message}</small>
+                  ) : null}
+                </span>
               </span>
               <span>{getStatusLabel(document.parse_status)}</span>
               <span>{getStatusLabel(document.index_status)}</span>

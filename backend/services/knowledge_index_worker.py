@@ -6,12 +6,13 @@ import asyncio
 import logging
 from contextlib import suppress
 
-from sqlalchemy import and_, select
-
 from core.config import get_settings
 from db.postgres_store import get_postgres_store
-from models.knowledge import KnowledgeDocumentStatus
-from orm.knowledge_orm import KnowledgeDocumentORM
+from services.knowledge_index_queue import (
+    KnowledgeIndexJob,
+    dispose_knowledge_index_queue,
+    get_knowledge_index_queue,
+)
 from services.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
@@ -19,27 +20,47 @@ logger = logging.getLogger(__name__)
 _worker_task: asyncio.Task | None = None
 
 
-async def _pending_document_ids(limit: int) -> list[str]:
+async def _claim_document_ids(limit: int) -> list[str]:
     async with get_postgres_store().initialized_session() as session:
-        result = await session.execute(
-            select(KnowledgeDocumentORM.id)
-            .where(
-                and_(
-                    KnowledgeDocumentORM.parse_status == KnowledgeDocumentStatus.PENDING.value,
-                    KnowledgeDocumentORM.index_status == KnowledgeDocumentStatus.PENDING.value,
-                )
-            )
-            .order_by(KnowledgeDocumentORM.created_at.asc())
-            .limit(limit)
+        return await KnowledgeService(session).claim_pending_documents_for_indexing(limit=limit)
+
+
+async def _claim_queued_document_ids(jobs: list[KnowledgeIndexJob]) -> list[str]:
+    async with get_postgres_store().initialized_session() as session:
+        return await KnowledgeService(session).claim_documents_for_indexing(
+            document_ids=[job.document_id for job in jobs],
         )
-        return list(result.scalars().all())
+
+
+async def _ack_job(job: KnowledgeIndexJob) -> None:
+    try:
+        await get_knowledge_index_queue().ack(job)
+    except Exception:
+        logger.exception("知识库索引队列 ACK 失败 document_id=%s", job.document_id)
 
 
 async def index_pending_documents(*, limit: int | None = None) -> int:
     """处理一批待索引文档，返回实际处理数量。"""
     settings = get_settings()
     batch_size = limit or settings.KNOWLEDGE_INDEX_WORKER_BATCH_SIZE
-    document_ids = await _pending_document_ids(batch_size)
+    jobs: list[KnowledgeIndexJob] = []
+    if settings.KNOWLEDGE_INDEX_QUEUE_BACKEND == "redis":
+        try:
+            jobs = await get_knowledge_index_queue().read(
+                count=batch_size,
+                block_ms=settings.KNOWLEDGE_INDEX_QUEUE_BLOCK_MS,
+            )
+        except Exception:
+            logger.exception("读取知识库 Redis 索引队列失败，已回退数据库扫描")
+
+    document_ids = await _claim_queued_document_ids(jobs) if jobs else []
+    claimed_ids = set(document_ids)
+    for job in jobs:
+        if job.document_id not in claimed_ids:
+            await _ack_job(job)
+
+    if not document_ids:
+        document_ids = await _claim_document_ids(batch_size)
     if not document_ids:
         return 0
 
@@ -52,6 +73,9 @@ async def index_pending_documents(*, limit: int | None = None) -> int:
                 logger.exception("知识库后台索引任务失败 document_id=%s", document_id)
             finally:
                 processed += 1
+                for job in jobs:
+                    if job.document_id == document_id:
+                        await _ack_job(job)
     return processed
 
 
@@ -70,6 +94,18 @@ async def _worker_loop() -> None:
         except Exception:
             logger.exception("知识库后台索引循环异常")
             await asyncio.sleep(interval_seconds)
+
+
+async def run_knowledge_index_worker_forever() -> None:
+    """作为独立进程运行知识库索引 worker。"""
+    settings = get_settings()
+    if not settings.KNOWLEDGE_INDEX_WORKER_ENABLED:
+        logger.info("知识库索引 worker 已通过配置关闭")
+        return
+    try:
+        await _worker_loop()
+    finally:
+        await dispose_knowledge_index_queue()
 
 
 def start_knowledge_index_worker() -> None:
@@ -92,3 +128,9 @@ async def stop_knowledge_index_worker() -> None:
     with suppress(asyncio.CancelledError):
         await _worker_task
     _worker_task = None
+    await dispose_knowledge_index_queue()
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run_knowledge_index_worker_forever())

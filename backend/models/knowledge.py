@@ -230,6 +230,72 @@ class RetrievalEvaluationResponse(BaseModel):
 
     summary: RetrievalEvaluationSummary
     results: list[RetrievalEvaluationResult]
+    evaluation_run_id: str | None = None
+
+
+class GenerationFaithfulnessCase(BaseModel):
+    """单条生成忠实性评测用例。"""
+
+    id: str | None = None
+    query: str = Field(..., min_length=1)
+    answer: str = Field(..., min_length=1)
+    contexts: list[str] = Field(default_factory=list)
+    evidence_pack: EvidencePack | None = None
+    ground_truth: str | None = None
+
+
+class GenerationFaithfulnessEvaluationRequest(BaseModel):
+    """生成忠实性评测请求。"""
+
+    cases: list[GenerationFaithfulnessCase] = Field(..., min_length=1, max_length=30)
+    provider: str | None = Field(default=None, pattern="^(heuristic|llm|ragas)$")
+
+
+class GenerationFaithfulnessEvaluationResult(BaseModel):
+    """单条生成忠实性评测结果。"""
+
+    case_id: str | None = None
+    query: str
+    faithfulness_score: float = Field(ge=0, le=1)
+    passed: bool
+    provider: str
+    reason: str
+    unsupported_claims: list[str] = Field(default_factory=list)
+
+
+class GenerationFaithfulnessEvaluationSummary(BaseModel):
+    """生成忠实性评测汇总。"""
+
+    total_cases: int
+    pass_count: int
+    pass_rate: float
+    mean_faithfulness_score: float
+    provider: str
+
+
+class RetrievalEvaluationRun(BaseModel):
+    """已持久化的评测运行摘要。"""
+
+    id: str
+    workspace_id: str
+    user_id: str
+    evaluation_type: str = "retrieval"
+    summary: RetrievalEvaluationSummary | GenerationFaithfulnessEvaluationSummary
+    created_at: datetime = Field(default_factory=utc_now_naive)
+
+
+class RetrievalEvaluationRunListResponse(BaseModel):
+    """评测运行列表响应。"""
+
+    runs: list[RetrievalEvaluationRun]
+
+
+class GenerationFaithfulnessEvaluationResponse(BaseModel):
+    """生成忠实性评测响应。"""
+
+    summary: GenerationFaithfulnessEvaluationSummary
+    results: list[GenerationFaithfulnessEvaluationResult]
+    evaluation_run_id: str | None = None
 
 
 class KnowledgeUsageStats(BaseModel):

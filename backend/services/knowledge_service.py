@@ -9,6 +9,7 @@ import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,9 @@ from models.auth_models import MemberRole
 from models.knowledge import (
     EvidenceChunk,
     EvidencePack,
+    GenerationFaithfulnessEvaluationRequest,
+    GenerationFaithfulnessEvaluationResponse,
+    GenerationFaithfulnessEvaluationSummary,
     KnowledgeBase,
     KnowledgeBaseStatus,
     KnowledgeChunk,
@@ -36,6 +40,7 @@ from models.knowledge import (
     RetrievalEvaluationRequest,
     RetrievalEvaluationResponse,
     RetrievalEvaluationResult,
+    RetrievalEvaluationRun,
     RetrievalEvaluationSummary,
     RetrievalMode,
 )
@@ -44,7 +49,14 @@ from orm.knowledge_orm import (
     KnowledgeChunkORM,
     KnowledgeDocumentORM,
     KnowledgeEmbeddingORM,
+    KnowledgeRetrievalEvaluationRunORM,
     KnowledgeRetrievalLogORM,
+)
+from services.knowledge_generation_evaluator import GenerationFaithfulnessEvaluator
+from services.knowledge_index_queue import get_knowledge_index_queue
+from services.knowledge_object_storage import (
+    get_knowledge_object_storage,
+    get_knowledge_object_storage_for_uri,
 )
 from services.llm_usage import estimate_tokens
 from services.permission_service import check_permission
@@ -55,6 +67,16 @@ SUPPORTED_DOCUMENT_TYPES = {*SUPPORTED_TEXT_TYPES, "docx", "pdf"}
 DOCX_ZIP_MAGIC = b"PK"
 PDF_MAGIC = b"%PDF"
 logger = logging.getLogger(__name__)
+
+
+def _evaluation_summary_from_json(
+    evaluation_type: str,
+    summary_json: dict[str, Any],
+) -> RetrievalEvaluationSummary | GenerationFaithfulnessEvaluationSummary:
+    """按评测类型解析持久化 summary。"""
+    if evaluation_type == "generation_faithfulness":
+        return GenerationFaithfulnessEvaluationSummary.model_validate(summary_json or {})
+    return RetrievalEvaluationSummary.model_validate(summary_json or {})
 
 
 def _normalize_file_type(file_name: str) -> str:
@@ -308,9 +330,10 @@ class Chunker:
 class EmbeddingProvider:
     """Embedding provider；默认本地 hash，可通过环境变量切换 OpenAI。"""
 
-    def __init__(self):
+    def __init__(self, provider_name: str | None = None):
         self.settings = get_settings()
-        self._last_provider_name = self.settings.KNOWLEDGE_EMBEDDING_PROVIDER
+        self._provider_name = provider_name or self.settings.KNOWLEDGE_EMBEDDING_PROVIDER
+        self._last_provider_name = self._provider_name
         self._last_model_name = self.settings.KNOWLEDGE_EMBEDDING_MODEL
 
     @property
@@ -333,7 +356,9 @@ class EmbeddingProvider:
         return (await self.embed_documents([text]))[0]
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        if self.settings.KNOWLEDGE_EMBEDDING_PROVIDER == "openai":
+        if self._should_force_hash_provider():
+            return self._embed_with_hash(texts)
+        if self._provider_name == "openai":
             try:
                 from langchain_openai import OpenAIEmbeddings
 
@@ -351,6 +376,18 @@ class EmbeddingProvider:
                 logger.warning("OpenAI embedding 不可用，已回退本地 hash provider: %s", exc)
                 return self._embed_with_hash(texts)
         return self._embed_with_hash(texts)
+
+    def for_scope(self, scope: KnowledgeScope) -> EmbeddingProvider:
+        """为指定知识库范围选择 provider，默认避免个人资料外发。"""
+        provider = EmbeddingProvider()
+        if scope in {KnowledgeScope.PERSONAL, KnowledgeScope.RUN_UPLOAD} and (
+            not self.settings.KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING_FOR_PRIVATE_SCOPES
+        ):
+            return EmbeddingProvider(provider_name="hash")
+        return provider
+
+    def _should_force_hash_provider(self) -> bool:
+        return self._provider_name == "hash"
 
     def _embed_with_hash(self, texts: list[str]) -> list[list[float]]:
         self._last_provider_name = "hash"
@@ -409,6 +446,7 @@ class KnowledgeService:
         self.chunker = Chunker()
         self.embedding_provider = EmbeddingProvider()
         self.reranker_provider = RerankerProvider()
+        self.object_storage = get_knowledge_object_storage()
 
     def _ensure_kb_operation_allowed(
         self,
@@ -579,7 +617,7 @@ class KnowledgeService:
         await self.session.delete(row)
         await self.session.commit()
         for storage_path in storage_paths:
-            Path(storage_path).unlink(missing_ok=True)
+            await get_knowledge_object_storage_for_uri(storage_path).delete(storage_path)
 
     async def add_document(
         self,
@@ -604,7 +642,12 @@ class KnowledgeService:
         await self._ensure_document_limit(kb_id=kb.id, file_name=file_name)
 
         document_id = str(uuid.uuid4())
-        storage_uri = self._write_original_file(workspace_id, document_id, file_name, content)
+        storage_uri = await self.object_storage.put_document(
+            workspace_id=workspace_id,
+            document_id=document_id,
+            file_name=file_name,
+            content=content,
+        )
         version_result = await self.session.execute(
             select(KnowledgeDocumentORM.version)
             .where(
@@ -635,6 +678,7 @@ class KnowledgeService:
         )
         self.session.add(document)
         await self.session.flush()
+        document.knowledge_base = kb
 
         if index_immediately:
             await self._index_document_row(document, content, metadata or {})
@@ -642,6 +686,8 @@ class KnowledgeService:
         document.updated_at = utc_now_naive()
         kb.updated_at = utc_now_naive()
         await self.session.commit()
+        if not index_immediately:
+            await self.enqueue_document_for_indexing(document_id)
         await self.session.refresh(document)
         return _row_to_document(document)
 
@@ -664,7 +710,9 @@ class KnowledgeService:
             await self.session.refresh(document)
             return _row_to_document(document)
 
-        content = Path(document.storage_uri).read_bytes()
+        content = await get_knowledge_object_storage_for_uri(document.storage_uri).get_bytes(
+            document.storage_uri,
+        )
         _validate_upload_content(document.file_type, content)
         await self._index_document_row(document, content, document.metadata_json or {})
         document.updated_at = utc_now_naive()
@@ -673,6 +721,74 @@ class KnowledgeService:
         await self.session.commit()
         await self.session.refresh(document)
         return _row_to_document(document)
+
+    async def claim_pending_documents_for_indexing(self, *, limit: int) -> list[str]:
+        """领取待索引文档，PostgreSQL 多实例下通过行锁避免重复索引。"""
+        if limit <= 0:
+            return []
+
+        return await self._claim_documents_for_indexing(limit=limit)
+
+    async def claim_documents_for_indexing(self, *, document_ids: list[str]) -> list[str]:
+        """按队列消息领取指定文档，避免重复处理已 ready 或正被其他 worker 领取的任务。"""
+        normalized_ids = [document_id for document_id in dict.fromkeys(document_ids) if document_id]
+        if not normalized_ids:
+            return []
+
+        return await self._claim_documents_for_indexing(
+            limit=len(normalized_ids),
+            document_ids=normalized_ids,
+        )
+
+    async def _claim_documents_for_indexing(
+        self,
+        *,
+        limit: int,
+        document_ids: list[str] | None = None,
+    ) -> list[str]:
+        """领取索引任务的共享实现。"""
+        now = utc_now_naive()
+        stale_cutoff = now - timedelta(
+            seconds=get_settings().KNOWLEDGE_INDEX_WORKER_STALE_SECONDS,
+        )
+        claim_conditions = or_(
+            and_(
+                KnowledgeDocumentORM.parse_status == KnowledgeDocumentStatus.PENDING.value,
+                KnowledgeDocumentORM.index_status == KnowledgeDocumentStatus.PENDING.value,
+            ),
+            and_(
+                KnowledgeDocumentORM.index_status == KnowledgeDocumentStatus.PROCESSING.value,
+                KnowledgeDocumentORM.updated_at <= stale_cutoff,
+            ),
+        )
+        statement = (
+            select(KnowledgeDocumentORM)
+            .where(claim_conditions)
+            .order_by(KnowledgeDocumentORM.updated_at.asc(), KnowledgeDocumentORM.created_at.asc())
+            .limit(limit)
+        )
+        if document_ids is not None:
+            statement = statement.where(KnowledgeDocumentORM.id.in_(document_ids))
+        bind = self.session.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            statement = statement.with_for_update(skip_locked=True)
+
+        result = await self.session.execute(statement)
+        documents = list(result.scalars().all())
+        for document in documents:
+            document.parse_status = KnowledgeDocumentStatus.PROCESSING.value
+            document.index_status = KnowledgeDocumentStatus.PROCESSING.value
+            document.error_message = None
+            document.updated_at = now
+        await self.session.commit()
+        return [document.id for document in documents]
+
+    async def enqueue_document_for_indexing(self, document_id: str) -> None:
+        """投递文档索引任务；投递失败时保留 pending 状态供数据库兜底扫描。"""
+        try:
+            await get_knowledge_index_queue().enqueue(document_id)
+        except Exception:
+            logger.exception("知识库索引任务入队失败 document_id=%s", document_id)
 
     async def _index_document_row(
         self,
@@ -734,21 +850,6 @@ class KnowledgeService:
         if len(active_file_names) >= max_documents:
             raise ValueError(f"知识库文档数量不能超过 {max_documents} 个")
 
-    def _write_original_file(
-        self,
-        workspace_id: str,
-        document_id: str,
-        file_name: str,
-        content: bytes,
-    ) -> str:
-        storage_root = Path(get_settings().KNOWLEDGE_STORAGE_DIR)
-        workspace_dir = storage_root / workspace_id
-        workspace_dir.mkdir(parents=True, exist_ok=True)
-        safe_suffix = Path(file_name).suffix or ".txt"
-        target = workspace_dir / f"{document_id}{safe_suffix}"
-        target.write_bytes(content)
-        return str(target)
-
     async def _replace_document_chunks(
         self,
         document: KnowledgeDocumentORM,
@@ -759,7 +860,10 @@ class KnowledgeService:
             delete(KnowledgeChunkORM).where(KnowledgeChunkORM.document_id == document.id)
         )
         chunk_specs = self.chunker.split(text)
-        embeddings = await self.embedding_provider.embed_documents(
+        embedding_provider = self.embedding_provider.for_scope(
+            KnowledgeScope(document.knowledge_base.scope)
+        )
+        embeddings = await embedding_provider.embed_documents(
             [spec["content"] for spec in chunk_specs]
         )
         for index, (spec, vector) in enumerate(zip(chunk_specs, embeddings, strict=False)):
@@ -786,7 +890,7 @@ class KnowledgeService:
                 KnowledgeEmbeddingORM(
                     id=str(uuid.uuid4()),
                     chunk_id=chunk.id,
-                    embedding_model=self.embedding_provider.effective_model_name,
+                    embedding_model=embedding_provider.effective_model_name,
                     vector_json=vector,
                     # pgvector 生产索引列固定为 1536 维；测试或本地 hash 维度不一致时仅保留 JSON 回退向量。
                     embedding_vector=pgvector_value,
@@ -866,7 +970,7 @@ class KnowledgeService:
         await self.session.delete(document)
         await self.session.commit()
         if storage_uri:
-            Path(storage_uri).unlink(missing_ok=True)
+            await get_knowledge_object_storage_for_uri(storage_uri).delete(storage_uri)
 
     async def update_document_status(
         self,
@@ -910,13 +1014,18 @@ class KnowledgeService:
         if not document.storage_uri:
             raise ValueError("文档缺少原始文件，无法重建索引")
         if index_immediately:
-            await self._index_document_row(document, Path(document.storage_uri).read_bytes(), {})
+            content = await get_knowledge_object_storage_for_uri(document.storage_uri).get_bytes(
+                document.storage_uri,
+            )
+            await self._index_document_row(document, content, {})
         else:
             document.parse_status = KnowledgeDocumentStatus.PENDING.value
             document.index_status = KnowledgeDocumentStatus.PENDING.value
             document.error_message = None
         document.updated_at = utc_now_naive()
         await self.session.commit()
+        if not index_immediately:
+            await self.enqueue_document_for_indexing(document_id)
         await self.session.refresh(document)
         return _row_to_document(document)
 
@@ -1047,22 +1156,139 @@ class KnowledgeService:
 
         total_cases = len(results)
         hit_count = sum(1 for result in results if result.hit)
-        return RetrievalEvaluationResponse(
-            summary=RetrievalEvaluationSummary(
-                total_cases=total_cases,
-                hit_count=hit_count,
-                hit_rate=round(hit_count / max(1, total_cases), 4),
-                mean_reciprocal_rank=round(
-                    sum(result.reciprocal_rank for result in results) / max(1, total_cases),
-                    4,
-                ),
-                mean_precision_at_k=round(
-                    sum(result.precision_at_k for result in results) / max(1, total_cases),
-                    4,
-                ),
-                empty_expected_count=empty_expected_count,
+        summary = RetrievalEvaluationSummary(
+            total_cases=total_cases,
+            hit_count=hit_count,
+            hit_rate=round(hit_count / max(1, total_cases), 4),
+            mean_reciprocal_rank=round(
+                sum(result.reciprocal_rank for result in results) / max(1, total_cases),
+                4,
             ),
+            mean_precision_at_k=round(
+                sum(result.precision_at_k for result in results) / max(1, total_cases),
+                4,
+            ),
+            empty_expected_count=empty_expected_count,
+        )
+        evaluation_run = KnowledgeRetrievalEvaluationRunORM(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace_id,
+            user_id=user_id,
+            evaluation_type="retrieval",
+            request_json=request.model_dump(mode="json"),
+            summary_json=summary.model_dump(mode="json"),
+            results_json=[result.model_dump(mode="json") for result in results],
+        )
+        self.session.add(evaluation_run)
+        await self.session.commit()
+        return RetrievalEvaluationResponse(
+            summary=summary,
             results=results,
+            evaluation_run_id=evaluation_run.id,
+        )
+
+    async def evaluate_generation_faithfulness(
+        self,
+        *,
+        request: GenerationFaithfulnessEvaluationRequest,
+        workspace_id: str,
+        user_id: str,
+    ) -> GenerationFaithfulnessEvaluationResponse:
+        """评测生成内容是否忠实于证据上下文。"""
+        evaluator = GenerationFaithfulnessEvaluator(
+            workspace_id=workspace_id,
+            provider=request.provider,
+        )
+        results = [await evaluator.evaluate_case(case) for case in request.cases]
+        total_cases = len(results)
+        pass_count = sum(1 for result in results if result.passed)
+        provider = results[0].provider if results else request.provider or "heuristic"
+        summary = GenerationFaithfulnessEvaluationSummary(
+            total_cases=total_cases,
+            pass_count=pass_count,
+            pass_rate=round(pass_count / max(1, total_cases), 4),
+            mean_faithfulness_score=round(
+                sum(result.faithfulness_score for result in results) / max(1, total_cases),
+                4,
+            ),
+            provider=provider,
+        )
+        evaluation_run = KnowledgeRetrievalEvaluationRunORM(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace_id,
+            user_id=user_id,
+            evaluation_type="generation_faithfulness",
+            request_json=request.model_dump(mode="json"),
+            summary_json=summary.model_dump(mode="json"),
+            results_json=[result.model_dump(mode="json") for result in results],
+        )
+        self.session.add(evaluation_run)
+        await self.session.commit()
+        return GenerationFaithfulnessEvaluationResponse(
+            summary=summary,
+            results=results,
+            evaluation_run_id=evaluation_run.id,
+        )
+
+    async def list_evaluation_runs(
+        self,
+        *,
+        workspace_id: str,
+        user_id: str,
+        role: Any | None = None,
+        limit: int = 20,
+        evaluation_type: str | None = None,
+    ) -> list[RetrievalEvaluationRun]:
+        """列出评测历史，非管理者只看自己发起的评测。"""
+        filters = [KnowledgeRetrievalEvaluationRunORM.workspace_id == workspace_id]
+        if evaluation_type:
+            filters.append(KnowledgeRetrievalEvaluationRunORM.evaluation_type == evaluation_type)
+        if role is None or not check_permission(
+            _normalize_role_value(role),
+            "knowledge_base",
+            "manage",
+        ):
+            filters.append(KnowledgeRetrievalEvaluationRunORM.user_id == user_id)
+
+        result = await self.session.execute(
+            select(KnowledgeRetrievalEvaluationRunORM)
+            .where(and_(*filters))
+            .order_by(KnowledgeRetrievalEvaluationRunORM.created_at.desc())
+            .limit(max(1, min(limit, 100)))
+        )
+        runs: list[RetrievalEvaluationRun] = []
+        for row in result.scalars().all():
+            row_evaluation_type = getattr(row, "evaluation_type", None) or "retrieval"
+            runs.append(
+                RetrievalEvaluationRun(
+                    id=row.id,
+                    workspace_id=row.workspace_id,
+                    user_id=row.user_id,
+                    evaluation_type=row_evaluation_type,
+                    summary=_evaluation_summary_from_json(
+                        row_evaluation_type,
+                        row.summary_json or {},
+                    ),
+                    created_at=row.created_at,
+                )
+            )
+        return runs
+
+    async def list_retrieval_evaluation_runs(
+        self,
+        *,
+        workspace_id: str,
+        user_id: str,
+        role: Any | None = None,
+        limit: int = 20,
+    ) -> list[RetrievalEvaluationRun]:
+        """兼容旧接口，默认只列出检索评测历史。"""
+        return await self.list_evaluation_runs(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            role=role,
+            limit=limit,
+            evaluation_type="retrieval",
         )
 
     async def get_usage_stats(

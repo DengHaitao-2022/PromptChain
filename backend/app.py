@@ -110,6 +110,7 @@ def _register_routes(application: FastAPI) -> None:
 async def _lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """集中管理应用启动和关闭资源。"""
     from db.postgres_store import dispose_postgres_store
+    from services.knowledge_index_queue import dispose_knowledge_index_queue
     from services.knowledge_index_worker import (
         start_knowledge_index_worker,
         stop_knowledge_index_worker,
@@ -123,6 +124,7 @@ async def _lifespan(_application: FastAPI) -> AsyncIterator[None]:
     finally:
         # 热重载或进程退出时主动释放外部连接，减少残留失效连接。
         await stop_knowledge_index_worker()
+        await dispose_knowledge_index_queue()
         await dispose_workflow_event_bus()
         await dispose_postgres_store()
 

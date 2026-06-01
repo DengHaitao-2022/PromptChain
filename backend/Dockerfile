@@ -18,7 +18,12 @@ RUN apt-get update \
 RUN pip install --no-cache-dir uv
 
 COPY backend/pyproject.toml backend/uv.lock backend/README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+ARG BACKEND_EXTRAS=""
+RUN if [ -n "${BACKEND_EXTRAS}" ]; then \
+        uv sync --frozen --no-dev --no-install-project --extra "${BACKEND_EXTRAS}"; \
+    else \
+        uv sync --frozen --no-dev --no-install-project; \
+    fi
 
 COPY backend/app.py backend/main.py ./
 COPY backend/alembic.ini ./alembic.ini

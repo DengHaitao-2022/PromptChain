@@ -24,6 +24,8 @@ jobs:
     outputs:
       backend-python: ${{ steps.filter.outputs.backend_python }}
       frontend-source: ${{ steps.filter.outputs.frontend_source }}
+      backend-migrations: ${{ steps.filter.outputs.backend_migrations }}
+      e2e-source: ${{ steps.filter.outputs.e2e_source }}
 
     steps:
       - name: 检出代码
@@ -49,18 +51,30 @@ jobs:
           printf '%s\n' "${changed_files}"
 
           backend_python=false
+          backend_migrations=false
           frontend_source=false
+          e2e_source=false
 
           if printf '%s\n' "${changed_files}" | grep -Eq '^backend/.*\.py$'; then
             backend_python=true
           fi
 
-          if printf '%s\n' "${changed_files}" | grep -Eq '^(frontend/src/|frontend/(eslint\.config\.mjs|next\.config\.ts|tsconfig\.json|package(-lock)?\.json))'; then
+          if printf '%s\n' "${changed_files}" | grep -Eq '^(backend/alembic/|backend/alembic\.ini|backend/orm/|backend/models/.*_orm\.py|backend/db/postgres_store\.py)'; then
+            backend_migrations=true
+          fi
+
+          if printf '%s\n' "${changed_files}" | grep -Eq '^(frontend/src/|frontend/tests/e2e/|frontend/(eslint\.config\.mjs|next\.config\.ts|tsconfig\.json|package(-lock)?\.json|playwright\.config\.ts))'; then
             frontend_source=true
           fi
 
+          if printf '%s\n' "${changed_files}" | grep -Eq '^(frontend/tests/e2e/|frontend/playwright\.config\.ts|frontend/package(-lock)?\.json)'; then
+            e2e_source=true
+          fi
+
           echo "backend_python=${backend_python}" >> "${GITHUB_OUTPUT}"
+          echo "backend_migrations=${backend_migrations}" >> "${GITHUB_OUTPUT}"
           echo "frontend_source=${frontend_source}" >> "${GITHUB_OUTPUT}"
+          echo "e2e_source=${e2e_source}" >> "${GITHUB_OUTPUT}"
 
   infrastructure:
     name: 基础设施配置检查
@@ -80,6 +94,9 @@ jobs:
       - name: 校验生产 Compose 配置
         env:
           POSTGRES_PASSWORD: local-check
+          MINIO_ROOT_PASSWORD: local-check-minio-root
+          KNOWLEDGE_S3_ACCESS_KEY_ID: local-check-s3-access-key
+          KNOWLEDGE_S3_SECRET_ACCESS_KEY: local-check-s3-secret-key
           JWT_SECRET_KEY: local-check-jwt-secret
           SECRETS_ENCRYPTION_KEY: local-check-secrets-encryption-key
         run: docker compose -f docker-compose.prod.yml config
@@ -110,11 +127,65 @@ jobs:
         working-directory: backend
         env:
           ALLOW_INSECURE_JWT_SECRET: "true"
+          DATABASE_AUTO_SCHEMA_INIT: "true"
         run: uv run pytest tests -q
 
       - name: 跳过 Ruff 检查说明
         if: needs.changes.outputs.backend-python != 'true'
         run: echo "本次 PR 未修改 backend/**/*.py，跳过后端 Ruff gate；基础设施配置检查仍会阻塞。"
+
+  migrations:
+    name: 生产迁移流水线检查
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+    if: needs.changes.outputs.backend-migrations == 'true'
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: promptchain_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d promptchain_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 安装 PostgreSQL 客户端
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Alembic 升级检查
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/promptchain_ci
+          ALLOW_INSECURE_JWT_SECRET: "true"
+          DATABASE_AUTO_SCHEMA_INIT: "false"
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d promptchain_ci -c 'CREATE EXTENSION IF NOT EXISTS vector'
+          uv run alembic heads
+          uv run alembic upgrade head
+
+      - name: Alembic 回滚冒烟
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/promptchain_ci
+          ALLOW_INSECURE_JWT_SECRET: "true"
+          DATABASE_AUTO_SCHEMA_INIT: "false"
+        run: |
+          uv run alembic downgrade -1
+          uv run alembic upgrade head
 
   frontend:
     name: 前端质量检查
@@ -157,6 +228,16 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: npm run build
+
+      - name: 安装 Playwright Chromium
+        if: needs.changes.outputs.e2e-source == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright E2E 浏览器测试
+        if: needs.changes.outputs.e2e-source == 'true'
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npm run test:e2e
 
       - name: 跳过前端类型检查和构建说明
         if: needs.changes.outputs.frontend-source != 'true'

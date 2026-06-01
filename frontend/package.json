@@ -13,7 +13,8 @@
     "dev:prod": "concurrently \"npm run yjs\" \"npm run dev\"",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -45,6 +46,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@playwright/test": "^1.58.2",
     "@y/websocket-server": "^0.1.5",
     "concurrently": "^9.2.1",
     "eslint": "^9",
