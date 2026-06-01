@@ -37,6 +37,10 @@ class StartAgentRunRequest(BaseModel):
     autonomy_level: str = Field(default="supervised")
     budget_limit: dict[str, Any] = Field(default_factory=dict)
     auto_execute: bool = True
+    planner_mode: str = Field(default="auto")
+    model_provider_id: str | None = None
+    model_provider_name: str | None = None
+    model_name: str | None = None
 
 
 class AgentGateDecisionRequest(BaseModel):
@@ -175,6 +179,10 @@ async def start_agent_run(request: Request, body: StartAgentRunRequest):
                 budget_limit=body.budget_limit,
                 auto_execute=body.auto_execute,
                 allowed_tool_permissions=_allowed_tool_permissions_for_role(role),
+                planner_mode=body.planner_mode,
+                model_provider_id=body.model_provider_id,
+                model_provider_name=body.model_provider_name,
+                model_name=body.model_name,
             )
             detail = await runtime.get_detail(run.id)
             return detail

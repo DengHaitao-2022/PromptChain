@@ -13,6 +13,7 @@ import db.postgres_store as postgres_store_module
 import routes.agent_routes as agent_routes
 import routes.workflow_helpers as workflow_helpers
 import services.artifact_store as artifact_store_module
+from core.config import get_settings
 from main import app
 from routes.auth_routes import ACCESS_TOKEN_COOKIE
 from services.artifact_store import ArtifactStore
@@ -54,6 +55,8 @@ def _client(
 
 def test_agent_run_api_returns_full_autonomous_runtime_snapshot(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DEFAULT_LLM_PROVIDER", "fake")
+    get_settings.cache_clear()
     client = _client(monkeypatch)
 
     response = client.post(
@@ -67,7 +70,10 @@ def test_agent_run_api_returns_full_autonomous_runtime_snapshot(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["run"]["goal"].startswith("请围绕当前项目")
+    assert body["run"]["metadata"]["planner_mode"] == "auto"
     assert body["plans"][0]["goal_card"]["task_type"] == "research_report"
+    assert body["plans"][0]["metadata"]["planner_mode"] == "llm"
+    assert body["plans"][0]["metadata"]["selected_template"] == "fake_llm_dynamic_plan"
     assert body["plans"][0]["plan_graph"]["nodes"]
     assert body["steps"]
     assert body["tool_calls"]

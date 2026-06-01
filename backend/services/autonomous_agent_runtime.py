@@ -61,22 +61,35 @@ class AutonomousAgentRuntime:
         budget_limit: dict[str, Any] | None = None,
         auto_execute: bool = True,
         allowed_tool_permissions: list[str] | None = None,
+        planner_mode: str | None = None,
+        model_provider_id: str | None = None,
+        model_provider_name: str | None = None,
+        model_name: str | None = None,
     ) -> AgentRun:
         """创建并可选立即执行 AgentRun。"""
+        metadata: dict[str, Any] = {
+            "auto_execute": auto_execute,
+            **(
+                {"allowed_tool_permissions": allowed_tool_permissions}
+                if allowed_tool_permissions is not None
+                else {}
+            ),
+        }
+        for key, value in {
+            "planner_mode": planner_mode,
+            "model_provider_id": model_provider_id,
+            "model_provider_name": model_provider_name,
+            "model_name": model_name,
+        }.items():
+            if value:
+                metadata[key] = value
         run = AgentRun(
             user_id=user_id,
             workspace_id=workspace_id,
             goal=goal,
             autonomy_level=autonomy_level,
             budget_limit=budget_limit or {"max_steps": 14, "max_replans": 2},
-            metadata={
-                "auto_execute": auto_execute,
-                **(
-                    {"allowed_tool_permissions": allowed_tool_permissions}
-                    if allowed_tool_permissions is not None
-                    else {}
-                ),
-            },
+            metadata=metadata,
         )
         await self.store.create_run(run)
         await self.artifact_store.create_workflow_run(
@@ -99,7 +112,11 @@ class AutonomousAgentRuntime:
         try:
             memories = await self.memory.retrieve(workspace_id, goal)
             memory_payload = [memory.model_dump(mode="json") for memory in memories]
-            plan = self.planner.create_initial_plan(run, memory_payload)
+            plan = await self.planner.create_initial_plan(
+                run,
+                memory_payload,
+                tool_definitions=self._tool_definitions_payload(),
+            )
         except ValueError as exc:
             run.status = AgentRunStatus.AWAITING_GATE
             run.gate = self._planner_clarification_gate(str(exc))
@@ -143,9 +160,10 @@ class AutonomousAgentRuntime:
         await self._sync_workflow_run(run)
 
         memories = await self.memory.retrieve(run.workspace_id, run.goal)
-        plan = self.planner.create_initial_plan(
+        plan = await self.planner.create_initial_plan(
             run,
             [memory.model_dump(mode="json") for memory in memories],
+            tool_definitions=self._tool_definitions_payload(),
         )
         plan_artifact_id = await self._record_plan_artifact(run, plan)
         plan.metadata["artifact_id"] = plan_artifact_id
@@ -181,6 +199,12 @@ class AutonomousAgentRuntime:
             ],
             "opened_at": utc_now_naive().isoformat(),
         }
+
+    def _tool_definitions_payload(self) -> list[dict[str, Any]]:
+        """把 Tool Registry 暴露给 Planner，确保 LLM 只能选择已注册工具。"""
+        return [
+            tool.model_dump(mode="json") for tool in self.tool_executor.registry.list_definitions()
+        ]
 
     async def replace_plan(
         self,

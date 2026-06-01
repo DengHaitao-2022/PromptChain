@@ -1221,7 +1221,7 @@ export const workflowApi = {
 
 // Autonomous Agent API
 export const agentApi = {
-  start: (goal: string, options: { autoExecute?: boolean; autonomyLevel?: string; budgetLimit?: Record<string, unknown> } = {}) =>
+  start: (goal: string, options: { autoExecute?: boolean; autonomyLevel?: string; budgetLimit?: Record<string, unknown>; plannerMode?: string; modelProviderId?: string; modelProviderName?: string; modelName?: string } = {}) =>
     request<AgentRunDetail>('/agents/runs', {
       method: 'POST',
       body: JSON.stringify({
@@ -1229,6 +1229,10 @@ export const agentApi = {
         auto_execute: options.autoExecute ?? true,
         autonomy_level: options.autonomyLevel ?? 'supervised',
         budget_limit: options.budgetLimit ?? {},
+        planner_mode: options.plannerMode ?? 'auto',
+        model_provider_id: options.modelProviderId,
+        model_provider_name: options.modelProviderName,
+        model_name: options.modelName,
       }),
     }),
 

@@ -7,12 +7,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 os.environ.setdefault("ALLOW_INSECURE_JWT_SECRET", "true")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
+os.environ.setdefault("AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED", "false")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.config import get_settings
 from db.postgres_store import Base
 from models.artifact import ArtifactType
 from models.autonomous_agent import (
+    AgentRun,
     AgentRunStatus,
     AgentStep,
     AgentStepStatus,
@@ -20,6 +23,7 @@ from models.autonomous_agent import (
     ToolRiskLevel,
 )
 from services.artifact_store import ArtifactStore
+from services.autonomous_agent_planner import AutonomousPlanner
 from services.autonomous_agent_runtime import AutonomousAgentRuntime
 from services.autonomous_agent_store import AutonomousAgentStore
 from services.autonomous_agent_tools import ToolDefinition
@@ -127,6 +131,94 @@ def test_planner_failure_enters_clarification_gate_and_can_resume():
         assert clarified.error_message is None
         assert plans
         assert plans[0].metadata["artifact_id"]
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_llm_planner_generates_dynamic_plan_with_fake_provider():
+    async def _scenario(runtime, _, __):
+        original_provider = os.environ.get("DEFAULT_LLM_PROVIDER")
+        original_llm_planner = os.environ.get("AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED")
+        os.environ["DEFAULT_LLM_PROVIDER"] = "fake"
+        os.environ["AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED"] = "true"
+        get_settings.cache_clear()
+        try:
+            runtime.planner = AutonomousPlanner(enable_llm_planner=True)
+            run = await runtime.start(
+                goal="请调研 Autonomous Agent 动态规划能力并输出报告",
+                user_id="user-1",
+                workspace_id="ws-1",
+                auto_execute=False,
+            )
+            detail = await runtime.get_detail(run.id)
+
+            plan = detail["plans"][0]
+            assert plan["created_by"] == "llm_planner"
+            assert plan["metadata"]["planner_mode"] == "llm"
+            assert plan["metadata"]["selected_template"] == "fake_llm_dynamic_plan"
+            assert plan["metadata"]["planner_usage"]["total_tokens"] > 0
+            assert "collect_trace" in {node["id"] for node in plan["plan_graph"]["nodes"]}
+            assert any(
+                node["tool_name"] == "retrieve_trace" for node in plan["plan_graph"]["nodes"]
+            )
+        finally:
+            if original_provider is None:
+                os.environ.pop("DEFAULT_LLM_PROVIDER", None)
+            else:
+                os.environ["DEFAULT_LLM_PROVIDER"] = original_provider
+            if original_llm_planner is None:
+                os.environ.pop("AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED", None)
+            else:
+                os.environ["AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED"] = original_llm_planner
+            get_settings.cache_clear()
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_llm_planner_falls_back_when_schema_is_invalid():
+    async def _scenario(runtime, _, __):
+        original_provider = os.environ.get("DEFAULT_LLM_PROVIDER")
+        os.environ["DEFAULT_LLM_PROVIDER"] = "fake"
+        get_settings.cache_clear()
+        try:
+            planner = AutonomousPlanner(enable_llm_planner=True)
+            broken_graph = planner.create_rule_based_initial_plan(
+                AgentRun(
+                    user_id="user-1",
+                    workspace_id="ws-1",
+                    goal="构造无效计划",
+                )
+            ).plan_graph
+            broken_graph.nodes[3].tool_name = "missing_tool"
+
+            async def _broken_llm_plan(run, memory_hits, tool_definitions):
+                planner._normalize_and_validate_plan_graph(
+                    broken_graph,
+                    available_tool_names={tool["name"] for tool in tool_definitions},
+                )
+                raise AssertionError("无效计划不应通过校验")
+
+            planner._create_llm_initial_plan = _broken_llm_plan
+            runtime.planner = planner
+            run = await runtime.start(
+                goal="请调研 Autonomous Agent fallback 能力并输出报告",
+                user_id="user-1",
+                workspace_id="ws-1",
+                auto_execute=False,
+                planner_mode="auto",
+            )
+            detail = await runtime.get_detail(run.id)
+
+            plan = detail["plans"][0]
+            assert plan["created_by"] == "planner"
+            assert plan["metadata"]["planner_mode"] == "rule_fallback"
+            assert "未注册工具" in plan["metadata"]["fallback_reason"]
+        finally:
+            if original_provider is None:
+                os.environ.pop("DEFAULT_LLM_PROVIDER", None)
+            else:
+                os.environ["DEFAULT_LLM_PROVIDER"] = original_provider
+            get_settings.cache_clear()
 
     asyncio.run(_with_runtime(_scenario))
 
