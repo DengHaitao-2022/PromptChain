@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("ALLOW_INSECURE_JWT_SECRET", "true")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
@@ -27,6 +28,7 @@ from services.autonomous_agent_planner import AutonomousPlanner
 from services.autonomous_agent_runtime import AutonomousAgentRuntime
 from services.autonomous_agent_store import AutonomousAgentStore
 from services.autonomous_agent_tools import ToolDefinition
+from services.autonomous_agent_worker import AutonomousAgentWorkerQueue
 
 
 async def _with_runtime(callback):
@@ -369,6 +371,88 @@ def test_final_evaluator_requires_final_artifact_and_resolved_fact_risk():
         assert any(issue["code"] == "FINAL_ARTIFACT_MISSING" for issue in final_eval.issues)
 
     asyncio.run(_with_runtime(_scenario))
+
+
+def test_agent_worker_queue_deduplicates_run_ids():
+    async def _scenario():
+        queue = AutonomousAgentWorkerQueue(max_concurrency=1)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _fake_execute(_run_id: str) -> None:
+            started.set()
+            await release.wait()
+
+        queue._execute_run = _fake_execute  # type: ignore[method-assign]
+        first = await queue.enqueue("run-1")
+        await started.wait()
+        second = await queue.enqueue("run-1")
+        snapshot = await queue.snapshot()
+        release.set()
+        await queue.stop()
+
+        assert first is True
+        assert second is False
+        assert snapshot["queued"] == []
+        assert snapshot["active"] == ["run-1"]
+
+    asyncio.run(_scenario())
+
+
+def test_agent_worker_queue_executes_queued_run(monkeypatch):
+    async def _scenario():
+        import models.auth_orm  # noqa: F401
+        import services.autonomous_agent_worker as worker_module
+
+        engine = create_async_engine(
+            "sqlite+aiosqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+        class _StoreWrapper:
+            async_session = session_factory
+
+            async def ensure_initialized(self):
+                return None
+
+        artifact_store = ArtifactStore()
+
+        monkeypatch.setattr(worker_module, "get_postgres_store", lambda: _StoreWrapper())
+        monkeypatch.setattr(worker_module, "get_artifact_store", lambda: artifact_store)
+
+        async with session_factory() as session:
+            runtime = AutonomousAgentRuntime(
+                store=AutonomousAgentStore(session),
+                artifact_store=artifact_store,
+            )
+            run = await runtime.start(
+                goal="验证 Autonomous Agent 后台队列执行",
+                user_id="user-1",
+                workspace_id="ws-1",
+                auto_execute=True,
+                inline_execute=False,
+            )
+            assert run.status == AgentRunStatus.RUNNING
+
+        queue = AutonomousAgentWorkerQueue(max_concurrency=1)
+        await queue.enqueue(run.id)
+        await asyncio.wait_for(queue._queue.join(), timeout=5)
+        await queue.stop()
+
+        async with session_factory() as session:
+            completed = await AutonomousAgentStore(session).get_run(run.id)
+            assert completed is not None
+            assert completed.status == AgentRunStatus.COMPLETED
+            assert completed.final_artifact_id
+
+        await engine.dispose()
+
+    asyncio.run(_scenario())
 
 
 def test_llm_planner_falls_back_when_schema_is_invalid():

@@ -116,8 +116,10 @@ def _register_lifecycle(application: FastAPI) -> None:
     async def shutdown_runtime_resources() -> None:
         # 热重载或进程退出时主动释放外部连接，减少残留失效连接。
         from db.postgres_store import dispose_postgres_store
+        from services.autonomous_agent_worker import dispose_agent_worker_queue
         from services.workflow_event_bus import dispose_workflow_event_bus
 
+        await dispose_agent_worker_queue()
         await dispose_workflow_event_bus()
         await dispose_postgres_store()
 

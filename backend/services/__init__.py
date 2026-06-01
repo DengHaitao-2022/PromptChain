@@ -18,6 +18,11 @@ from .autonomous_agent_planner import AutonomousPlanner, GoalInterpreter
 from .autonomous_agent_runtime import AutonomousAgentRuntime
 from .autonomous_agent_store import AutonomousAgentStore
 from .autonomous_agent_tools import ToolExecutor, ToolRegistry, build_default_tool_registry
+from .autonomous_agent_worker import (
+    AutonomousAgentWorkerQueue,
+    dispose_agent_worker_queue,
+    get_agent_worker_queue,
+)
 from .llm_errors import (
     format_workflow_error,
     is_llm_rate_limit_error,
@@ -72,6 +77,9 @@ __all__ = [
     "ToolRegistry",
     "ToolExecutor",
     "build_default_tool_registry",
+    "AutonomousAgentWorkerQueue",
+    "get_agent_worker_queue",
+    "dispose_agent_worker_queue",
     "PostgresArtifactStore",
     "PostgresGraphCheckpointSaver",
     "get_artifact_store",

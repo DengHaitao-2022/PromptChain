@@ -20,6 +20,15 @@ from services.artifact_store import ArtifactStore
 from services.auth_service import create_access_token
 
 
+class _FakeAgentWorkerQueue:
+    def __init__(self):
+        self.enqueued: list[str] = []
+
+    async def enqueue(self, run_id: str) -> bool:
+        self.enqueued.append(run_id)
+        return True
+
+
 def _client(
     monkeypatch, *, user_id: str = "user-1", workspace_id: str = "ws-1", role: str = "editor"
 ):
@@ -44,16 +53,19 @@ def _client(
     monkeypatch.setattr(postgres_store_module, "_postgres_store", None)
     monkeypatch.setattr(postgres_store_module, "_postgres_checkpoint_saver", None)
     monkeypatch.setattr(artifact_store_module, "_artifact_store", ArtifactStore())
+    queue = _FakeAgentWorkerQueue()
+    monkeypatch.setattr(agent_routes, "get_agent_worker_queue", lambda: queue)
 
     client = TestClient(app)
     client.cookies.set(
         ACCESS_TOKEN_COOKIE,
         create_access_token(user_id=user_id, workspace_id=workspace_id),
     )
+    client.agent_queue = queue
     return client
 
 
-def test_agent_run_api_returns_full_autonomous_runtime_snapshot(monkeypatch):
+def test_agent_run_api_queues_auto_execution_without_blocking(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
     monkeypatch.setenv("DEFAULT_LLM_PROVIDER", "fake")
     get_settings.cache_clear()
@@ -73,13 +85,16 @@ def test_agent_run_api_returns_full_autonomous_runtime_snapshot(monkeypatch):
     assert body["run"]["metadata"]["planner_mode"] == "auto"
     assert body["run"]["metadata"]["generation_mode"] == "auto"
     assert body["run"]["metadata"]["fact_check_mode"] == "cove"
+    assert body["run"]["status"] == "running"
+    assert body["run"]["metadata"]["queued_at"]
     assert body["plans"][0]["goal_card"]["task_type"] == "research_report"
     assert body["plans"][0]["metadata"]["planner_mode"] == "llm"
     assert body["plans"][0]["metadata"]["selected_template"] == "fake_llm_dynamic_plan"
     assert body["plans"][0]["plan_graph"]["nodes"]
-    assert body["steps"]
-    assert body["tool_calls"]
-    assert body["eval_results"]
+    assert body["steps"] == []
+    assert body["tool_calls"] == []
+    assert body["eval_results"] == []
+    assert client.agent_queue.enqueued == [body["run"]["id"]]
     assert {
         "read_artifact",
         "write_artifact",
@@ -184,7 +199,9 @@ def test_agent_run_can_be_paused_resumed_and_cancelled(monkeypatch):
 
     resumed = client.post(f"/api/agents/runs/{run_id}/resume", json={})
     assert resumed.status_code == 200
-    assert resumed.json()["run"]["status"] in {"running", "completed", "failed", "awaiting_gate"}
+    assert resumed.json()["run"]["status"] == "running"
+    assert resumed.json()["run"]["metadata"]["queue_reason"] == "resume"
+    assert client.agent_queue.enqueued == [run_id]
 
     second = client.post(
         "/api/agents/runs",

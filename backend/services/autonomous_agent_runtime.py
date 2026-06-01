@@ -97,11 +97,12 @@ class AutonomousAgentRuntime:
         planner_mode: str | None = None,
         generation_mode: str | None = None,
         fact_check_mode: str | None = None,
+        inline_execute: bool = True,
         model_provider_id: str | None = None,
         model_provider_name: str | None = None,
         model_name: str | None = None,
     ) -> AgentRun:
-        """创建并可选立即执行 AgentRun。"""
+        """创建 AgentRun，并按调用方选择同步执行或交给后台 worker。"""
         metadata: dict[str, Any] = {
             "auto_execute": auto_execute,
             **(
@@ -174,10 +175,21 @@ class AutonomousAgentRuntime:
         await self._sync_workflow_run(run)
 
         if auto_execute:
-            run = await self.execute_until_stop(run.id)
+            if inline_execute:
+                run = await self.execute_until_stop(run.id)
+            else:
+                run.metadata["queued_at"] = utc_now_naive().isoformat()
+                await self.store.update_run(run)
+                await self._sync_workflow_run(run)
         return run
 
-    async def clarify_goal(self, run_id: str, clarification: str) -> AgentRun:
+    async def clarify_goal(
+        self,
+        run_id: str,
+        clarification: str,
+        *,
+        inline_execute: bool = True,
+    ) -> AgentRun:
         """补充 Planner 所需目标信息，并重新进入规划/执行流程。"""
         run = await self._require_run(run_id)
         if run.status != AgentRunStatus.AWAITING_GATE:
@@ -219,7 +231,32 @@ class AutonomousAgentRuntime:
         await self._sync_workflow_run(run)
 
         if run.metadata.get("auto_execute", True):
-            return await self.execute_until_stop(run.id)
+            if inline_execute:
+                return await self.execute_until_stop(run.id)
+            run.metadata["queued_at"] = utc_now_naive().isoformat()
+            await self.store.update_run(run)
+            await self._sync_workflow_run(run)
+        return run
+
+    async def prepare_for_worker(self, run_id: str, *, reason: str = "queued") -> AgentRun:
+        """把可继续执行的运行标记为后台 worker 待执行。"""
+        run = await self._require_run(run_id)
+        if run.status in {
+            AgentRunStatus.COMPLETED,
+            AgentRunStatus.FAILED,
+            AgentRunStatus.CANCELLED,
+        }:
+            raise ValueError("当前 AgentRun 已结束，无法继续执行")
+        if run.status == AgentRunStatus.AWAITING_GATE:
+            raise ValueError("当前 AgentRun 正在等待 Gate 审批")
+        if run.status == AgentRunStatus.PAUSED:
+            run.metadata["resumed_at"] = utc_now_naive().isoformat()
+        run.status = AgentRunStatus.RUNNING
+        run.metadata["queued_at"] = utc_now_naive().isoformat()
+        run.metadata["queue_reason"] = reason
+        run.updated_at = utc_now_naive()
+        await self.store.update_run(run)
+        await self._sync_workflow_run(run)
         return run
 
     def _planner_clarification_gate(self, reason: str) -> dict[str, Any]:
@@ -518,7 +555,14 @@ class AutonomousAgentRuntime:
         await self._sync_workflow_run(run)
         return step
 
-    async def approve_gate(self, run_id: str, approved: bool, note: str = "") -> AgentRun:
+    async def approve_gate(
+        self,
+        run_id: str,
+        approved: bool,
+        note: str = "",
+        *,
+        inline_execute: bool = True,
+    ) -> AgentRun:
         """审批 Gate 后继续或终止运行。"""
         run = await self._require_run(run_id)
         if run.status != AgentRunStatus.AWAITING_GATE:
@@ -544,6 +588,11 @@ class AutonomousAgentRuntime:
         run.updated_at = utc_now_naive()
         await self.store.update_run(run)
         await self._sync_workflow_run(run)
+        if not inline_execute:
+            run.metadata["queued_at"] = utc_now_naive().isoformat()
+            await self.store.update_run(run)
+            await self._sync_workflow_run(run)
+            return run
         return await self.execute_until_stop(run.id)
 
     async def get_detail(self, run_id: str) -> dict[str, Any]:

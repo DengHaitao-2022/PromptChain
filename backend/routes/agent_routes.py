@@ -14,6 +14,7 @@ from routes.auth_routes import get_current_user
 from services import get_artifact_store
 from services.autonomous_agent_runtime import AutonomousAgentRuntime
 from services.autonomous_agent_store import AutonomousAgentStore
+from services.autonomous_agent_worker import get_agent_worker_queue
 from services.permission_service import get_role_permissions, is_admin_role
 
 router = APIRouter(prefix="/agents", tags=["autonomous-agent"])
@@ -184,10 +185,13 @@ async def start_agent_run(request: Request, body: StartAgentRunRequest):
                 planner_mode=body.planner_mode,
                 generation_mode=body.generation_mode,
                 fact_check_mode=body.fact_check_mode,
+                inline_execute=False,
                 model_provider_id=body.model_provider_id,
                 model_provider_name=body.model_provider_name,
                 model_name=body.model_name,
             )
+            if body.auto_execute and run.status == AgentRunStatus.RUNNING:
+                await get_agent_worker_queue().enqueue(run.id)
             detail = await runtime.get_detail(run.id)
             return detail
     except HTTPException:
@@ -266,7 +270,8 @@ async def resume_agent_run(run_id: str, request: Request):
                 artifact_store=get_artifact_store(),
             )
             await _refresh_run_tool_permissions(runtime.store, run_id, role)
-            await runtime.execute_until_stop(run_id)
+            await runtime.prepare_for_worker(run_id, reason="resume")
+            await get_agent_worker_queue().enqueue(run_id)
             return await runtime.get_detail(run_id)
     except HTTPException:
         raise
@@ -369,7 +374,14 @@ async def approve_agent_gate(run_id: str, request: Request, body: AgentGateDecis
                 artifact_store=get_artifact_store(),
             )
             await _refresh_run_tool_permissions(runtime.store, run_id, role)
-            await runtime.approve_gate(run_id, approved=body.approved, note=body.note)
+            run = await runtime.approve_gate(
+                run_id,
+                approved=body.approved,
+                note=body.note,
+                inline_execute=False,
+            )
+            if run.status == AgentRunStatus.RUNNING:
+                await get_agent_worker_queue().enqueue(run.id)
             return await runtime.get_detail(run_id)
     except HTTPException:
         raise
@@ -420,7 +432,13 @@ async def clarify_agent_goal(run_id: str, request: Request, body: AgentGoalClari
                 artifact_store=get_artifact_store(),
             )
             await _refresh_run_tool_permissions(runtime.store, run_id, role)
-            await runtime.clarify_goal(run_id, body.clarification)
+            run = await runtime.clarify_goal(
+                run_id,
+                body.clarification,
+                inline_execute=False,
+            )
+            if run.status == AgentRunStatus.RUNNING:
+                await get_agent_worker_queue().enqueue(run.id)
             return await runtime.get_detail(run_id)
     except HTTPException:
         raise
