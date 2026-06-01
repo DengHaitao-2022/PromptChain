@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -13,6 +14,7 @@ os.environ.setdefault("AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED", "false")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.config import get_settings
+from core.time import utc_now_naive
 from db.postgres_store import Base
 from models.artifact import ArtifactType
 from models.autonomous_agent import (
@@ -449,6 +451,105 @@ def test_agent_worker_queue_executes_queued_run(monkeypatch):
             assert completed is not None
             assert completed.status == AgentRunStatus.COMPLETED
             assert completed.final_artifact_id
+
+        await engine.dispose()
+
+    asyncio.run(_scenario())
+
+
+def test_agent_worker_recovers_expired_lease_runs(monkeypatch):
+    async def _scenario():
+        import models.auth_orm  # noqa: F401
+        import services.autonomous_agent_worker as worker_module
+
+        engine = create_async_engine(
+            "sqlite+aiosqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+        class _StoreWrapper:
+            async_session = session_factory
+
+            async def ensure_initialized(self):
+                return None
+
+        monkeypatch.setattr(worker_module, "get_postgres_store", lambda: _StoreWrapper())
+        async with session_factory() as session:
+            store = AutonomousAgentStore(session)
+            run = await store.create_run(
+                AgentRun(
+                    goal="验证过期 lease 可恢复",
+                    user_id="user-1",
+                    workspace_id="ws-1",
+                    status=AgentRunStatus.RUNNING,
+                    queue_status="running",
+                    worker_id="dead-worker",
+                    lease_token="expired-token",
+                    lease_expires_at=utc_now_naive() - timedelta(seconds=30),
+                )
+            )
+
+        queue = AutonomousAgentWorkerQueue(max_concurrency=1)
+        recovered = await queue.recover_pending_runs()
+        snapshot = await queue.snapshot()
+        await queue.stop()
+
+        assert recovered == 1
+        assert snapshot["queued"] == [run.id]
+
+        async with session_factory() as session:
+            recovered_run = await AutonomousAgentStore(session).get_run(run.id)
+            assert recovered_run is not None
+            assert recovered_run.queue_status == "lease_expired"
+
+        await engine.dispose()
+
+    asyncio.run(_scenario())
+
+
+def test_agent_worker_claim_does_not_pick_idle_run():
+    async def _scenario():
+        import models.auth_orm  # noqa: F401
+
+        engine = create_async_engine(
+            "sqlite+aiosqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            store = AutonomousAgentStore(session)
+            run = await store.create_run(
+                AgentRun(
+                    goal="验证未入队任务不会被直接认领",
+                    user_id="user-1",
+                    workspace_id="ws-1",
+                    status=AgentRunStatus.RUNNING,
+                    queue_status="idle",
+                )
+            )
+            claimed = await store.claim_run(
+                run.id,
+                worker_id="worker-1",
+                lease_token="lease-token",
+                lease_seconds=60,
+            )
+
+        assert claimed is None
+
+        async with session_factory() as session:
+            persisted = await AutonomousAgentStore(session).get_run(run.id)
+            assert persisted is not None
+            assert persisted.queue_status == "idle"
+            assert persisted.worker_id is None
 
         await engine.dispose()
 

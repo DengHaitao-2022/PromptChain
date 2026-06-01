@@ -176,6 +176,15 @@ class AgentRun(BaseModel):
     final_artifact_id: str | None = None
     gate: dict[str, Any] | None = None
     error_message: str | None = None
+    queue_status: str = "idle"
+    queued_at: Any | None = None
+    claimed_at: Any | None = None
+    lease_expires_at: Any | None = None
+    heartbeat_at: Any | None = None
+    worker_id: str | None = None
+    lease_token: str | None = None
+    attempt_count: int = 0
+    last_worker_error: str | None = None
     created_at: Any = Field(default_factory=utc_now_naive)
     updated_at: Any = Field(default_factory=utc_now_naive)
     completed_at: Any | None = None

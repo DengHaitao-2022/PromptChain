@@ -23,10 +23,15 @@ from services.auth_service import create_access_token
 class _FakeAgentWorkerQueue:
     def __init__(self):
         self.enqueued: list[str] = []
+        self.recovered: int = 0
 
     async def enqueue(self, run_id: str) -> bool:
         self.enqueued.append(run_id)
         return True
+
+    async def recover_pending_runs(self, *, limit: int = 50) -> int:
+        self.recovered += 1
+        return limit
 
 
 def _client(
@@ -107,6 +112,25 @@ def test_agent_run_api_queues_auto_execution_without_blocking(monkeypatch):
     detail = client.get(f"/api/agents/runs/{body['run']['id']}")
     assert detail.status_code == 200
     assert detail.json()["run"]["id"] == body["run"]["id"]
+
+
+def test_app_startup_recovers_pending_agent_runs(monkeypatch):
+    queue = _FakeAgentWorkerQueue()
+
+    async def _noop_dispose():
+        return None
+
+    monkeypatch.setattr("services.autonomous_agent_worker.get_agent_worker_queue", lambda: queue)
+    monkeypatch.setattr(
+        "services.autonomous_agent_worker.dispose_agent_worker_queue",
+        _noop_dispose,
+    )
+
+    with TestClient(app) as started_client:
+        response = started_client.get("/")
+        assert response.status_code == 200
+
+    assert queue.recovered == 1
 
 
 def test_agent_run_list_filters_to_visible_workspace_user(monkeypatch):

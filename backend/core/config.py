@@ -66,6 +66,9 @@ class Settings:
         self.AUTONOMOUS_AGENT_WORKER_MAX_CONCURRENCY: int = int(
             os.getenv("AUTONOMOUS_AGENT_WORKER_MAX_CONCURRENCY", "2")
         )
+        self.AUTONOMOUS_AGENT_WORKER_LEASE_SECONDS: int = int(
+            os.getenv("AUTONOMOUS_AGENT_WORKER_LEASE_SECONDS", "300")
+        )
         self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
         self.ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
         self.GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

@@ -1,12 +1,16 @@
 """Autonomous Agent 持久化服务。"""
 
-from sqlalchemy import desc, select
+from datetime import timedelta
+
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time import utc_now_naive
 from models.autonomous_agent import (
     AgentPlan,
     AgentPlanStatus,
     AgentRun,
+    AgentRunStatus,
     AgentStep,
     EvalResult,
     MemoryRecord,
@@ -50,11 +54,150 @@ class AutonomousAgentStore:
             orm.final_artifact_id = run.final_artifact_id
             orm.gate = run.gate
             orm.error_message = run.error_message
+            orm.queue_status = run.queue_status
+            orm.queued_at = run.queued_at
+            orm.claimed_at = run.claimed_at
+            orm.lease_expires_at = run.lease_expires_at
+            orm.heartbeat_at = run.heartbeat_at
+            orm.worker_id = run.worker_id
+            orm.lease_token = run.lease_token
+            orm.attempt_count = run.attempt_count
+            orm.last_worker_error = run.last_worker_error
             orm.updated_at = run.updated_at
             orm.completed_at = run.completed_at
             orm.metadata_json = run.metadata
             await self.session.commit()
         return run
+
+    async def enqueue_run(self, run_id: str) -> AgentRun | None:
+        """把 AgentRun 标记为可由 durable worker claim。"""
+        orm = await self._get_run_orm(run_id)
+        if not orm:
+            return None
+        now = utc_now_naive()
+        if orm.queue_status not in {"running", "queued"}:
+            orm.queue_status = "queued"
+            orm.queued_at = now
+            orm.worker_id = None
+            orm.lease_token = None
+            orm.lease_expires_at = None
+            orm.last_worker_error = None
+        orm.updated_at = now
+        await self.session.commit()
+        return orm.to_model()
+
+    async def claim_run(
+        self,
+        run_id: str,
+        *,
+        worker_id: str,
+        lease_token: str,
+        lease_seconds: int,
+    ) -> AgentRun | None:
+        """原子认领一条可执行 AgentRun。"""
+        now = utc_now_naive()
+        result = await self.session.execute(
+            select(AgentRunORM)
+            .where(AgentRunORM.id == run_id)
+            .where(
+                AgentRunORM.status.in_([AgentRunStatus.RUNNING.value, AgentRunStatus.PAUSED.value])
+            )
+            .where(
+                or_(
+                    AgentRunORM.queue_status == "queued",
+                    AgentRunORM.queue_status == "lease_expired",
+                    and_(
+                        AgentRunORM.queue_status == "running",
+                        AgentRunORM.lease_expires_at < now,
+                    ),
+                )
+            )
+            .with_for_update(skip_locked=True)
+        )
+        orm = result.scalar_one_or_none()
+        if not orm:
+            return None
+        orm.queue_status = "running"
+        orm.worker_id = worker_id
+        orm.lease_token = lease_token
+        orm.claimed_at = now
+        orm.heartbeat_at = now
+        orm.lease_expires_at = now + timedelta(seconds=lease_seconds)
+        orm.attempt_count = (orm.attempt_count or 0) + 1
+        orm.last_worker_error = None
+        orm.updated_at = now
+        await self.session.commit()
+        return orm.to_model()
+
+    async def heartbeat_run(
+        self,
+        run_id: str,
+        *,
+        worker_id: str,
+        lease_token: str,
+        lease_seconds: int,
+    ) -> bool:
+        """刷新 worker lease 和 heartbeat。"""
+        orm = await self._get_run_orm(run_id)
+        if not orm or orm.worker_id != worker_id or orm.lease_token != lease_token:
+            return False
+        now = utc_now_naive()
+        orm.heartbeat_at = now
+        orm.lease_expires_at = now + timedelta(seconds=lease_seconds)
+        orm.updated_at = now
+        await self.session.commit()
+        return True
+
+    async def release_run_claim(
+        self,
+        run_id: str,
+        *,
+        worker_id: str,
+        lease_token: str,
+        queue_status: str = "idle",
+        error: str | None = None,
+    ) -> AgentRun | None:
+        """释放 worker claim，并写入最终队列状态。"""
+        orm = await self._get_run_orm(run_id)
+        if not orm or orm.worker_id != worker_id or orm.lease_token != lease_token:
+            return None
+        now = utc_now_naive()
+        orm.queue_status = queue_status
+        orm.worker_id = None
+        orm.lease_token = None
+        orm.lease_expires_at = None
+        orm.heartbeat_at = now
+        orm.last_worker_error = error
+        orm.updated_at = now
+        await self.session.commit()
+        return orm.to_model()
+
+    async def list_recoverable_runs(self, *, limit: int = 50) -> list[AgentRun]:
+        """列出 worker 启动后可恢复 claim 的运行。"""
+        now = utc_now_naive()
+        result = await self.session.execute(
+            select(AgentRunORM)
+            .where(
+                AgentRunORM.status.in_([AgentRunStatus.RUNNING.value, AgentRunStatus.PAUSED.value])
+            )
+            .where(
+                or_(
+                    AgentRunORM.queue_status == "queued",
+                    AgentRunORM.queue_status == "lease_expired",
+                    AgentRunORM.lease_expires_at < now,
+                )
+            )
+            .order_by(AgentRunORM.queued_at, AgentRunORM.updated_at)
+            .limit(limit)
+        )
+        runs: list[AgentRun] = []
+        for orm in result.scalars().all():
+            if orm.lease_expires_at and orm.lease_expires_at < now:
+                orm.queue_status = "lease_expired"
+                orm.updated_at = now
+            runs.append(orm.to_model())
+        await self.session.commit()
+        return runs
 
     async def get_run(self, run_id: str) -> AgentRun | None:
         """读取 AgentRun。"""

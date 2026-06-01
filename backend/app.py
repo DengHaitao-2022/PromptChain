@@ -7,11 +7,15 @@
 3. 注册所有路由
 """
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
 from core.errors import install_error_infrastructure
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -111,6 +115,18 @@ def _register_routes(application: FastAPI) -> None:
 
 def _register_lifecycle(application: FastAPI) -> None:
     """注册应用生命周期钩子。"""
+
+    @application.on_event("startup")
+    async def recover_agent_worker_runs() -> None:
+        # 进程重启后恢复已持久化的 AgentRun 队列状态，避免长程任务永久停在 running。
+        from services.autonomous_agent_worker import get_agent_worker_queue
+
+        try:
+            recovered = await get_agent_worker_queue().recover_pending_runs()
+            if recovered:
+                logger.info("Autonomous Agent worker 恢复待执行任务: count=%s", recovered)
+        except Exception:
+            logger.exception("Autonomous Agent worker 恢复待执行任务失败")
 
     @application.on_event("shutdown")
     async def shutdown_runtime_resources() -> None:

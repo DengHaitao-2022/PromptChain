@@ -180,6 +180,7 @@ class AutonomousAgentRuntime:
             else:
                 run.metadata["queued_at"] = utc_now_naive().isoformat()
                 await self.store.update_run(run)
+                run = await self.store.enqueue_run(run.id) or run
                 await self._sync_workflow_run(run)
         return run
 
@@ -235,6 +236,7 @@ class AutonomousAgentRuntime:
                 return await self.execute_until_stop(run.id)
             run.metadata["queued_at"] = utc_now_naive().isoformat()
             await self.store.update_run(run)
+            run = await self.store.enqueue_run(run.id) or run
             await self._sync_workflow_run(run)
         return run
 
@@ -256,6 +258,7 @@ class AutonomousAgentRuntime:
         run.metadata["queue_reason"] = reason
         run.updated_at = utc_now_naive()
         await self.store.update_run(run)
+        run = await self.store.enqueue_run(run.id) or run
         await self._sync_workflow_run(run)
         return run
 
@@ -465,6 +468,7 @@ class AutonomousAgentRuntime:
             raise ValueError("当前 AgentRun 已结束，无法取消")
         run.status = AgentRunStatus.CANCELLED
         run.error_message = reason or "用户取消 Autonomous Agent 运行"
+        run.queue_status = "terminal"
         run.metadata["cancelled_at"] = utc_now_naive().isoformat()
         run.updated_at = utc_now_naive()
         run.completed_at = utc_now_naive()
@@ -591,6 +595,7 @@ class AutonomousAgentRuntime:
         if not inline_execute:
             run.metadata["queued_at"] = utc_now_naive().isoformat()
             await self.store.update_run(run)
+            run = await self.store.enqueue_run(run.id) or run
             await self._sync_workflow_run(run)
             return run
         return await self.execute_until_stop(run.id)
@@ -861,6 +866,7 @@ class AutonomousAgentRuntime:
         run.status = AgentRunStatus.COMPLETED if final_eval.passed else AgentRunStatus.FAILED
         run.final_artifact_id = final_artifact_id
         run.error_message = None if final_eval.passed else "最终评估未通过"
+        run.queue_status = "terminal"
         run.completed_at = utc_now_naive()
         run.updated_at = utc_now_naive()
         run.metadata["final_eval"] = final_eval.model_dump(mode="json")
@@ -1027,6 +1033,7 @@ class AutonomousAgentRuntime:
         """以统一方式终止失败运行，并同步 Trace 顶层状态。"""
         run.status = AgentRunStatus.FAILED
         run.error_message = message
+        run.queue_status = "terminal"
         run.updated_at = utc_now_naive()
         run.completed_at = utc_now_naive()
         await self.store.update_run(run)

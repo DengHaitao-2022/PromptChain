@@ -42,6 +42,15 @@ class AgentRunORM(Base):
     final_artifact_id = Column(String(36), nullable=True)
     gate = Column(JSON, nullable=True)
     error_message = Column(Text, nullable=True)
+    queue_status = Column(String(32), nullable=False, default="idle", index=True)
+    queued_at = Column(DateTime, nullable=True)
+    claimed_at = Column(DateTime, nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True, index=True)
+    heartbeat_at = Column(DateTime, nullable=True)
+    worker_id = Column(String(100), nullable=True, index=True)
+    lease_token = Column(String(64), nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    last_worker_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
     completed_at = Column(DateTime, nullable=True)
@@ -62,6 +71,15 @@ class AgentRunORM(Base):
             final_artifact_id=self.final_artifact_id,
             gate=self.gate,
             error_message=self.error_message,
+            queue_status=self.queue_status or "idle",
+            queued_at=self.queued_at,
+            claimed_at=self.claimed_at,
+            lease_expires_at=self.lease_expires_at,
+            heartbeat_at=self.heartbeat_at,
+            worker_id=self.worker_id,
+            lease_token=self.lease_token,
+            attempt_count=self.attempt_count or 0,
+            last_worker_error=self.last_worker_error,
             created_at=self.created_at,
             updated_at=self.updated_at,
             completed_at=self.completed_at,
@@ -84,6 +102,15 @@ class AgentRunORM(Base):
             final_artifact_id=model.final_artifact_id,
             gate=model.gate,
             error_message=model.error_message,
+            queue_status=model.queue_status,
+            queued_at=model.queued_at,
+            claimed_at=model.claimed_at,
+            lease_expires_at=model.lease_expires_at,
+            heartbeat_at=model.heartbeat_at,
+            worker_id=model.worker_id,
+            lease_token=model.lease_token,
+            attempt_count=model.attempt_count,
+            last_worker_error=model.last_worker_error,
             created_at=model.created_at,
             updated_at=model.updated_at,
             completed_at=model.completed_at,
