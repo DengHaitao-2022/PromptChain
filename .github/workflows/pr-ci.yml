@@ -251,16 +251,130 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: npm run build
 
-      - name: 安装 Playwright Chromium
-        if: needs.changes.outputs.e2e-source == 'true'
-        run: npx playwright install --with-deps chromium
-
-      - name: Playwright E2E 浏览器测试
-        if: needs.changes.outputs.e2e-source == 'true'
-        env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
-        run: npm run test:e2e
-
       - name: 跳过前端类型检查和构建说明
         if: needs.changes.outputs.frontend-source != 'true'
         run: echo "本次 PR 未修改 frontend/src 或前端构建配置，跳过既有前端源码 typecheck/build gate。"
+
+  e2e:
+    name: 浏览器 E2E 流程检查
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: promptchain_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d promptchain_e2e"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装 PostgreSQL 客户端
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 安装 Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: 后端迁移并准备 E2E 种子数据
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/promptchain_e2e
+          DATABASE_AUTO_SCHEMA_INIT: "false"
+          ALLOW_INSECURE_JWT_SECRET: "true"
+          JWT_SECRET_KEY: e2e-insecure-secret
+          DEFAULT_LLM_PROVIDER: fake
+          DEFAULT_MODEL_NAME: fake-smoke-model
+          E2E_TEST_EMAIL: e2e-owner@example.com
+          E2E_TEST_PASSWORD: E2ePassword123!
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d promptchain_e2e -c 'CREATE EXTENSION IF NOT EXISTS vector'
+          uv run alembic upgrade head
+          uv run python scripts/seed_e2e.py
+
+      - name: 启动后端 API
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/promptchain_e2e
+          REDIS_URL: redis://127.0.0.1:6379/0
+          DATABASE_AUTO_SCHEMA_INIT: "false"
+          ALLOW_INSECURE_JWT_SECRET: "true"
+          JWT_SECRET_KEY: e2e-insecure-secret
+          DEFAULT_LLM_PROVIDER: fake
+          DEFAULT_MODEL_NAME: fake-smoke-model
+          AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED: "false"
+          AUTONOMOUS_AGENT_LLM_GENERATION_ENABLED: "false"
+          AUTONOMOUS_AGENT_COVE_FACT_CHECK_ENABLED: "false"
+          KNOWLEDGE_INDEX_WORKER_ENABLED: "false"
+          CORS_ORIGINS: http://127.0.0.1:3100,http://localhost:3100
+        run: |
+          nohup uv run uvicorn app:app --host 127.0.0.1 --port 8000 > ../backend-e2e.log 2>&1 &
+          echo "$!" > ../backend-e2e.pid
+          for attempt in {1..60}; do
+            if curl -fsS http://127.0.0.1:8000/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat ../backend-e2e.log
+          exit 1
+
+      - name: Playwright E2E 浏览器测试
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+          PLAYWRIGHT_PORT: "3100"
+          E2E_TEST_EMAIL: e2e-owner@example.com
+          E2E_TEST_PASSWORD: E2ePassword123!
+        run: npm run test:e2e
+
+      - name: 输出后端日志
+        if: failure()
+        run: cat backend-e2e.log || true
+
+      - name: 上传 E2E 诊断产物
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics
+          path: |
+            backend-e2e.log
+            frontend/playwright-report/
+            frontend/test-results/
+          if-no-files-found: ignore
+
+      - name: 停止后端 API
+        if: always()
+        run: |
+          if [ -f backend-e2e.pid ]; then
+            kill "$(cat backend-e2e.pid)" || true
+          fi

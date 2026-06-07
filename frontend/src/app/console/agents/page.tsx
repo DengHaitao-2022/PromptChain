@@ -224,9 +224,9 @@ export default function AgentRunsPage() {
           {loading ? (
             <div className={styles.emptyState}>正在加载自主 Agent 运行...</div>
           ) : runs.length > 0 ? (
-            <div className={styles.runList}>
+            <div className={styles.runList} data-testid="agent-run-list">
               {runs.map((run) => (
-                <article key={run.id} className={styles.runCard}>
+                <article key={run.id} className={styles.runCard} data-testid="agent-run-card">
                   <div className={styles.runHeader}>
                     <div>
                       <h3 className={styles.runTitle}>{summarize(run.goal)}</h3>

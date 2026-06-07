@@ -309,7 +309,10 @@ export default function AgentRunDetailPage() {
             创建于 {formatAppDateTime(detail.run.created_at)}，当前计划版本 {activePlan?.version || '-'}。
           </p>
           <div className={styles.headerActions}>
-            <span className={`${styles.statusBadge} ${statusClass(detail.run.status)}`}>
+            <span
+              className={`${styles.statusBadge} ${statusClass(detail.run.status)}`}
+              data-testid="agent-run-status"
+            >
               {statusLabel(detail.run.status)}
             </span>
             {['planning', 'paused'].includes(detail.run.status) && (
@@ -355,7 +358,7 @@ export default function AgentRunDetailPage() {
       )}
 
       {detail.run.status === 'awaiting_gate' && detail.run.gate?.gate_type === 'planner_clarification' && (
-        <section className={styles.detailCard}>
+        <section className={styles.detailCard} data-testid="agent-clarification-panel">
           <div className={styles.detailHeader}>
             <div>
               <h2 className={styles.detailTitle}>补充目标信息</h2>
@@ -381,7 +384,7 @@ export default function AgentRunDetailPage() {
       )}
 
       {detail.run.status === 'awaiting_gate' && detail.run.gate?.gate_type !== 'planner_clarification' && (
-        <section className={styles.detailCard}>
+        <section className={styles.detailCard} data-testid="agent-gate-panel">
           <div className={styles.detailHeader}>
             <div>
               <h2 className={styles.detailTitle}>Gate 审批</h2>
