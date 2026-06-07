@@ -185,6 +185,7 @@ class EmailService:
             subject="验证您的 PromptChain 邮箱",
             html_content=html_content,
         )
+        # 邮件确认发送后再提交 token，避免 SMTP 失败时留下不可用验证记录。
         await self.session.commit()
         return result
 
@@ -244,6 +245,7 @@ class EmailService:
             subject="重置您的 PromptChain 密码",
             html_content=html_content,
         )
+        # 邮件确认发送后再提交 token，避免 SMTP 失败时留下不可用重置记录。
         await self.session.commit()
         return result
 

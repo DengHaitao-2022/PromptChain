@@ -54,6 +54,21 @@ class Settings:
         # LLM 配置 - 关键修改：这里现在在 __init__ 中读取，支持 monkeypatch
         self.DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
         self.DEFAULT_MODEL_NAME: str = os.getenv("DEFAULT_MODEL_NAME", "gpt-4o")
+        self.AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED: bool = os.getenv(
+            "AUTONOMOUS_AGENT_LLM_PLANNER_ENABLED", "false"
+        ).lower() in {"1", "true", "yes", "on"}
+        self.AUTONOMOUS_AGENT_LLM_GENERATION_ENABLED: bool = os.getenv(
+            "AUTONOMOUS_AGENT_LLM_GENERATION_ENABLED", "false"
+        ).lower() in {"1", "true", "yes", "on"}
+        self.AUTONOMOUS_AGENT_COVE_FACT_CHECK_ENABLED: bool = os.getenv(
+            "AUTONOMOUS_AGENT_COVE_FACT_CHECK_ENABLED", "false"
+        ).lower() in {"1", "true", "yes", "on"}
+        self.AUTONOMOUS_AGENT_WORKER_MAX_CONCURRENCY: int = int(
+            os.getenv("AUTONOMOUS_AGENT_WORKER_MAX_CONCURRENCY", "2")
+        )
+        self.AUTONOMOUS_AGENT_WORKER_LEASE_SECONDS: int = int(
+            os.getenv("AUTONOMOUS_AGENT_WORKER_LEASE_SECONDS", "300")
+        )
         self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
         self.ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
         self.GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
