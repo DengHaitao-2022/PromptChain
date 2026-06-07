@@ -1,0 +1,440 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  --agent-surface: linear-gradient(180deg, var(--console-surface), var(--console-surface-alt));
+  --agent-surface-muted: var(--console-surface-muted);
+  --agent-border: var(--console-border);
+  --agent-border-strong: var(--console-border-strong);
+  --agent-text-primary: var(--console-text-primary);
+  --agent-text-secondary: var(--console-text-secondary);
+  --agent-text-tertiary: var(--console-text-tertiary);
+  --agent-text-muted: var(--console-text-muted);
+  --agent-accent: var(--console-accent);
+  --agent-accent-soft: var(--console-accent-soft);
+  --agent-shadow: var(--console-shadow-lg, var(--shadow-lg));
+  --agent-focus-ring: var(--console-focus-ring);
+}
+
+.hero,
+.panel,
+.sidePanel,
+.runCard,
+.detailCard,
+.formPanel {
+  border: 1px solid var(--agent-border);
+  background: var(--agent-surface);
+  box-shadow: var(--agent-shadow);
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 420px);
+  gap: 24px;
+  padding: 28px;
+  border-radius: 28px;
+}
+
+.heroCopy,
+.formPanel,
+.panel,
+.sidePanel,
+.runCard,
+.detailCard,
+.sectionStack,
+.nodeList,
+.timelineList {
+  display: flex;
+  flex-direction: column;
+}
+
+.heroCopy {
+  gap: 16px;
+}
+
+.eyebrow,
+.statusBadge,
+.metaLabel {
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--agent-border-strong);
+  background: var(--agent-accent-soft);
+  color: var(--agent-accent);
+  font-size: 0.72rem;
+}
+
+.title {
+  margin: 0;
+  max-width: 14ch;
+  color: var(--agent-text-primary);
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  line-height: 1;
+}
+
+.description,
+.panelDescription,
+.runGoal,
+.mutedText {
+  margin: 0;
+  color: var(--agent-text-tertiary);
+  line-height: 1.75;
+}
+
+.formPanel,
+.panel,
+.sidePanel,
+.detailCard {
+  gap: 18px;
+  padding: 22px;
+  border-radius: 24px;
+}
+
+.goalForm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.planEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.goalInput {
+  min-height: 132px;
+  resize: vertical;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--agent-border-strong);
+  background: var(--agent-surface-muted);
+  color: var(--agent-text-primary);
+  line-height: 1.7;
+}
+
+.goalInput:focus-visible,
+.primaryAction:focus-visible,
+.secondaryAction:focus-visible,
+.ghostAction:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--agent-focus-ring);
+}
+
+.formActions,
+.headerActions,
+.buttonRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.primaryAction,
+.secondaryAction,
+.ghostAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primaryAction {
+  background: linear-gradient(135deg, #f59e0b, #fbbf24);
+  color: #081019;
+}
+
+.secondaryAction,
+.ghostAction {
+  border-color: var(--agent-border-strong);
+  background: var(--agent-accent-soft);
+  color: var(--agent-text-secondary);
+}
+
+.primaryAction:disabled,
+.secondaryAction:disabled,
+.ghostAction:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.metricsGrid,
+.evidenceGrid,
+.metaGrid,
+.detailGrid {
+  display: grid;
+  gap: 14px;
+}
+
+.metricsGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.detailGrid {
+  grid-template-columns: minmax(0, 1fr) 340px;
+  align-items: start;
+}
+
+.metricCard,
+.evidenceItem,
+.metaItem,
+.nodeItem,
+.timelineItem,
+.memoryItem,
+.toolItem,
+.errorState,
+.emptyState {
+  border-radius: 18px;
+  border: 1px solid var(--agent-border);
+  background: var(--agent-surface-muted);
+}
+
+.metricCard,
+.metaItem,
+.evidenceItem {
+  padding: 16px;
+}
+
+.evidenceGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.metricLabel,
+.metaLabel {
+  color: var(--agent-text-muted);
+  font-size: 0.74rem;
+}
+
+.metricValue,
+.metaValue {
+  display: block;
+  margin-top: 8px;
+  color: var(--agent-text-primary);
+  font-size: 1.3rem;
+  line-height: 1.2;
+}
+
+.contentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+.panelHeader,
+.runHeader,
+.detailHeader,
+.timelineHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.panelTitle,
+.runTitle,
+.detailTitle {
+  margin: 0;
+  color: var(--agent-text-primary);
+}
+
+.runList,
+.nodeList,
+.timelineList,
+.sectionStack {
+  gap: 14px;
+}
+
+.runCard {
+  gap: 16px;
+  padding: 18px;
+  border-radius: 22px;
+}
+
+.runHeader,
+.timelineHeader {
+  align-items: flex-start;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  width: fit-content;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.statusCompleted {
+  border: 1px solid rgba(74, 222, 128, 0.18);
+  background: rgba(74, 222, 128, 0.14);
+  color: #9df2ba;
+}
+
+.statusFailed,
+.statusCancelled {
+  border: 1px solid rgba(248, 113, 113, 0.18);
+  background: rgba(248, 113, 113, 0.14);
+  color: #fecaca;
+}
+
+.statusRunning {
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(125, 211, 252, 0.14);
+  color: #b6e6ff;
+}
+
+.statusWaiting,
+.statusPlanning {
+  border: 1px solid rgba(245, 158, 11, 0.16);
+  background: rgba(245, 158, 11, 0.12);
+  color: #ffd598;
+}
+
+.nodeItem,
+.timelineItem,
+.memoryItem,
+.toolItem,
+.emptyState,
+.errorState {
+  padding: 16px;
+}
+
+.nodeItem {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.nodeIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--agent-accent-soft);
+  color: var(--agent-accent);
+  font-weight: 800;
+}
+
+.nodeBody,
+.timelineBody {
+  min-width: 0;
+}
+
+.nodeTitle,
+.timelineTitle {
+  margin: 0;
+  color: var(--agent-text-primary);
+  font-size: 1rem;
+}
+
+.nodeDescription,
+.timelineText,
+.memoryText,
+.jsonPreview {
+  margin: 8px 0 0;
+  color: var(--agent-text-tertiary);
+  line-height: 1.7;
+}
+
+.jsonPreview {
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--agent-surface-muted);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nodeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--agent-border);
+  color: var(--agent-text-secondary);
+  font-size: 0.78rem;
+}
+
+:global(html[data-theme='light']) .statusCompleted {
+  color: #14532d;
+  background: rgba(22, 163, 74, 0.12);
+}
+
+:global(html[data-theme='light']) .statusFailed,
+:global(html[data-theme='light']) .statusCancelled {
+  color: #991b1b;
+  background: rgba(220, 38, 38, 0.1);
+}
+
+:global(html[data-theme='light']) .statusRunning {
+  color: #075985;
+  background: rgba(2, 132, 199, 0.12);
+}
+
+:global(html[data-theme='light']) .statusWaiting,
+:global(html[data-theme='light']) .statusPlanning {
+  color: #92400e;
+  background: rgba(217, 119, 6, 0.12);
+}
+
+@media (max-width: 1080px) {
+  .hero,
+  .contentGrid,
+  .detailGrid,
+  .metricsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .hero,
+  .formPanel,
+  .panel,
+  .sidePanel,
+  .detailCard {
+    padding: 18px;
+  }
+
+  .title {
+    max-width: none;
+  }
+
+  .primaryAction,
+  .secondaryAction,
+  .ghostAction {
+    width: 100%;
+  }
+}

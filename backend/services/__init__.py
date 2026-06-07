@@ -13,6 +13,16 @@ from db.postgres_store import (
 
 from .artifact_store import ArtifactStore, get_artifact_store
 from .audit_log_service import AuditLogService
+from .autonomous_agent_evaluation import AgentEvaluator, AgentReflector, MemoryManager
+from .autonomous_agent_planner import AutonomousPlanner, GoalInterpreter
+from .autonomous_agent_runtime import AutonomousAgentRuntime
+from .autonomous_agent_store import AutonomousAgentStore
+from .autonomous_agent_tools import ToolExecutor, ToolRegistry, build_default_tool_registry
+from .autonomous_agent_worker import (
+    AutonomousAgentWorkerQueue,
+    dispose_agent_worker_queue,
+    get_agent_worker_queue,
+)
 from .knowledge_index_queue import dispose_knowledge_index_queue, get_knowledge_index_queue
 from .llm_errors import (
     format_workflow_error,
@@ -58,6 +68,19 @@ __all__ = [
     # artifact_store
     "ArtifactStore",
     "AuditLogService",
+    "AutonomousAgentStore",
+    "AutonomousAgentRuntime",
+    "AutonomousPlanner",
+    "GoalInterpreter",
+    "AgentEvaluator",
+    "AgentReflector",
+    "MemoryManager",
+    "ToolRegistry",
+    "ToolExecutor",
+    "build_default_tool_registry",
+    "AutonomousAgentWorkerQueue",
+    "get_agent_worker_queue",
+    "dispose_agent_worker_queue",
     "PostgresArtifactStore",
     "PostgresGraphCheckpointSaver",
     "get_artifact_store",

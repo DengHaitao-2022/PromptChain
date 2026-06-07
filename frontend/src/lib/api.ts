@@ -19,7 +19,11 @@ export type WorkflowStatus =
 
 export type ClarificationPriority = 'high' | 'medium' | 'low';
 export type FactCheckDecision = 'confirm' | 'use_suggestion' | 'manual';
-export type WorkflowGateType = 'clarification' | 'outline_approval' | 'fact_check';
+export type WorkflowGateType =
+  | 'clarification'
+  | 'outline_approval'
+  | 'fact_check'
+  | 'tool_risk_approval';
 export type ApiErrorDomain =
   | 'AUTH'
   | 'WORKSPACE'
@@ -271,12 +275,16 @@ export interface WorkflowGateQuestion extends Record<string, unknown> {
 export interface WorkflowGateState {
   gate_type: WorkflowGateType;
   trigger_reason?: string | null;
-  questions: WorkflowGateQuestion[];
+  questions?: WorkflowGateQuestion[];
   answers?: Record<string, unknown> | null;
   opened_at?: string | null;
   handled_at?: string | null;
   waiting_duration_ms?: number | null;
   resolution?: string | null;
+  tool_call_id?: string;
+  tool_name?: string;
+  risk_level?: string;
+  reason?: string | null;
 }
 
 export interface IntentCard {
@@ -603,7 +611,7 @@ export interface WorkflowGateWaitingEvent {
   workflow_run_id: string;
   data: {
     gate_type: WorkflowGateType;
-    questions: WorkflowGateQuestion[];
+    questions?: WorkflowGateQuestion[];
     [key: string]: unknown;
   };
 }
@@ -812,6 +820,170 @@ export interface RerunResponse {
   rerun_from_node: string;
   status: WorkflowStatus | string;
   state: WorkflowResponse['state'];
+}
+
+export type AgentRunStatus =
+  | 'planning'
+  | 'running'
+  | 'paused'
+  | 'awaiting_gate'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface AgentRun {
+  id: string;
+  user_id: string;
+  workspace_id: string;
+  goal: string;
+  status: AgentRunStatus;
+  autonomy_level: string;
+  budget_limit: Record<string, unknown>;
+  current_plan_id: string | null;
+  current_step_id: string | null;
+  final_artifact_id: string | null;
+  gate: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentPlanNode {
+  id: string;
+  title: string;
+  step_type: string;
+  description: string;
+  depends_on: string[];
+  tool_name?: string | null;
+  expected_output: string;
+  acceptance_criteria: string[];
+  risk_level: string;
+  status: string;
+}
+
+export interface AgentPlan {
+  id: string;
+  run_id: string;
+  version: number;
+  status: string;
+  goal_card: {
+    goal: string;
+    task_type: string;
+    constraints: string[];
+    deliverables: string[];
+    risk_boundaries: string[];
+    success_criteria: string[];
+    quality_dimensions: string[];
+    uncertainty_questions: string[];
+  };
+  plan_graph: {
+    nodes: AgentPlanNode[];
+    edges: Array<{ source: string; target: string; condition?: string | null }>;
+    quality_gates: Record<string, unknown>[];
+    max_steps: number;
+    max_replans: number;
+  };
+  created_by: string;
+  reason: string;
+  created_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentStep {
+  id: string;
+  run_id: string;
+  plan_id: string;
+  node_id: string;
+  parent_step_id: string | null;
+  step_type: string;
+  title: string;
+  description: string;
+  status: string;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  artifact_ids: string[];
+  started_at: string | null;
+  ended_at: string | null;
+  error_message: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentToolCall {
+  id: string;
+  run_id: string;
+  step_id: string | null;
+  tool_name: string;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  status: string;
+  risk_level: string;
+  error_message: string | null;
+  latency_ms: number | null;
+  cost: Record<string, unknown>;
+  created_at: string;
+  completed_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentEvalResult {
+  id: string;
+  run_id: string;
+  step_id: string | null;
+  target_type: string;
+  score: number;
+  passed: boolean;
+  issues: Record<string, unknown>[];
+  suggestions: Record<string, unknown>[];
+  created_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentMemory {
+  id: string;
+  workspace_id: string;
+  run_id: string | null;
+  memory_type: string;
+  content: string;
+  embedding_id: string | null;
+  source_trace_id: string | null;
+  confidence: number;
+  created_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentReplanRecord {
+  id: string;
+  run_id: string;
+  old_plan_id: string;
+  new_plan_id: string;
+  trigger_reason: string;
+  failed_step_id: string | null;
+  reflection: Record<string, unknown>;
+  created_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentToolDefinition {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  risk_level: string;
+  permission: string;
+  idempotent: boolean;
+}
+
+export interface AgentRunDetail {
+  run: AgentRun;
+  plans: AgentPlan[];
+  steps: AgentStep[];
+  tool_calls: AgentToolCall[];
+  eval_results: AgentEvalResult[];
+  replan_records: AgentReplanRecord[];
+  memories: AgentMemory[];
+  tool_definitions: AgentToolDefinition[];
 }
 
 export type AuditOutcome = 'success' | 'failure' | 'unknown';
@@ -1327,6 +1499,72 @@ export const scenarioApi = {
         body: JSON.stringify(body),
       }
     ),
+};
+
+// Autonomous Agent API
+export const agentApi = {
+  start: (goal: string, options: { autoExecute?: boolean; autonomyLevel?: string; budgetLimit?: Record<string, unknown>; plannerMode?: string; modelProviderId?: string; modelProviderName?: string; modelName?: string } = {}) =>
+    request<AgentRunDetail>('/agents/runs', {
+      method: 'POST',
+      body: JSON.stringify({
+        goal,
+        auto_execute: options.autoExecute ?? true,
+        autonomy_level: options.autonomyLevel ?? 'supervised',
+        budget_limit: options.budgetLimit ?? {},
+        planner_mode: options.plannerMode ?? 'auto',
+        model_provider_id: options.modelProviderId,
+        model_provider_name: options.modelProviderName,
+        model_name: options.modelName,
+      }),
+    }),
+
+  getRuns: () => request<{ runs: AgentRun[] }>('/agents/runs'),
+
+  getDetail: (runId: string) => request<AgentRunDetail>(`/agents/runs/${runId}`),
+
+  resume: (runId: string) =>
+    request<AgentRunDetail>(`/agents/runs/${runId}/resume`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  pause: (runId: string, reason = '') =>
+    request<AgentRunDetail>(`/agents/runs/${runId}/pause`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  cancel: (runId: string, reason = '') =>
+    request<AgentRunDetail>(`/agents/runs/${runId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  clarify: (runId: string, clarification: string) =>
+    request<AgentRunDetail>(`/agents/runs/${runId}/clarify`, {
+      method: 'POST',
+      body: JSON.stringify({ clarification }),
+    }),
+
+  updatePlan: (runId: string, planGraph: AgentPlan['plan_graph'], reason = 'human_plan_edit') =>
+    request<AgentRunDetail>(`/agents/runs/${runId}/plan`, {
+      method: 'PUT',
+      body: JSON.stringify({ plan_graph: planGraph, reason }),
+    }),
+
+  skipNode: (runId: string, nodeId: string, reason = 'human_skip_node') =>
+    request<AgentRunDetail>(`/agents/runs/${runId}/skip-node`, {
+      method: 'POST',
+      body: JSON.stringify({ node_id: nodeId, reason }),
+    }),
+
+  decideGate: (runId: string, approved: boolean, note = '') =>
+    request<AgentRunDetail>(`/agents/runs/${runId}/gate`, {
+      method: 'POST',
+      body: JSON.stringify({ approved, note }),
+    }),
+
+  getTools: () => request<{ tools: AgentToolDefinition[] }>('/agents/tools'),
 };
 
 // Trace API

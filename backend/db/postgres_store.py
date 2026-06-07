@@ -160,6 +160,18 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
     return [
         "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS workflow_definition_id VARCHAR(36)",
         "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS workflow_version_id VARCHAR(36)",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS queue_status VARCHAR(32) NOT NULL DEFAULT 'idle'",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(100)",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS lease_token VARCHAR(64)",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS last_worker_error TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_agent_runs_queue_status ON agent_runs (queue_status)",
+        "CREATE INDEX IF NOT EXISTS ix_agent_runs_lease_expires_at ON agent_runs (lease_expires_at)",
+        "CREATE INDEX IF NOT EXISTS ix_agent_runs_worker_id ON agent_runs (worker_id)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_id VARCHAR(64)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS request_id VARCHAR(64)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS trace_id VARCHAR(64)",
@@ -603,6 +615,10 @@ class PostgresArtifactStore:
             await self.init_db()
             self._initialized = True
 
+    async def ensure_initialized(self) -> None:
+        """公开的运行态表初始化入口，供直接使用 async_session 的路由调用。"""
+        await self._ensure_initialized()
+
     async def init_db(self):
         """初始化数据库表。
 
@@ -613,6 +629,7 @@ class PostgresArtifactStore:
             "models.admin_orm",
             "models.workflow_orm",
             "orm.knowledge_orm",
+            "orm.autonomous_agent_orm",
             "orm.scenario_orm",
         ):
             importlib.import_module(module_name)

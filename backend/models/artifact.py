@@ -33,6 +33,7 @@ class ArtifactType(StrEnum):
     FINAL_CONTENT = "final_content"
     SCENARIO_CHECK_REPORT = "scenario_check_report"
     PROJECT_MEMORY_UPDATE_CANDIDATES = "project_memory_update_candidates"
+    AGENT_PLAN = "agent_plan"
 
 
 class Artifact(BaseModel):
