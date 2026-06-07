@@ -37,6 +37,7 @@ from services import (
     invoke_structured_with_usage,
     invoke_with_llm_retry,
 )
+from services.scenario_runtime_service import ScenarioRuntimeService
 
 # ==================== Prompt 模板 ====================
 
@@ -153,6 +154,59 @@ def _build_gate_questions(report: FactCheckReport) -> list[dict]:
             }
         )
     return questions
+
+
+def _normalize_scenario_risk(level: object) -> str:
+    return str(level) if str(level) in {"low", "medium", "high"} else "high"
+
+
+def _append_scenario_consistency_checks(report: FactCheckReport, state: dict) -> dict | None:
+    """把场景一致性检查映射为现有 FactCheck Gate 可审阅的高风险项。"""
+    scenario_report = ScenarioRuntimeService().build_scenario_report(state)
+    if not scenario_report:
+        return None
+
+    for check in scenario_report.get("checks") or []:
+        if not isinstance(check, dict):
+            continue
+        check_type = str(check.get("type") or "scenario_check")
+        label = str(check.get("label") or check_type)
+        passed = bool(check.get("passed"))
+        risk_level = _normalize_scenario_risk(check.get("risk_level"))
+        suggestion = check.get("suggestion")
+        evidence = check.get("evidence") if isinstance(check.get("evidence"), dict) else {}
+        claim_id = f"scenario_{check_type}"
+        evidence_summary = json.dumps(evidence, ensure_ascii=False, default=str)
+        report.claims.append(
+            FactClaim(
+                id=claim_id,
+                text=f"{label}检查：{evidence_summary}",
+                section_id="scenario_consistency",
+                category="other",
+            )
+        )
+        report.results.append(
+            VerificationResult(
+                claim_id=claim_id,
+                is_verified=passed,
+                confidence=1.0 if passed else 0.72,
+                evidence_status="supported" if passed else "unsupported",
+                source="Project Memory",
+                suggested_correction=None,
+                risk_level=risk_level,
+                verification_question=f"请确认{label}是否满足项目记忆约束。",
+                verification_answer=str(
+                    suggestion
+                    or (
+                        f"{label}通过，未发现与项目记忆冲突。"
+                        if passed
+                        else f"{label}未通过，需要人工复核。"
+                    )
+                ),
+            )
+        )
+
+    return scenario_report
 
 
 async def _update_gate_metadata(store, workflow_run_id: str, gate_payload: dict | None) -> None:
@@ -653,8 +707,9 @@ async def check_facts(state: dict) -> dict:
                 )
                 node_run.llm_calls.append(llm_call)
 
-        # 生成报告
+        # 生成报告，并把场景一致性检查映射进同一个可审批 Gate。
         report = FactCheckReport(claims=all_claims, results=all_results)
+        scenario_report = _append_scenario_consistency_checks(report, state)
         report.compute_stats()
         fact_check_gate_enabled = runtime_feature_enabled(
             state,
@@ -662,6 +717,23 @@ async def check_facts(state: dict) -> dict:
             default=True,
         )
         awaiting_approval = report.has_high_risk_items() and fact_check_gate_enabled
+
+        scenario_report_artifact_id = None
+        if scenario_report:
+            scenario_artifact = await store.create_artifact(
+                artifact_type=ArtifactType.SCENARIO_CHECK_REPORT,
+                content=scenario_report,
+                workflow_run_id=workflow_run_id,
+                node_run_id=node_run.id,
+                metadata={
+                    "scenario_code": state.get("scenario_code"),
+                    "project_id": state.get("project_id"),
+                    "risk_level": scenario_report.get("risk_level"),
+                },
+            )
+            scenario_report_artifact_id = scenario_artifact.id
+            scenario_report = {**scenario_report, "artifact_id": scenario_report_artifact_id}
+            node_run.output_artifact_ids.append(scenario_artifact.id)
 
         # 创建 Artifact
         artifact = await store.create_artifact(
@@ -676,6 +748,7 @@ async def check_facts(state: dict) -> dict:
                 "evidence_artifact_id": state.get("evidence_artifact_id"),
                 "knowledge_conflicts": state.get("knowledge_conflicts", []),
                 "unverified_points": state.get("unverified_points", []),
+                "scenario_check_report_artifact_id": scenario_report_artifact_id,
             },
         )
         node_run.output_artifact_ids.append(artifact.id)
@@ -703,6 +776,7 @@ async def check_facts(state: dict) -> dict:
                 **state,
                 "fact_check_report": report,
                 "fact_check_artifact_id": artifact.id,
+                "scenario_check_report": scenario_report,
                 "awaiting_fact_check_approval": True,
                 "fact_check_decisions": None,
                 "manual_corrections": None,
@@ -717,6 +791,7 @@ async def check_facts(state: dict) -> dict:
             **state,
             "fact_check_report": report,
             "fact_check_artifact_id": artifact.id,
+            "scenario_check_report": scenario_report,
             "awaiting_fact_check_approval": False,
             "fact_check_decisions": None,
             "manual_corrections": None,
@@ -783,6 +858,29 @@ async def approve_fact_check(state: dict) -> dict:
                 failed_corrections[claim_id] = {
                     "claim_id": claim_id,
                     "reason": "claim_or_result_not_found",
+                }
+                continue
+
+            if claim.section_id == "scenario_consistency":
+                if decision == "confirm":
+                    _mark_result_resolved(result)
+                    continue
+                if decision == "manual":
+                    replacement = manual_corrections.get(claim_id)
+                    if not replacement:
+                        failed_corrections[claim_id] = {
+                            "claim_id": claim_id,
+                            "reason": "manual_correction_missing",
+                        }
+                        continue
+                    result.verification_answer = (
+                        f"{result.verification_answer or ''}\n人工复核意见：{replacement}"
+                    ).strip()
+                    _mark_result_resolved(result)
+                    continue
+                failed_corrections[claim_id] = {
+                    "claim_id": claim_id,
+                    "reason": f"unsupported_scenario_decision:{decision}",
                 }
                 continue
 

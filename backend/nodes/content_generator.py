@@ -21,6 +21,7 @@ from models import (
     Outline,
     OutlineSection,
 )
+from nodes.scenario_context import format_project_memory_context
 from services import (
     ensure_usage_metadata,
     extract_usage_metadata,
@@ -49,6 +50,9 @@ SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据�
 ## 可用证据
 {evidence_context}
 
+## 项目记忆
+{project_memory_context}
+
 ## 重跑修订要求
 {rerun_instruction}
 
@@ -60,6 +64,7 @@ SECTION_GENERATION_PROMPT = """你是一位专业的内容创作者。请根据�
 5. 使用适当的段落结构
 6. 如果存在可用证据，必须优先基于证据展开，并在段落中自然标注来源名称
 7. 证据不足的内容请明确使用“尚无资料证明”之类表述，不要编造引用
+8. 如果存在项目记忆，必须延续其中的人物、时间线、世界观、品牌语气、受众画像或产品知识
 
 请开始撰写{section_title}章节的内容："""
 
@@ -208,6 +213,7 @@ async def generate_section(
                 "target_words": section.target_words,
                 "previous_sections": previous_content or "（这是第一个章节）",
                 "evidence_context": _format_evidence_context(state, section),
+                "project_memory_context": format_project_memory_context(state),
                 "rerun_instruction": rerun_instruction,
             }
         )
@@ -250,6 +256,7 @@ async def generate_section_streaming(
         "target_words": section.target_words,
         "previous_sections": previous_content or "（这是第一个章节）",
         "evidence_context": _format_evidence_context(state, section),
+        "project_memory_context": format_project_memory_context(state),
         "rerun_instruction": rerun_instruction,
     }
 

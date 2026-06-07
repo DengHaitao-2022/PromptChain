@@ -1391,6 +1391,23 @@ class KnowledgeService:
         kb_ids = filters.get("kb_ids")
         if isinstance(kb_ids, list) and kb_ids:
             conditions.append(KnowledgeBaseORM.id.in_(kb_ids))
+        project_id = filters.get("project_id")
+        if isinstance(project_id, str) and project_id:
+            conditions.append(
+                KnowledgeChunkORM.metadata_json["project_id"].as_string() == project_id
+            )
+        asset_id = filters.get("asset_id")
+        if isinstance(asset_id, str) and asset_id:
+            conditions.append(KnowledgeChunkORM.metadata_json["asset_id"].as_string() == asset_id)
+        asset_types = filters.get("asset_type")
+        if isinstance(asset_types, str) and asset_types:
+            conditions.append(
+                KnowledgeChunkORM.metadata_json["asset_type"].as_string() == asset_types
+            )
+        elif isinstance(asset_types, list) and asset_types:
+            conditions.append(
+                KnowledgeChunkORM.metadata_json["asset_type"].as_string().in_(asset_types)
+            )
         if KnowledgeScope.RUN_UPLOAD in scopes:
             if workflow_run_id:
                 # 本次运行上传资料必须绑定当前运行，避免跨运行串用临时证据。

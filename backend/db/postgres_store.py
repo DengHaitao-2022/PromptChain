@@ -613,6 +613,7 @@ class PostgresArtifactStore:
             "models.admin_orm",
             "models.workflow_orm",
             "orm.knowledge_orm",
+            "orm.scenario_orm",
         ):
             importlib.import_module(module_name)
 

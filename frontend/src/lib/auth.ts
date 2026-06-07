@@ -26,7 +26,8 @@ export type Resource =
   | 'member'
   | 'workspace'
   | 'audit_log'
-  | 'knowledge_base';
+  | 'knowledge_base'
+  | 'content_project';
 
 export interface User {
   id: string;
@@ -111,6 +112,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     template: ['read'],
     workspace: ['read'],
     knowledge_base: ['read'],
+    content_project: ['read'],
   },
   editor: {
     workflow: ['read', 'create', 'update', 'execute'],
@@ -118,6 +120,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     template: ['read', 'create', 'update'],
     workspace: ['read'],
     knowledge_base: ['read', 'create', 'update'],
+    content_project: ['read', 'create', 'update'],
   },
   admin: {
     workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
@@ -130,6 +133,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     workspace: ['read', 'update', 'manage'],
     audit_log: ['read', 'export'],
     knowledge_base: ['read', 'create', 'update', 'delete', 'manage'],
+    content_project: ['read', 'create', 'update', 'delete', 'manage'],
   },
   owner: {
     workflow: ['read', 'create', 'update', 'delete', 'execute', 'export', 'manage'],
@@ -142,6 +146,7 @@ export const ROLE_PERMISSIONS: Record<Role, Partial<Record<Resource, Action[]>>>
     workspace: ['read', 'update', 'delete', 'manage'],
     audit_log: ['read', 'export'],
     knowledge_base: ['read', 'create', 'update', 'delete', 'manage'],
+    content_project: ['read', 'create', 'update', 'delete', 'manage'],
   },
 };
 
@@ -153,6 +158,8 @@ const CONSOLE_ROUTE_GUARDS: ConsoleRouteGuard[] = [
   { prefix: '/console/settings/keys', resource: 'secret', action: 'read' },
   { prefix: '/console/settings/audit', resource: 'audit_log', action: 'read' },
   { prefix: '/console/knowledge', resource: 'knowledge_base', action: 'read' },
+  { prefix: '/console/projects', resource: 'content_project', action: 'read' },
+  { prefix: '/console/scenarios', resource: 'content_project', action: 'read' },
   { prefix: '/console/runs', resource: 'workflow_run', action: 'read' },
   { prefix: '/console/workflows', resource: 'workflow', action: 'read' },
   { prefix: '/console/settings' },

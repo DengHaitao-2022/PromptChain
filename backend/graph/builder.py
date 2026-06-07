@@ -35,6 +35,7 @@ from nodes import (
     self_refine_loop,
 )
 from services import get_artifact_store, get_postgres_checkpoint_saver
+from services.scenario_runtime_service import ScenarioRuntimeService
 
 
 async def finalize_output(state: GraphState) -> GraphState:
@@ -76,11 +77,57 @@ async def finalize_output(state: GraphState) -> GraphState:
     # 更新工作流状态
     workflow_run = await store.get_workflow_run(workflow_run_id)
     if workflow_run:
+        latest_node_runs = await store.get_node_runs_by_workflow(workflow_run_id)
+        latest_node_run = max(latest_node_runs, key=lambda run: run.started_at, default=None)
+        scenario_runtime = ScenarioRuntimeService()
+        scenario_report = state.get("scenario_check_report")
+        if not scenario_report:
+            scenario_report = scenario_runtime.build_scenario_report(state)
+        if scenario_report and not scenario_report.get("artifact_id"):
+            scenario_report_artifact = await store.create_artifact(
+                artifact_type=ArtifactType.SCENARIO_CHECK_REPORT,
+                content=scenario_report,
+                workflow_run_id=workflow_run_id,
+                node_run_id=latest_node_run.id if latest_node_run else workflow_run_id,
+                metadata={
+                    "scenario_code": state.get("scenario_code"),
+                    "project_id": state.get("project_id"),
+                },
+            )
+            state["scenario_check_report"] = {
+                **scenario_report,
+                "artifact_id": scenario_report_artifact.id,
+            }
+        elif scenario_report:
+            state["scenario_check_report"] = scenario_report
+
+        memory_candidates = scenario_runtime.build_memory_update_candidates(state)
+        if memory_candidates:
+            memory_candidate_artifact = await store.create_artifact(
+                artifact_type=ArtifactType.PROJECT_MEMORY_UPDATE_CANDIDATES,
+                content={"candidates": memory_candidates},
+                workflow_run_id=workflow_run_id,
+                node_run_id=latest_node_run.id if latest_node_run else workflow_run_id,
+                metadata={
+                    "scenario_code": state.get("scenario_code"),
+                    "project_id": state.get("project_id"),
+                    "candidate_count": len(memory_candidates),
+                },
+            )
+            state["project_memory_update_candidates"] = [
+                {
+                    **candidate,
+                    "source_artifact_id": memory_candidate_artifact.id,
+                    "candidate_index": index,
+                }
+                for index, candidate in enumerate(memory_candidates)
+            ]
+
         workflow_run.status = WorkflowRunStatus.COMPLETED
         workflow_run.final_artifact_id = final_artifact_id
 
         # 计算统计
-        node_runs = await store.get_node_runs_by_workflow(workflow_run_id)
+        node_runs = latest_node_runs
         workflow_run.total_node_runs = len(node_runs)
         workflow_run.total_llm_calls = sum(len(n.llm_calls) for n in node_runs)
         workflow_run.total_tokens = sum(
@@ -88,6 +135,14 @@ async def finalize_output(state: GraphState) -> GraphState:
         )
         workflow_run.completed_at = utc_now_naive()
         workflow_run.total_duration_ms = sum(node.duration_ms or 0 for node in node_runs)
+        metadata = dict(workflow_run.metadata or {})
+        if state.get("scenario_check_report"):
+            metadata["scenario_check_report"] = state.get("scenario_check_report")
+        if state.get("project_memory_update_candidates"):
+            metadata["project_memory_update_candidates"] = state.get(
+                "project_memory_update_candidates"
+            )
+        workflow_run.metadata = metadata
         await store.update_workflow_run(workflow_run)
 
     return state

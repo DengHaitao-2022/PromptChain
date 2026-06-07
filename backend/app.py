@@ -90,6 +90,11 @@ def _register_routes(application: FastAPI) -> None:
 
     application.include_router(knowledge_router, prefix="/api", tags=["knowledge"])
 
+    # MVP3 场景内容项目路由
+    from routes.scenario_routes import router as scenario_router
+
+    application.include_router(scenario_router, prefix="/api", tags=["scenario"])
+
     # WebSocket 路由
     from routes.websocket_routes import router as ws_router
 

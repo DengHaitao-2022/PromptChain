@@ -70,6 +70,40 @@ class ContentGenerationWorkflow:
             )
         return None
 
+    async def _load_project_memory_context(
+        self, workflow_run: WorkflowRun
+    ) -> dict[str, Any] | None:
+        """读取项目结构化记忆；非项目运行保持为空，避免影响旧链路。"""
+        metadata = workflow_run.metadata or {}
+        project_id = metadata.get("project_id")
+        workspace_id = metadata.get("workspace_id")
+        if not project_id or not workspace_id:
+            return None
+
+        try:
+            from services.scenario_service import ScenarioService
+
+            async with get_postgres_store().initialized_session() as session:
+                service = ScenarioService(session)
+                project = await service.get_project_model(
+                    project_id=project_id,
+                    workspace_id=workspace_id,
+                )
+                assets = await service.load_structured_memory(
+                    project_id=project_id,
+                    workspace_id=workspace_id,
+                )
+        except Exception:
+            return None
+
+        return {
+            "project": project.model_dump(mode="json"),
+            "assets": assets,
+            "scenario_code": metadata.get("scenario_code") or project.scenario_code,
+            "generation_mode": metadata.get("generation_mode"),
+            "target_asset_id": metadata.get("target_asset_id"),
+        }
+
     def _require_bound_workflow_context(
         self,
         workflow_run: WorkflowRun,
@@ -121,6 +155,14 @@ class ContentGenerationWorkflow:
             "retrieval_config": RetrievalConfig.from_raw(
                 (workflow_run.metadata or {}).get("retrieval_config")
             ),
+            "scenario_code": (workflow_run.metadata or {}).get("scenario_code"),
+            "project_id": (workflow_run.metadata or {}).get("project_id"),
+            "edit_mode": (workflow_run.metadata or {}).get("edit_mode"),
+            "generation_mode": (workflow_run.metadata or {}).get("generation_mode"),
+            "target_asset_id": (workflow_run.metadata or {}).get("target_asset_id"),
+            "project_memory_context": await self._load_project_memory_context(workflow_run),
+            "scenario_check_report": None,
+            "project_memory_update_candidates": [],
             "is_paused": False,
             "pause_reason": None,
             "needs_clarification": False,
@@ -145,6 +187,8 @@ class ContentGenerationWorkflow:
         metadata = dict(workflow_run.metadata or {})
         metadata["workflow_context_loaded"] = bool(workflow_context)
         metadata["runtime_plan"] = state.get("runtime_plan")
+        if state.get("project_memory_context"):
+            metadata["project_memory_loaded"] = True
         workflow_run.workflow_definition_id = actual_workflow_definition_id
         workflow_run.workflow_version_id = actual_workflow_version_id
         workflow_run.metadata = metadata
@@ -346,6 +390,17 @@ class ContentGenerationWorkflow:
         metadata["workflow_context_loaded"] = bool(state.get("workflow_context"))
         if isinstance(state.get("runtime_plan"), dict):
             metadata["runtime_plan"] = state.get("runtime_plan")
+        if state.get("project_memory_context"):
+            metadata["project_memory_loaded"] = True
+        for key in (
+            "scenario_code",
+            "project_id",
+            "edit_mode",
+            "generation_mode",
+            "target_asset_id",
+        ):
+            if state.get(key):
+                metadata[key] = state.get(key)
         retrieval_config = state.get("retrieval_config")
         if hasattr(retrieval_config, "model_dump"):
             metadata["retrieval_config"] = retrieval_config.model_dump(mode="json")
@@ -806,6 +861,11 @@ class ContentGenerationWorkflow:
         model_name: str | None = None,
         retrieval_config: RetrievalConfig | dict | None = None,
         run_upload_documents: list[dict[str, Any]] | None = None,
+        scenario_code: str | None = None,
+        project_id: str | None = None,
+        edit_mode: str | None = None,
+        generation_mode: str | None = None,
+        target_asset_id: str | None = None,
     ) -> dict:
         """启动新的工作流，并在后台逐节点推进。"""
         from services.llm_provider import get_workspace_runtime_model_config
@@ -832,6 +892,16 @@ class ContentGenerationWorkflow:
             metadata["requested_model_provider_id"] = model_provider_id
         if model_name:
             metadata["requested_model_name"] = model_name
+        if scenario_code:
+            metadata["scenario_code"] = scenario_code
+        if project_id:
+            metadata["project_id"] = project_id
+        if edit_mode:
+            metadata["edit_mode"] = edit_mode
+        if generation_mode:
+            metadata["generation_mode"] = generation_mode
+        if target_asset_id:
+            metadata["target_asset_id"] = target_asset_id
         metadata["runtime_model"] = {
             "provider": runtime_model_config.provider,
             "model": runtime_model_config.model,
