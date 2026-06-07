@@ -184,7 +184,29 @@ jobs:
           ALLOW_INSECURE_JWT_SECRET: "true"
           DATABASE_AUTO_SCHEMA_INIT: "false"
         run: |
-          uv run alembic downgrade -1
+          # Alembic merge revision 对 `downgrade -1` 会产生 Ambiguous walk，需显式解析父 revision。
+          rollback_target="$(uv run python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          script = ScriptDirectory.from_config(Config("alembic.ini"))
+          heads = script.get_heads()
+          if len(heads) != 1:
+              raise SystemExit(f"期望只有一个 Alembic head，实际为: {', '.join(heads)}")
+
+          head = script.get_revision(heads[0])
+          down_revision = head.down_revision
+          if isinstance(down_revision, tuple):
+              if not down_revision:
+                  raise SystemExit("当前 Alembic head 没有父 revision，无法回滚冒烟")
+              print(down_revision[0])
+          elif down_revision:
+              print(down_revision)
+          else:
+              raise SystemExit("当前 Alembic head 没有父 revision，无法回滚冒烟")
+          PY
+          )"
+          uv run alembic downgrade "${rollback_target}"
           uv run alembic upgrade head
 
   frontend:
