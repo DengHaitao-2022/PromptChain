@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 
@@ -16,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.config import get_settings
 from core.time import utc_now_naive
 from db.postgres_store import Base
-from models.artifact import ArtifactType
+from models.artifact import ArtifactType, WorkflowRun
 from models.autonomous_agent import (
     AgentRun,
     AgentRunStatus,
@@ -586,6 +587,87 @@ def test_agent_worker_claim_does_not_pick_idle_run():
     asyncio.run(_scenario())
 
 
+def test_agent_worker_claim_does_not_pick_paused_run():
+    async def _scenario():
+        import models.auth_orm  # noqa: F401
+
+        engine = create_async_engine(
+            "sqlite+aiosqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            store = AutonomousAgentStore(session)
+            run = await store.create_run(
+                AgentRun(
+                    goal="验证暂停任务不会被 worker 认领",
+                    user_id="user-1",
+                    workspace_id="ws-1",
+                    status=AgentRunStatus.PAUSED,
+                    queue_status="queued",
+                )
+            )
+            claimed = await store.claim_run(
+                run.id,
+                worker_id="worker-1",
+                lease_token="lease-token",
+                lease_seconds=60,
+            )
+
+        assert claimed is None
+
+        async with session_factory() as session:
+            persisted = await AutonomousAgentStore(session).get_run(run.id)
+            assert persisted is not None
+            assert persisted.status == AgentRunStatus.PAUSED
+            assert persisted.worker_id is None
+
+        await engine.dispose()
+
+    asyncio.run(_scenario())
+
+
+def test_agent_worker_heartbeat_retries_after_transient_failure(monkeypatch):
+    async def _scenario():
+        import services.autonomous_agent_worker as worker_module
+
+        queue = AutonomousAgentWorkerQueue(
+            max_concurrency=1,
+            lease_seconds=30,
+            worker_id="worker-1",
+        )
+        sleep_calls = 0
+
+        async def _fake_sleep(_seconds: int) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 2:
+                raise asyncio.CancelledError
+
+        class _FlakyStore:
+            ensure_calls = 0
+
+            async def ensure_initialized(self):
+                self.ensure_calls += 1
+                raise RuntimeError("temporary heartbeat outage")
+
+        store = _FlakyStore()
+        monkeypatch.setattr(worker_module.asyncio, "sleep", _fake_sleep)
+        monkeypatch.setattr(worker_module, "get_postgres_store", lambda: store)
+
+        with suppress(asyncio.CancelledError):
+            await queue._heartbeat_loop("run-1", "lease-token")
+
+        assert store.ensure_calls == 1
+        assert sleep_calls == 2
+
+    asyncio.run(_scenario())
+
+
 def test_llm_planner_falls_back_when_schema_is_invalid():
     async def _scenario(runtime, _, __):
         original_provider = os.environ.get("DEFAULT_LLM_PROVIDER")
@@ -945,6 +1027,56 @@ def test_tool_registry_contains_issue_15_required_tools():
     asyncio.run(_with_runtime(_scenario))
 
 
+def test_read_artifact_tool_rejects_cross_workspace_artifact():
+    async def _scenario(runtime, store, artifact_store):
+        foreign_run = WorkflowRun(
+            id="foreign-run",
+            workflow_name="foreign",
+            user_input="其他空间的私有材料",
+            metadata={"workspace_id": "ws-2", "user_id": "user-2"},
+        )
+        await artifact_store.create_workflow_run(foreign_run)
+        foreign_artifact = await artifact_store.create_artifact(
+            ArtifactType.FINAL_CONTENT,
+            content={"secret": "cross-workspace"},
+            workflow_run_id=foreign_run.id,
+            node_run_id="foreign-node",
+        )
+        run = await runtime.start(
+            goal="验证 read_artifact 工具不会跨空间读取",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=False,
+        )
+        assert run.current_plan_id is not None
+        step = await store.create_step(
+            AgentStep(
+                run_id=run.id,
+                plan_id=run.current_plan_id,
+                node_id="manual_read_artifact",
+                step_type=AgentStepType.TOOL_CALL,
+                title="读取 Artifact",
+                description="尝试读取其他工作空间 Artifact",
+            )
+        )
+
+        tool_call = await runtime.tool_executor.execute(
+            run_id=run.id,
+            tool_name="read_artifact",
+            payload={
+                "artifact_id": foreign_artifact.id,
+                "workspace_id": run.workspace_id,
+                "user_id": run.user_id,
+            },
+            step=step,
+        )
+
+        assert tool_call.status.value == "failed"
+        assert tool_call.output["error"] == "Artifact 不属于当前工作空间"
+
+    asyncio.run(_with_runtime(_scenario))
+
+
 def test_retrieve_trace_tool_reads_node_run_evidence():
     async def _scenario(runtime, store, _):
         run = await runtime.start(
@@ -1070,6 +1202,11 @@ def test_pause_and_cancel_control_long_running_agent_run():
         assert workflow_run is not None
         assert workflow_run.status.value == "paused"
 
+        still_paused = await runtime.execute_until_stop(run.id)
+        assert still_paused.status == AgentRunStatus.PAUSED
+
+        prepared = await runtime.prepare_for_worker(run.id, reason="resume-test")
+        assert prepared.status == AgentRunStatus.RUNNING
         resumed = await runtime.execute_until_stop(run.id)
         assert resumed.status != AgentRunStatus.PAUSED
 

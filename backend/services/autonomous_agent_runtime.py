@@ -240,9 +240,15 @@ class AutonomousAgentRuntime:
             await self._sync_workflow_run(run)
         return run
 
-    async def prepare_for_worker(self, run_id: str, *, reason: str = "queued") -> AgentRun:
+    async def prepare_for_worker(
+        self,
+        run_id: str,
+        *,
+        reason: str = "queued",
+        run: AgentRun | None = None,
+    ) -> AgentRun:
         """把可继续执行的运行标记为后台 worker 待执行。"""
-        run = await self._require_run(run_id)
+        run = run or await self._require_run(run_id)
         if run.status in {
             AgentRunStatus.COMPLETED,
             AgentRunStatus.FAILED,
@@ -363,11 +369,9 @@ class AutonomousAgentRuntime:
         """持续执行直到完成、失败或 Gate 等待。"""
         run = await self._require_run(run_id)
         if run.status == AgentRunStatus.PAUSED:
-            run.status = AgentRunStatus.RUNNING
-            run.metadata["resumed_at"] = utc_now_naive().isoformat()
-            run.updated_at = utc_now_naive()
-            await self.store.update_run(run)
             await self._sync_workflow_run(run)
+            # 暂停只能由 resume/prepare_for_worker 显式恢复，避免 worker 绕过人工暂停。
+            return run
         if not run.current_plan_id:
             raise ValueError("AgentRun 缺少 current_plan_id")
 
@@ -448,6 +452,10 @@ class AutonomousAgentRuntime:
         if run.status == AgentRunStatus.AWAITING_GATE:
             raise ValueError("当前 AgentRun 正在等待 Gate 审批，不能改为普通暂停")
         run.status = AgentRunStatus.PAUSED
+        run.queue_status = "idle"
+        run.worker_id = None
+        run.lease_token = None
+        run.lease_expires_at = None
         run.metadata["pause"] = {
             "reason": reason or "人工暂停",
             "paused_at": utc_now_naive().isoformat(),

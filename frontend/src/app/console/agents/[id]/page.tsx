@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import {
@@ -110,15 +110,30 @@ export default function AgentRunDetailPage() {
   const runId = params.id;
   const [detail, setDetail] = useState<AgentRunDetail | null>(null);
   const [planDraft, setPlanDraft] = useState('');
+  const [planDraftDirty, setPlanDraftDirty] = useState(false);
   const [clarificationDraft, setClarificationDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState('');
+  const planDraftDirtyRef = useRef(false);
+  const planDraftPlanIdRef = useRef<string | null>(null);
 
-  function syncDetail(result: AgentRunDetail) {
+  const markPlanDraftDirty = useCallback((value: boolean) => {
+    planDraftDirtyRef.current = value;
+    setPlanDraftDirty(value);
+  }, []);
+
+  const syncDetail = useCallback((result: AgentRunDetail, options?: { preservePlanDraft?: boolean }) => {
     setDetail(result);
-    setPlanDraft(JSON.stringify(result.plans.at(-1)?.plan_graph ?? {}, null, 2));
-  }
+    const latestPlan = result.plans.at(-1);
+    const latestPlanId = latestPlan?.id ?? null;
+    const planChanged = planDraftPlanIdRef.current !== latestPlanId;
+    if (!options?.preservePlanDraft || !planDraftDirtyRef.current || planChanged) {
+      planDraftPlanIdRef.current = latestPlanId;
+      setPlanDraft(JSON.stringify(latestPlan?.plan_graph ?? {}, null, 2));
+      markPlanDraftDirty(false);
+    }
+  }, [markPlanDraftDirty]);
 
   useEffect(() => {
     let active = true;
@@ -128,7 +143,7 @@ export default function AgentRunDetailPage() {
       try {
         const result = await agentApi.getDetail(runId);
         if (active) {
-          syncDetail(result);
+          syncDetail(result, { preservePlanDraft: true });
           if (!isTerminalStatus(result.run.status)) {
             timer = setTimeout(fetchDetail, 3500);
           }
@@ -152,7 +167,7 @@ export default function AgentRunDetailPage() {
         clearTimeout(timer);
       }
     };
-  }, [runId]);
+  }, [runId, syncDetail]);
 
   async function handleResume() {
     setActing(true);
@@ -426,11 +441,14 @@ export default function AgentRunDetailPage() {
                 <textarea
                   className={styles.goalInput}
                   value={planDraft}
-                  onChange={(event) => setPlanDraft(event.target.value)}
+                  onChange={(event) => {
+                    setPlanDraft(event.target.value);
+                    markPlanDraftDirty(true);
+                  }}
                   aria-label="编辑 Plan Graph JSON"
                 />
                 <div className={styles.buttonRow}>
-                  <button className={styles.secondaryAction} onClick={handlePlanUpdate} disabled={acting} type="button">
+                  <button className={styles.secondaryAction} onClick={handlePlanUpdate} disabled={acting || !planDraftDirty} type="button">
                     保存计划修改
                   </button>
                 </div>

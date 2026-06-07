@@ -102,15 +102,12 @@ def _allowed_tool_permissions_for_role(role: Any) -> list[str]:
 
 async def _refresh_run_tool_permissions(
     agent_store: AutonomousAgentStore,
-    run_id: str,
+    run: Any,
     role: Any,
-) -> None:
+) -> Any:
     """执行前刷新 actor 当前工具权限，避免角色变化后沿用旧授权。"""
-    run = await agent_store.get_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="AgentRun 不存在")
     run.metadata["allowed_tool_permissions"] = _allowed_tool_permissions_for_role(role)
-    await agent_store.update_run(run)
+    return await agent_store.update_run(run)
 
 
 async def _actor_context(request: Request, resource: str, action: str) -> tuple[str, str, str]:
@@ -269,8 +266,8 @@ async def resume_agent_run(run_id: str, request: Request):
                 store=AutonomousAgentStore(session),
                 artifact_store=get_artifact_store(),
             )
-            await _refresh_run_tool_permissions(runtime.store, run_id, role)
-            await runtime.prepare_for_worker(run_id, reason="resume")
+            run = await _refresh_run_tool_permissions(runtime.store, run, role)
+            await runtime.prepare_for_worker(run_id, reason="resume", run=run)
             await get_agent_worker_queue().enqueue(run_id)
             return await runtime.get_detail(run_id)
     except HTTPException:
@@ -373,7 +370,7 @@ async def approve_agent_gate(run_id: str, request: Request, body: AgentGateDecis
                 store=AutonomousAgentStore(session),
                 artifact_store=get_artifact_store(),
             )
-            await _refresh_run_tool_permissions(runtime.store, run_id, role)
+            await _refresh_run_tool_permissions(runtime.store, run, role)
             run = await runtime.approve_gate(
                 run_id,
                 approved=body.approved,
@@ -420,7 +417,7 @@ async def skip_agent_node(run_id: str, request: Request, body: SkipAgentNodeRequ
 async def clarify_agent_goal(run_id: str, request: Request, body: AgentGoalClarificationRequest):
     """补充 Planner 失败时缺失的目标信息。"""
     try:
-        await _require_agent_run_access(request, run_id, action="create")
+        run, _, _ = await _require_agent_run_access(request, run_id, action="create")
         _, _, role = await workflow_helpers.require_workspace_permission(
             request, "workflow", "execute"
         )
@@ -431,7 +428,7 @@ async def clarify_agent_goal(run_id: str, request: Request, body: AgentGoalClari
                 store=AutonomousAgentStore(session),
                 artifact_store=get_artifact_store(),
             )
-            await _refresh_run_tool_permissions(runtime.store, run_id, role)
+            await _refresh_run_tool_permissions(runtime.store, run, role)
             run = await runtime.clarify_goal(
                 run_id,
                 body.clarification,

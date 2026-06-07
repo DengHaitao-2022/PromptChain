@@ -142,7 +142,7 @@ class AutonomousAgentWorkerQueue:
                     artifact_store=get_artifact_store(),
                 )
                 run = await runtime.store.get_run(run_id)
-                if not run or run.status not in {AgentRunStatus.RUNNING, AgentRunStatus.PAUSED}:
+                if not run or run.status != AgentRunStatus.RUNNING:
                     return
                 run.metadata["worker"] = {
                     "backend": "in_process",
@@ -172,16 +172,31 @@ class AutonomousAgentWorkerQueue:
         """长节点执行期间周期性刷新 worker lease。"""
         interval_seconds = max(10, self._lease_seconds // 3)
         while True:
-            await asyncio.sleep(interval_seconds)
-            store = get_postgres_store()
-            await store.ensure_initialized()
-            async with store.async_session() as session:
-                agent_store = AutonomousAgentStore(session)
-                await agent_store.heartbeat_run(
+            try:
+                await asyncio.sleep(interval_seconds)
+                store = get_postgres_store()
+                await store.ensure_initialized()
+                async with store.async_session() as session:
+                    agent_store = AutonomousAgentStore(session)
+                    refreshed = await agent_store.heartbeat_run(
+                        run_id,
+                        worker_id=self.worker_id,
+                        lease_token=lease_token,
+                        lease_seconds=self._lease_seconds,
+                    )
+                if not refreshed:
+                    logger.warning(
+                        "Autonomous Agent worker heartbeat 未刷新: worker=%s run_id=%s",
+                        self.worker_id,
+                        run_id,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Autonomous Agent worker heartbeat 失败，将在下个周期重试: worker=%s run_id=%s",
+                    self.worker_id,
                     run_id,
-                    worker_id=self.worker_id,
-                    lease_token=lease_token,
-                    lease_seconds=self._lease_seconds,
                 )
 
     async def _release_claim(self, run_id: str, lease_token: str) -> None:

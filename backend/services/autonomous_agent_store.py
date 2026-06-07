@@ -99,9 +99,7 @@ class AutonomousAgentStore:
         result = await self.session.execute(
             select(AgentRunORM)
             .where(AgentRunORM.id == run_id)
-            .where(
-                AgentRunORM.status.in_([AgentRunStatus.RUNNING.value, AgentRunStatus.PAUSED.value])
-            )
+            .where(AgentRunORM.status == AgentRunStatus.RUNNING.value)
             .where(
                 or_(
                     AgentRunORM.queue_status == "queued",
@@ -177,9 +175,7 @@ class AutonomousAgentStore:
         now = utc_now_naive()
         result = await self.session.execute(
             select(AgentRunORM)
-            .where(
-                AgentRunORM.status.in_([AgentRunStatus.RUNNING.value, AgentRunStatus.PAUSED.value])
-            )
+            .where(AgentRunORM.status == AgentRunStatus.RUNNING.value)
             .where(
                 or_(
                     AgentRunORM.queue_status == "queued",

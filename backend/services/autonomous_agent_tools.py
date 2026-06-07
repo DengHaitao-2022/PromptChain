@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -193,6 +194,45 @@ def _preview(value: Any, *, limit: int = 480) -> str:
     return text if len(text) <= limit else f"{text[:limit]}..."
 
 
+async def _ensure_workflow_visible(
+    *,
+    artifact_store: ArtifactStore,
+    workflow_run_id: str,
+    workspace_id: str | None,
+    user_id: str | None,
+) -> None:
+    """校验工具读取的 WorkflowRun 仍在当前 Agent 可见范围内。"""
+    workflow_run = await artifact_store.get_workflow_run(workflow_run_id)
+    if workflow_run is None:
+        raise ValueError("Artifact 所属运行不存在或不可访问")
+
+    metadata = workflow_run.metadata or {}
+    if workspace_id and metadata.get("workspace_id") != workspace_id:
+        raise ValueError("Artifact 不属于当前工作空间")
+    if user_id and metadata.get("user_id") and metadata.get("user_id") != user_id:
+        raise ValueError("Artifact 不属于当前用户可见范围")
+
+
+async def _ensure_artifact_visible(
+    *,
+    artifact_store: ArtifactStore,
+    artifact_id: str,
+    workspace_id: str | None,
+    user_id: str | None,
+) -> Any:
+    """读取 Artifact 前先校验所属 WorkflowRun，防止跨空间枚举读取。"""
+    artifact = await artifact_store.get_artifact(artifact_id)
+    if artifact is None:
+        return None
+    await _ensure_workflow_visible(
+        artifact_store=artifact_store,
+        workflow_run_id=artifact.workflow_run_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+    )
+    return artifact
+
+
 def _wants_cove_fact_check(payload: dict[str, Any]) -> bool:
     """根据 payload 和配置判断是否运行 CoVe 核查链。"""
     mode = str(payload.get("mode") or "auto").strip().lower()
@@ -261,10 +301,9 @@ async def _run_cove_fact_check(payload: dict[str, Any], text: str) -> dict[str, 
         model_name,
     )
     all_usage = dict(usage)
-    results = []
-    trace: list[dict[str, Any]] = []
 
-    for claim in claims[:max_claims]:
+    async def _verify_claim(claim) -> tuple[Any, dict[str, Any], dict[str, int]]:
+        """每条声明内部保持 CoVe 顺序，多条声明之间并发验证。"""
         question, question_usage = await generate_verification_question(
             claim,
             workspace_id,
@@ -289,24 +328,33 @@ async def _run_cove_fact_check(payload: dict[str, Any], text: str) -> dict[str, 
             model_provider_name,
             model_name,
         )
-        results.append(result)
-        trace.append(
-            {
-                "claim_id": claim.id,
-                "claim": claim.text,
-                "question": question,
-                "answer": answer,
-                "risk_level": result.risk_level,
-                "is_verified": result.is_verified,
-                "confidence": result.confidence,
-                "suggested_correction": result.suggested_correction,
-            }
-        )
+        trace_item = {
+            "claim_id": claim.id,
+            "claim": claim.text,
+            "question": question,
+            "answer": answer,
+            "risk_level": result.risk_level,
+            "is_verified": result.is_verified,
+            "confidence": result.confidence,
+            "suggested_correction": result.suggested_correction,
+        }
+        usage_item: dict[str, int] = {}
         for current_usage in (question_usage, answer_usage, evaluation_usage):
             for key, value in current_usage.items():
-                all_usage[key] = int(all_usage.get(key, 0)) + int(value or 0)
+                usage_item[key] = int(usage_item.get(key, 0)) + int(value or 0)
+        return result, trace_item, usage_item
 
-    report = FactCheckReport(claims=claims[:max_claims], results=results)
+    limited_claims = claims[:max_claims]
+    verified_claims = await asyncio.gather(*(_verify_claim(claim) for claim in limited_claims))
+    results = []
+    trace: list[dict[str, Any]] = []
+    for result, trace_item, usage_item in verified_claims:
+        results.append(result)
+        trace.append(trace_item)
+        for key, value in usage_item.items():
+            all_usage[key] = int(all_usage.get(key, 0)) + int(value or 0)
+
+    report = FactCheckReport(claims=limited_claims, results=results)
     report.compute_stats()
     findings = [
         {
@@ -562,11 +610,24 @@ def build_default_tool_registry(
 
     async def read_artifact(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
         artifact_id = payload.get("artifact_id")
+        workspace_id = _optional_str(payload.get("workspace_id"))
+        user_id = _optional_str(payload.get("user_id"))
         if artifact_id:
-            artifact = await artifact_store.get_artifact(str(artifact_id))
+            artifact = await _ensure_artifact_visible(
+                artifact_store=artifact_store,
+                artifact_id=str(artifact_id),
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
             return {"artifact": artifact.model_dump(mode="json") if artifact else None}
         workflow_run_id = payload.get("workflow_run_id")
         if workflow_run_id:
+            await _ensure_workflow_visible(
+                artifact_store=artifact_store,
+                workflow_run_id=str(workflow_run_id),
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
             artifacts = await artifact_store.get_artifacts_by_workflow(str(workflow_run_id))
             return {
                 "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
@@ -633,7 +694,12 @@ def build_default_tool_registry(
         artifact_id = payload.get("artifact_id")
         if not artifact_id:
             raise ValueError("rollback_artifact 缺少 artifact_id")
-        source_artifact = await artifact_store.get_artifact(str(artifact_id))
+        source_artifact = await _ensure_artifact_visible(
+            artifact_store=artifact_store,
+            artifact_id=str(artifact_id),
+            workspace_id=_optional_str(payload.get("workspace_id")),
+            user_id=_optional_str(payload.get("user_id")),
+        )
         if source_artifact is None:
             raise ValueError("待回滚 Artifact 不存在")
         rollback_artifact = await artifact_store.create_artifact(
