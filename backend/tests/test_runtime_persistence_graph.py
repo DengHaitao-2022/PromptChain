@@ -13,6 +13,7 @@ from db.postgres_store import PostgresArtifactStore
 from graph.conditions import should_proceed_after_fact_check, should_regenerate_outline
 from graph.content_generation_graph import ContentGenerationWorkflow
 from models.artifact import WorkflowRun
+from tools import ToolCall, ToolCallStatus
 
 
 def reset_store_singleton() -> None:
@@ -66,6 +67,13 @@ def test_workflow_status_prioritizes_gate_over_manual_pause():
             {"is_paused": True},
         )
         == "paused"
+    )
+    assert (
+        ContentGenerationWorkflow._get_workflow_status(
+            workflow,
+            {"awaiting_tool_approval": True, "is_paused": True},
+        )
+        == "awaiting_tool_approval"
     )
 
 
@@ -316,3 +324,51 @@ async def test_approve_fact_check_resumes_from_check_facts_checkpoint():
         "awaiting_fact_check_approval": False,
     }
     assert workflow.graph.updated[0][2] == "check_facts"
+
+
+@pytest.mark.asyncio
+async def test_quality_metrics_include_tool_call_usage():
+    store = artifact_store_module.ArtifactStore()
+    workflow_run = WorkflowRun(user_input="测试工具调用指标")
+    await store.create_workflow_run(workflow_run)
+    await store.create_tool_call(
+        ToolCall(
+            workflow_run_id=workflow_run.id,
+            tool_name="validation.json_schema_validate",
+            status=ToolCallStatus.SUCCEEDED,
+            latency_ms=120,
+            token_cost=7,
+            money_cost=0.03,
+        )
+    )
+    await store.create_tool_call(
+        ToolCall(
+            workflow_run_id=workflow_run.id,
+            tool_name="artifact.write",
+            status=ToolCallStatus.FAILED,
+            latency_ms=80,
+            token_cost=0,
+            money_cost=0,
+            error_message="写入失败",
+        )
+    )
+    workflow = object.__new__(ContentGenerationWorkflow)
+    workflow.store = store
+
+    metrics = await ContentGenerationWorkflow._build_quality_metrics(workflow, workflow_run, [])
+
+    assert metrics["tools"] == {
+        "total_calls": 2,
+        "succeeded": 1,
+        "failed": 1,
+        "pending_approval": 0,
+        "denied": 0,
+        "timeout": 0,
+        "total_latency_ms": 200,
+        "total_token_cost": 7,
+        "total_money_cost": 0.03,
+        "by_tool": {
+            "artifact.write": {"total_calls": 1, "failed": 1},
+            "validation.json_schema_validate": {"total_calls": 1, "succeeded": 1},
+        },
+    }

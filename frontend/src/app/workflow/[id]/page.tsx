@@ -22,7 +22,10 @@ import {
     RotateCcw,
     Send,
     ShieldAlert,
+    ShieldCheck,
     Sparkles,
+    Wrench,
+    XCircle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -52,6 +55,8 @@ import {
     type EvidencePack,
     type KnowledgeScope,
     type WorkflowGateType,
+    type ToolCallRecord,
+    type WorkflowGateQuestion,
 } from '@/lib/api';
 import { formatAppDateTime, toEpochMilliseconds } from '@/lib/date-time';
 import {
@@ -70,6 +75,7 @@ type WorkflowFocusTarget =
     | 'clarification'
     | 'outline'
     | 'fact_check'
+    | 'tool_approval'
     | 'running'
     | 'content'
     | 'completed'
@@ -85,6 +91,7 @@ function getWorkflowFocusTarget(
     if (workflow.status === 'needs_clarification') return 'clarification';
     if (workflow.status === 'awaiting_outline_approval') return 'outline';
     if (workflow.status === 'awaiting_fact_check_approval') return 'fact_check';
+    if (workflow.status === 'awaiting_tool_approval') return 'tool_approval';
 
     if (workflow.status === 'running' && isContentStreaming) {
         return 'content';
@@ -235,6 +242,15 @@ function getStatusMeta(status?: WorkflowStatus): StatusMeta {
                 tone: 'warning',
                 icon: ShieldAlert,
             };
+        case 'awaiting_tool_approval':
+            return {
+                eyebrow: '工具审批',
+                label: '等待工具审批',
+                title: '确认高风险工具调用',
+                description: '后端策略已拦截高风险工具调用。确认输入、风险等级和权限后再决定是否继续执行。',
+                tone: 'warning',
+                icon: Wrench,
+            };
         case 'completed':
             return {
                 eyebrow: '交付就绪',
@@ -276,6 +292,104 @@ function getStatusMeta(status?: WorkflowStatus): StatusMeta {
 
 function formatCount(value: number | undefined): string {
     return typeof value === 'number' ? value.toString() : '-';
+}
+
+function getToolRiskLabel(riskLevel?: string | null): string {
+    switch (riskLevel) {
+        case 'read_public':
+            return '公开读取';
+        case 'read_private':
+            return '私有读取';
+        case 'write_internal':
+            return '内部写入';
+        case 'external_action':
+            return '外部动作';
+        case 'destructive':
+            return '破坏性操作';
+        default:
+            return riskLevel || '未知风险';
+    }
+}
+
+function getToolCallStatusLabel(status?: string | null): string {
+    switch (status) {
+        case 'pending':
+            return '等待审批';
+        case 'approved':
+            return '已批准';
+        case 'running':
+            return '执行中';
+        case 'succeeded':
+            return '成功';
+        case 'failed':
+            return '失败';
+        case 'denied':
+            return '已拒绝';
+        case 'timeout':
+            return '超时';
+        default:
+            return status || '未知';
+    }
+}
+
+function getToolStatusTone(status?: string | null): Exclude<StageTone, 'muted'> {
+    switch (status) {
+        case 'succeeded':
+            return 'success';
+        case 'failed':
+        case 'denied':
+        case 'timeout':
+            return 'danger';
+        case 'pending':
+        case 'approved':
+        case 'running':
+            return 'warning';
+        default:
+            return 'brand';
+    }
+}
+
+function getToolCalls(trace: WorkflowTrace | null): ToolCallRecord[] {
+    const calls = trace?.tool_calls;
+    if (!calls) {
+        return [];
+    }
+    return Object.values(calls).sort((left, right) => {
+        const rightTime = toEpochMilliseconds(right.created_at) ?? 0;
+        const leftTime = toEpochMilliseconds(left.created_at) ?? 0;
+        return rightTime - leftTime;
+    });
+}
+
+function getToolApprovalQuestion(gate?: WorkflowResponse['state']['gate']): WorkflowGateQuestion | null {
+    const questions = gate?.questions;
+    if (!Array.isArray(questions) || questions.length === 0) {
+        return null;
+    }
+    const question = questions.find((item) => typeof item.tool_call_id === 'string') ?? questions[0];
+    return question;
+}
+
+function getToolQuestionString(
+    question: WorkflowGateQuestion | null,
+    key: string
+): string | null {
+    const value = question?.[key];
+    return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function formatToolPreview(value: unknown): string {
+    if (value === undefined || value === null) {
+        return '{}';
+    }
+    if (typeof value === 'string') {
+        return value;
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch {
+        return String(value);
+    }
 }
 
 function normalizeFinalContentEntries(
@@ -839,7 +953,8 @@ function formatStepStatus(step: WorkflowStep): string {
 
 function getGateStepId(
     gateType: WorkflowGateType | undefined,
-    stepIds: string[]
+    stepIds: string[],
+    currentNode?: string | null
 ): string | null {
     if (gateType === 'clarification') {
         return 'parse_intent';
@@ -849,6 +964,15 @@ function getGateStepId(
     }
     if (gateType === 'fact_check') {
         return stepIds.includes('approve_fact_check') ? 'approve_fact_check' : 'check_facts';
+    }
+    if (gateType === 'tool_approval') {
+        if (currentNode && stepIds.includes(currentNode)) {
+            return currentNode;
+        }
+        return (
+            stepIds.find((stepId) => stepId.startsWith('run_') && stepId.endsWith('_tools')) ??
+            null
+        );
     }
     return null;
 }
@@ -938,6 +1062,7 @@ export default function WorkflowDetailPage() {
     const clarificationRef = React.useRef<HTMLDivElement | null>(null);
     const outlineApprovalRef = React.useRef<HTMLDivElement | null>(null);
     const factCheckRef = React.useRef<HTMLDivElement | null>(null);
+    const toolApprovalRef = React.useRef<HTMLDivElement | null>(null);
     const runningStageRef = React.useRef<HTMLDivElement | null>(null);
     const contentSectionRef = React.useRef<HTMLDivElement | null>(null);
     const contentBottomRef = React.useRef<HTMLDivElement | null>(null);
@@ -1317,6 +1442,23 @@ export default function WorkflowDetailPage() {
         }
     };
 
+    const handleToolApproval = async (toolCallId: string, action: 'approve' | 'deny') => {
+        setActionLoading(true);
+        try {
+            const response = await workflowApi.approveToolCall(workflowId, toolCallId, action);
+            setWorkflow(response);
+            const traceResponse = await traceApi.getWorkflowTrace(workflowId);
+            setTrace(traceResponse);
+            if (shouldUseLiveUpdates(response)) {
+                startEventStream();
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : '工具审批失败');
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     const refreshWorkflowSnapshot = React.useCallback(async () => {
         const [workflowResponse, traceResponse] = await Promise.all([
             workflowApi.getStatus(workflowId),
@@ -1442,16 +1584,18 @@ export default function WorkflowDetailPage() {
                 index,
             }));
         const stepNames = stepDefinitions.map((step) => step.id);
-        const gateType: WorkflowGateType | undefined =
-            state.gate?.gate_type ??
-            (currentWorkflowStatus === 'needs_clarification'
-                ? 'clarification'
-                : currentWorkflowStatus === 'awaiting_outline_approval'
-                    ? 'outline_approval'
-                    : currentWorkflowStatus === 'awaiting_fact_check_approval'
-                        ? 'fact_check'
-                        : undefined);
-        const gateStepId = getGateStepId(gateType, stepNames);
+        let gateType: WorkflowGateType | undefined = state.gate?.gate_type;
+        if (!gateType && currentWorkflowStatus === 'needs_clarification') {
+            gateType = 'clarification';
+        } else if (!gateType && currentWorkflowStatus === 'awaiting_outline_approval') {
+            gateType = 'outline_approval';
+        } else if (!gateType && currentWorkflowStatus === 'awaiting_fact_check_approval') {
+            gateType = 'fact_check';
+        } else if (!gateType && currentWorkflowStatus === 'awaiting_tool_approval') {
+            gateType = 'tool_approval';
+        }
+        const currentNodeFromState = typeof state.current_node === 'string' ? state.current_node : null;
+        const gateStepId = getGateStepId(gateType, stepNames, currentNodeFromState);
 
         const isStepComplete = (stepName: string) => {
             switch (stepName) {
@@ -1475,6 +1619,12 @@ export default function WorkflowDetailPage() {
                     return Boolean(state.fact_check_report);
                 case 'approve_fact_check':
                     return !state.awaiting_fact_check_approval && Boolean(state.fact_check_report);
+                case 'run_pre_outline_tools':
+                    return Boolean(isRecord(state.tool_phase_completed) && state.tool_phase_completed.pre_outline);
+                case 'run_post_content_tools':
+                    return Boolean(isRecord(state.tool_phase_completed) && state.tool_phase_completed.post_content);
+                case 'run_pre_finalize_tools':
+                    return Boolean(isRecord(state.tool_phase_completed) && state.tool_phase_completed.pre_finalize);
                 case 'finalize':
                     return currentWorkflowStatus === 'completed';
                 default:
@@ -1484,7 +1634,7 @@ export default function WorkflowDetailPage() {
 
         const currentStepId =
             runtimeProgress?.currentStepId ??
-            (typeof state.current_node === 'string' ? state.current_node : null) ??
+            currentNodeFromState ??
             (currentWorkflowStatus === 'running'
                 ? stepNames.find((stepName) => !isStepComplete(stepName)) ?? null
                 : null);
@@ -1574,6 +1724,13 @@ export default function WorkflowDetailPage() {
         () => buildEvidencePack(workflow, trace),
         [workflow, trace]
     );
+    const toolCalls = React.useMemo(() => getToolCalls(trace), [trace]);
+    const pendingToolCallCount = toolCalls.filter((call) => (
+        call.status === 'pending' || call.status === 'approved' || call.status === 'running'
+    )).length;
+    const failedToolCallCount = toolCalls.filter((call) => (
+        call.status === 'failed' || call.status === 'denied' || call.status === 'timeout'
+    )).length;
     const activeStreamingSectionId = React.useMemo(
         () =>
             Object.entries(streamingSections).find(([, section]) => section.isStreaming)?.[0] ?? null,
@@ -1705,6 +1862,9 @@ export default function WorkflowDetailPage() {
                 case 'fact_check':
                     element = factCheckRef.current;
                     break;
+                case 'tool_approval':
+                    element = toolApprovalRef.current;
+                    break;
                 case 'running':
                     element = runningStageRef.current;
                     break;
@@ -1761,6 +1921,14 @@ export default function WorkflowDetailPage() {
             ];
         }
 
+        if (status === 'awaiting_tool_approval') {
+            return [
+                { label: '工具调用', value: formatCount(toolCalls.length), tone: 'brand' },
+                { label: '等待处理', value: formatCount(pendingToolCallCount), tone: 'warning' },
+                { label: '异常调用', value: formatCount(failedToolCallCount), tone: 'danger' },
+            ];
+        }
+
         if (status === 'completed') {
             return [
                 { label: '交付块数', value: formatCount(contentSections.length), tone: 'success' },
@@ -1775,6 +1943,134 @@ export default function WorkflowDetailPage() {
     };
 
     const stageMetrics = buildStageMetrics();
+
+    const renderToolApprovalStage = () => {
+        const question = getToolApprovalQuestion(workflow?.state.gate);
+        const toolCallId =
+            getToolQuestionString(question, 'tool_call_id') ??
+            toolCalls.find((call) => call.status === 'pending')?.id ??
+            null;
+        const toolName =
+            getToolQuestionString(question, 'tool_name') ??
+            (toolCallId ? toolCalls.find((call) => call.id === toolCallId)?.tool_name : null) ??
+            '未知工具';
+        const riskLevel =
+            getToolQuestionString(question, 'risk_level') ??
+            (toolCallId ? toolCalls.find((call) => call.id === toolCallId)?.risk_level : null);
+        const requiredPermissions = Array.isArray(question?.required_permissions)
+            ? question.required_permissions.filter((item): item is string => typeof item === 'string')
+            : [];
+        const inputPreview = question?.input_preview;
+
+        return (
+            <div ref={toolApprovalRef} className={styles.toolApprovalStage}>
+                <div className={styles.toolApprovalHeader}>
+                    <span className={styles.toolApprovalIcon}>
+                        <Wrench aria-hidden="true" />
+                    </span>
+                    <div>
+                        <p className={styles.toolApprovalEyebrow}>Tool Gate</p>
+                        <h3>{toolName}</h3>
+                        <p>该工具调用需要人工确认。审批后工作流会从产生 Gate 的工具阶段继续执行。</p>
+                    </div>
+                </div>
+
+                <div className={styles.toolApprovalGrid}>
+                    <div>
+                        <span>调用 ID</span>
+                        <strong>{toolCallId ? toolCallId.slice(0, 8) : '-'}</strong>
+                    </div>
+                    <div>
+                        <span>风险等级</span>
+                        <strong>{getToolRiskLabel(riskLevel)}</strong>
+                    </div>
+                    <div>
+                        <span>所需权限</span>
+                        <strong>{requiredPermissions.length > 0 ? requiredPermissions.join(', ') : '按策略默认'}</strong>
+                    </div>
+                </div>
+
+                <div className={styles.toolApprovalPreview}>
+                    <span>输入预览</span>
+                    <pre>{formatToolPreview(inputPreview)}</pre>
+                </div>
+
+                <div className={styles.toolApprovalActions}>
+                    <button
+                        type="button"
+                        className={`${styles.viewToggle} ${styles.toolApproveButton}`}
+                        disabled={actionLoading || !toolCallId}
+                        onClick={() => toolCallId && handleToolApproval(toolCallId, 'approve')}
+                    >
+                        <ShieldCheck className={styles.toggleIcon} aria-hidden="true" />
+                        {actionLoading ? '处理中...' : '批准执行'}
+                    </button>
+                    <button
+                        type="button"
+                        className={`${styles.viewToggle} ${styles.toolDenyButton}`}
+                        disabled={actionLoading || !toolCallId}
+                        onClick={() => toolCallId && handleToolApproval(toolCallId, 'deny')}
+                    >
+                        <XCircle className={styles.toggleIcon} aria-hidden="true" />
+                        拒绝调用
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+    const renderToolCallSummary = () => {
+        if (toolCalls.length === 0) {
+            return null;
+        }
+
+        return (
+            <section className={styles.toolCallPanel}>
+                <div className={styles.toolCallPanelHeader}>
+                    <div>
+                        <p className={styles.stageEyebrow}>Tool Calls</p>
+                        <h3>工具调用历史</h3>
+                    </div>
+                    <span>{toolCalls.length} 次调用</span>
+                </div>
+                <div className={styles.toolCallList}>
+                    {toolCalls.slice(0, 8).map((call) => {
+                        const tone = getToolStatusTone(call.status);
+                        return (
+                            <article key={call.id} className={styles.toolCallCard}>
+                                <header>
+                                    <div>
+                                        <strong>{call.tool_name}</strong>
+                                        <span>{getToolRiskLabel(call.risk_level)} · {call.source_type}</span>
+                                    </div>
+                                    <span className={`${styles.toolStatusPill} ${styles[`tone${tone[0].toUpperCase()}${tone.slice(1)}`]}`}>
+                                        {getToolCallStatusLabel(call.status)}
+                                    </span>
+                                </header>
+                                <dl>
+                                    <div>
+                                        <dt>耗时</dt>
+                                        <dd>{call.latency_ms ? `${call.latency_ms}ms` : '-'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt>审批</dt>
+                                        <dd>{call.requires_approval ? '需要' : '自动'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt>创建时间</dt>
+                                        <dd>{formatAppDateTime(call.created_at, '-')}</dd>
+                                    </div>
+                                </dl>
+                                {call.error_message ? (
+                                    <p className={styles.toolCallError}>{call.error_message}</p>
+                                ) : null}
+                            </article>
+                        );
+                    })}
+                </div>
+            </section>
+        );
+    };
 
     const renderRunningStage = () => (
         <div className={styles.runningStage}>
@@ -2437,6 +2733,10 @@ export default function WorkflowDetailPage() {
             );
         }
 
+        if (status === 'awaiting_tool_approval') {
+            return renderToolApprovalStage();
+        }
+
         if (status === 'completed') {
             return renderCompletedStage();
         }
@@ -2668,6 +2968,7 @@ export default function WorkflowDetailPage() {
                                         />
                                     </div>
                                 )}
+                                {renderToolCallSummary()}
                                 {displayContentSections.length > 0 && workflow?.status !== 'completed' && (
                                     <div ref={contentSectionRef} className={styles.contentBlock} style={{ marginBottom: '2rem' }}>
                                         <div className={styles.contentSectionHeader}>

@@ -37,6 +37,46 @@ export const checkerSchema = z.object({
         .default(0.8),
 });
 
+export const toolSchema = z.object({
+    toolName: z.enum([
+        'artifact.read',
+        'artifact.write',
+        'artifact.list_versions',
+        'retrieval.query_workspace_knowledge',
+        'document.load_text',
+        'document.chunk_text',
+        'validation.json_schema_validate',
+        'content.outline_consistency_check',
+        'content.style_check',
+        'fact.check_claims',
+    ])
+        .describe('工具')
+        .default('validation.json_schema_validate'),
+    executionPhase: z.enum(['pre_outline', 'post_content', 'pre_finalize'])
+        .describe('执行阶段')
+        .default('pre_outline'),
+    approvalMode: z.enum(['policy_default', 'auto', 'gate_required'])
+        .describe('审批策略')
+        .default('policy_default'),
+    failureStrategy: z.enum(['terminate', 'skip', 'retry', 'enter_gate'])
+        .describe('失败策略')
+        .default('terminate'),
+    maxAttempts: z.number()
+        .min(1, '至少执行1次')
+        .max(5, '最多重试5次')
+        .describe('最大尝试次数')
+        .default(2),
+    input: z.record(z.string(), z.unknown())
+        .describe('固定输入 JSON')
+        .default({}),
+    inputMapping: z.record(z.string(), z.unknown())
+        .describe('输入映射 JSON')
+        .default({}),
+    outputMapping: z.record(z.string(), z.unknown())
+        .describe('输出映射 JSON')
+        .default({}),
+});
+
 export const outputSchema = z.object({
     outputFormat: z.enum(['text', 'markdown', 'json'])
         .describe('输出格式')

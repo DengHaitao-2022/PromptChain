@@ -677,7 +677,8 @@
 
 .runningStage,
 .completedStage,
-.failedStage {
+.failedStage,
+.toolApprovalStage {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-lg);
@@ -791,6 +792,249 @@
 .liveMeta {
     font-size: 0.75rem;
     color: var(--color-text-secondary);
+}
+
+.toolApprovalStage {
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-warning-border);
+    border-radius: 18px;
+    background: var(--workflow-warning-soft);
+}
+
+.toolApprovalHeader {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--spacing-md);
+    align-items: flex-start;
+}
+
+.toolApprovalIcon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    border: 1px solid var(--workflow-warning-border);
+    background: var(--workflow-control-bg);
+    color: var(--color-warning);
+}
+
+.toolApprovalIcon svg {
+    width: 20px;
+    height: 20px;
+}
+
+.toolApprovalEyebrow {
+    margin: 0 0 6px;
+    color: var(--color-warning);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.toolApprovalHeader h3,
+.toolCallPanelHeader h3 {
+    margin: 0 0 8px;
+    color: var(--color-text-primary);
+    font-size: 1.15rem;
+}
+
+.toolApprovalHeader p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+}
+
+.toolApprovalGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--spacing-sm);
+}
+
+.toolApprovalGrid div,
+.toolCallCard {
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 16px;
+    background: var(--workflow-control-bg);
+}
+
+.toolApprovalGrid div {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    padding: 14px 16px;
+}
+
+.toolApprovalGrid span,
+.toolApprovalPreview span {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.toolApprovalGrid strong {
+    overflow: hidden;
+    color: var(--color-text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.toolApprovalPreview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.toolApprovalPreview pre {
+    max-height: 260px;
+    overflow: auto;
+    margin: 0;
+    padding: var(--spacing-md);
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 16px;
+    background: var(--workflow-raw-bg);
+    color: var(--color-text-primary);
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.toolApprovalActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+}
+
+.toolApproveButton {
+    border-color: var(--workflow-success-border);
+    background: var(--workflow-success-soft);
+    color: var(--color-success);
+}
+
+.toolDenyButton {
+    border-color: var(--workflow-danger-border);
+    background: var(--workflow-danger-soft);
+    color: var(--color-danger);
+}
+
+.toolCallPanel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    margin-bottom: 2rem;
+    padding: var(--spacing-lg);
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: 18px;
+    background: var(--workflow-surface-bg-subtle);
+}
+
+.toolCallPanelHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+}
+
+.toolCallPanelHeader p {
+    margin: 0 0 6px;
+}
+
+.toolCallPanelHeader span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: var(--radius-full);
+    background: var(--workflow-control-bg);
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+    white-space: nowrap;
+}
+
+.toolCallList {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--spacing-sm);
+}
+
+.toolCallCard {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+}
+
+.toolCallCard header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.toolCallCard header div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.toolCallCard strong {
+    overflow: hidden;
+    color: var(--color-text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.toolCallCard header span,
+.toolCallError {
+    color: var(--color-text-secondary);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+}
+
+.toolStatusPill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 9px;
+    border: 1px solid var(--workflow-border-subtle);
+    border-radius: var(--radius-full);
+    font-size: 0.75rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.toolCallCard dl {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+}
+
+.toolCallCard dt {
+    color: var(--color-text-muted);
+    font-size: 0.72rem;
+}
+
+.toolCallCard dd {
+    margin: 2px 0 0;
+    overflow: hidden;
+    color: var(--color-text-primary);
+    font-size: 0.8125rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.toolCallError {
+    margin: 0;
+    color: var(--color-danger);
 }
 
 .completedHero {

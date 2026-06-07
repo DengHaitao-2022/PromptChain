@@ -14,6 +14,7 @@ from typing import Any
 
 from db.postgres_store import PostgresArtifactStore, get_postgres_store
 from models.artifact import Artifact, ArtifactType, NodeRun, WorkflowRun
+from tools.schemas import ToolCall
 
 
 class ArtifactStore:
@@ -28,6 +29,7 @@ class ArtifactStore:
         self._artifacts: dict[str, Artifact] = {}
         self._node_runs: dict[str, NodeRun] = {}
         self._workflow_runs: dict[str, WorkflowRun] = {}
+        self._tool_calls: dict[str, ToolCall] = {}
 
     def _compute_hash(self, content: Any) -> str:
         """计算内容哈希"""
@@ -151,6 +153,32 @@ class ArtifactStore:
         """获取工作流的所有节点运行记录（按时间排序）"""
         runs = [r for r in self._node_runs.values() if r.workflow_run_id == workflow_run_id]
         return sorted(runs, key=lambda r: r.started_at)
+
+    async def create_tool_call(self, tool_call: ToolCall) -> ToolCall:
+        """创建工具调用记录。"""
+        self._tool_calls[tool_call.id] = tool_call
+        return tool_call
+
+    async def update_tool_call(self, tool_call: ToolCall) -> ToolCall:
+        """更新工具调用记录。"""
+        self._tool_calls[tool_call.id] = tool_call
+        return tool_call
+
+    async def get_tool_call(self, tool_call_id: str) -> ToolCall | None:
+        """获取工具调用记录。"""
+        return self._tool_calls.get(tool_call_id)
+
+    async def list_tool_calls_by_workflow(self, workflow_run_id: str) -> list[ToolCall]:
+        """获取工作流的工具调用记录。"""
+        calls = [
+            call for call in self._tool_calls.values() if call.workflow_run_id == workflow_run_id
+        ]
+        return sorted(calls, key=lambda call: call.created_at)
+
+    async def list_tool_calls_by_node(self, node_run_id: str) -> list[ToolCall]:
+        """获取节点的工具调用记录。"""
+        calls = [call for call in self._tool_calls.values() if call.node_run_id == node_run_id]
+        return sorted(calls, key=lambda call: call.created_at)
 
     # WorkflowRun 相关方法
     async def create_workflow_run(self, workflow_run: WorkflowRun) -> WorkflowRun:

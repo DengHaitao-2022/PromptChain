@@ -90,6 +90,11 @@ def _register_routes(application: FastAPI) -> None:
 
     application.include_router(knowledge_router, prefix="/api", tags=["knowledge"])
 
+    # Tool Factory 路由
+    from routes.tool_routes import router as tool_router
+
+    application.include_router(tool_router, prefix="/api", tags=["tools"])
+
     # WebSocket 路由
     from routes.websocket_routes import router as ws_router
 

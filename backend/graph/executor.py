@@ -111,6 +111,7 @@ class ContentGenerationWorkflow:
             "workflow_run_id": workflow_run.id,
             "workspace_id": (workflow_run.metadata or {}).get("workspace_id"),
             "user_id": (workflow_run.metadata or {}).get("user_id"),
+            "workspace_role": (workflow_run.metadata or {}).get("workspace_role"),
             "model_provider_id": (workflow_run.metadata or {}).get("model_provider_id"),
             "model_provider_name": (workflow_run.metadata or {}).get("model_provider_name"),
             "model_name": (workflow_run.metadata or {}).get("model_name"),
@@ -136,6 +137,11 @@ class ContentGenerationWorkflow:
             "draft_sections": {},
             "section_artifact_ids": {},
             "refinement_history": [],
+            "tool_results": {},
+            "tool_call_ids": [],
+            "tool_phase_completed": {},
+            "awaiting_tool_approval": False,
+            "tool_approvals": {},
         }
         if overrides:
             state.update(overrides)
@@ -428,6 +434,7 @@ class ContentGenerationWorkflow:
             "knowledge": self._extract_evidence_metrics(
                 latest_evidence_pack.content if latest_evidence_pack else None
             ),
+            "tools": await self._build_tool_metrics(workflow_run.id),
             "tokens": {
                 "total": workflow_run.total_tokens,
                 "llm_call_count": workflow_run.total_llm_calls,
@@ -439,6 +446,62 @@ class ContentGenerationWorkflow:
             "final_artifact_id": workflow_run.final_artifact_id,
             "final_content_hash": getattr(final_artifact, "content_hash", None),
         }
+
+    async def _build_tool_metrics(self, workflow_run_id: str) -> dict[str, Any]:
+        """汇总工具调用指标，为审计、运营和后续计费提供稳定字段。"""
+        if not hasattr(self.store, "list_tool_calls_by_workflow"):
+            return {
+                "total_calls": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "pending_approval": 0,
+                "denied": 0,
+                "timeout": 0,
+                "total_latency_ms": 0,
+                "total_token_cost": 0,
+                "total_money_cost": 0,
+                "by_tool": {},
+            }
+
+        calls = await self.store.list_tool_calls_by_workflow(workflow_run_id)
+        totals = {
+            "total_calls": len(calls),
+            "succeeded": 0,
+            "failed": 0,
+            "pending_approval": 0,
+            "denied": 0,
+            "timeout": 0,
+            "total_latency_ms": 0,
+            "total_token_cost": 0,
+            "total_money_cost": 0.0,
+            "by_tool": {},
+        }
+        by_tool: dict[str, dict[str, int]] = {}
+        for call in calls:
+            status = call.status.value if hasattr(call.status, "value") else str(call.status)
+            if status == "succeeded":
+                totals["succeeded"] += 1
+            elif status == "failed":
+                totals["failed"] += 1
+            elif status in {"pending", "approved", "running"}:
+                totals["pending_approval"] += 1
+            elif status == "denied":
+                totals["denied"] += 1
+            elif status == "timeout":
+                totals["timeout"] += 1
+
+            totals["total_latency_ms"] += int(call.latency_ms or 0)
+            totals["total_token_cost"] += int(call.token_cost or 0)
+            totals["total_money_cost"] += float(call.money_cost or 0)
+
+            tool_name = call.tool_name or "unknown"
+            tool_bucket = by_tool.setdefault(tool_name, {"total_calls": 0})
+            tool_bucket["total_calls"] += 1
+            tool_bucket[status] = tool_bucket.get(status, 0) + 1
+
+        totals["total_money_cost"] = round(float(totals["total_money_cost"]), 6)
+        totals["by_tool"] = {tool_name: by_tool[tool_name] for tool_name in sorted(by_tool)}
+        return totals
 
     @staticmethod
     def _extract_evidence_metrics(content: Any) -> dict[str, Any]:
@@ -767,6 +830,23 @@ class ContentGenerationWorkflow:
                         },
                     )
                     break
+                if public_status == "awaiting_tool_approval":
+                    gate_metadata = self._get_gate_metadata(workflow_run)
+                    questions = self._coerce_event_list(gate_metadata.get("questions"))
+                    await self._emit_workflow_status(
+                        workflow_run_id,
+                        "gate_waiting",
+                        {
+                            "gate_type": "tool_approval",
+                            "questions": questions,
+                            "tool_call_id": gate_metadata.get("tool_call_id"),
+                            "tool_step_id": gate_metadata.get("tool_step_id"),
+                            "opened_at": gate_metadata.get("opened_at"),
+                            "trigger_reason": gate_metadata.get("trigger_reason"),
+                            "current_node": workflow_run.current_node,
+                        },
+                    )
+                    break
                 if public_status == "completed":
                     await self._emit_workflow_status(
                         workflow_run_id,
@@ -802,6 +882,7 @@ class ContentGenerationWorkflow:
         workflow_version_id: str | None = None,
         workspace_id: str | None = None,
         user_id: str | None = None,
+        workspace_role: str | None = None,
         model_provider_id: str | None = None,
         model_name: str | None = None,
         retrieval_config: RetrievalConfig | dict | None = None,
@@ -828,6 +909,8 @@ class ContentGenerationWorkflow:
             metadata["workspace_id"] = workspace_id
         if user_id:
             metadata["user_id"] = user_id
+        if workspace_role:
+            metadata["workspace_role"] = workspace_role
         if model_provider_id:
             metadata["requested_model_provider_id"] = model_provider_id
         if model_name:
@@ -1246,6 +1329,64 @@ class ContentGenerationWorkflow:
             as_node="check_facts",
         )
 
+    async def approve_tool_call(
+        self,
+        workflow_run_id: str,
+        *,
+        tool_call_id: str,
+        action: str,
+        approved_by: str,
+        reason: str | None = None,
+    ) -> dict:
+        """处理工具风险审批，并从产生工具 Gate 的节点恢复执行。"""
+        from tools import get_tool_executor
+
+        if action not in {"approve", "deny"}:
+            raise ValueError("工具审批 action 必须是 approve 或 deny。")
+
+        if not hasattr(self.store, "get_tool_call"):
+            raise ValueError("当前运行态存储不支持工具审批。")
+        call = await self.store.get_tool_call(tool_call_id)
+        if call is None:
+            raise ValueError("工具调用记录不存在。")
+        if call.workflow_run_id != workflow_run_id:
+            raise ValueError("工具调用记录不属于当前工作流运行。")
+
+        approved = action == "approve"
+        await get_tool_executor().approve_tool_call(
+            tool_call_id,
+            approved_by=approved_by,
+            approved=approved,
+            reason=reason,
+        )
+
+        base_config = self._base_config(workflow_run_id)
+        snapshot = await self._safe_get_state(base_config)
+        state = dict(snapshot.values) if snapshot is not None else {}
+        approvals = dict(state.get("tool_approvals") or {})
+        approvals[tool_call_id] = "approved" if approved else "denied"
+
+        workflow_run = await self.store.get_workflow_run(workflow_run_id)
+        metadata = dict(workflow_run.metadata or {}) if workflow_run is not None else {}
+        gate_metadata = metadata.get("gate") if isinstance(metadata.get("gate"), dict) else {}
+        resume_from_node = str(gate_metadata.get("resume_from_node") or "")
+        if not resume_from_node:
+            resume_node = str(gate_metadata.get("resume_node") or state.get("current_node") or "")
+            resume_from_node = {
+                "run_pre_outline_tools": "retrieve_knowledge",
+                "run_post_content_tools": "generate_content",
+                "run_pre_finalize_tools": "check_facts",
+            }.get(resume_node, "retrieve_knowledge")
+
+        return await self._resume_from_node(
+            workflow_run_id,
+            {
+                "tool_approvals": approvals,
+                "awaiting_tool_approval": False,
+            },
+            as_node=resume_from_node,
+        )
+
     def _get_workflow_status(self, state: dict) -> str:
         """获取工作流当前状态"""
         if state.get("needs_clarification"):
@@ -1254,6 +1395,8 @@ class ContentGenerationWorkflow:
             return "awaiting_outline_approval"
         if state.get("awaiting_fact_check_approval"):
             return "awaiting_fact_check_approval"
+        if state.get("awaiting_tool_approval"):
+            return "awaiting_tool_approval"
         if state.get("is_paused"):
             return "paused"
         if state.get("error"):

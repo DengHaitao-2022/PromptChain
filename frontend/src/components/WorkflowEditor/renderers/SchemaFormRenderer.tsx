@@ -7,9 +7,9 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z, ZodEnum, ZodNumber, ZodDefault, ZodOptional } from 'zod';
+import { z, ZodBoolean, ZodDefault, ZodEnum, ZodNumber, ZodOptional, ZodRecord } from 'zod';
 import styles from '../panels/PanelStyles.module.css';
 
 type ZodResolverSchema = Parameters<typeof zodResolver>[0];
@@ -29,6 +29,61 @@ function getInnerZodType(schema: z.ZodTypeAny): z.ZodTypeAny {
         )._def.innerType;
     }
     return current;
+}
+
+function formatJsonInput(value: unknown): string {
+    if (typeof value === 'string') {
+        return value;
+    }
+    try {
+        return JSON.stringify(value ?? {}, null, 2);
+    } catch {
+        return '{}';
+    }
+}
+
+function parseJsonInput(value: string): unknown {
+    try {
+        return JSON.parse(value);
+    } catch {
+        return value;
+    }
+}
+
+function enumOptionLabel(opt: string): string {
+    const labels: Record<string, string> = {
+        'gpt-4o': 'GPT-4o',
+        'gpt-4o-mini': 'GPT-4o Mini',
+        'claude-3.5-sonnet': 'Claude 3.5 Sonnet',
+        'gemini-2.0-flash': 'Gemini 2.0 Flash',
+        approval: '审批',
+        edit: '编辑',
+        input: '输入',
+        text: '纯文本',
+        markdown: 'Markdown',
+        json: 'JSON',
+        pre_outline: '提纲前',
+        post_content: '正文后',
+        pre_finalize: '收尾前',
+        policy_default: '按策略',
+        auto: '自动执行',
+        gate_required: '强制 Gate',
+        terminate: '终止',
+        skip: '跳过',
+        retry: '重试',
+        enter_gate: '进入 Gate',
+        'artifact.read': '读取 Artifact',
+        'artifact.write': '写入 Artifact',
+        'artifact.list_versions': '列出 Artifact 版本',
+        'retrieval.query_workspace_knowledge': '检索工作空间知识库',
+        'document.load_text': '载入文本',
+        'document.chunk_text': '文本切块',
+        'validation.json_schema_validate': 'JSON Schema 校验',
+        'content.outline_consistency_check': '提纲一致性检查',
+        'content.style_check': '内容风格检查',
+        'fact.check_claims': '事实声明初筛',
+    };
+    return labels[opt] ?? opt;
 }
 
 export default function SchemaFormRenderer({ schema, defaultValues, onChange }: SchemaFormRendererProps) {
@@ -106,20 +161,7 @@ export default function SchemaFormRenderer({ schema, defaultValues, onChange }: 
                                 render={({ field }) => (
                                     <select {...field} className={styles.configSelect}>
                                         {(type.options as string[]).map(opt => {
-                                            // 如需在 Zod 中带中文 label，可后续借助自定义元数据。
-                                            // 当前保持最小映射，未覆盖项直接显示原始枚举值。
-                                            let optLabel = opt;
-                                            if (opt === 'gpt-4o') optLabel = 'GPT-4o';
-                                            if (opt === 'gpt-4o-mini') optLabel = 'GPT-4o Mini';
-                                            if (opt === 'claude-3.5-sonnet') optLabel = 'Claude 3.5 Sonnet';
-                                            if (opt === 'gemini-2.0-flash') optLabel = 'Gemini 2.0 Flash';
-                                            if (opt === 'approval') optLabel = '审批';
-                                            if (opt === 'edit') optLabel = '编辑';
-                                            if (opt === 'input') optLabel = '输入';
-                                            if (opt === 'text') optLabel = '纯文本';
-                                            if (opt === 'markdown') optLabel = 'Markdown';
-                                            if (opt === 'json') optLabel = 'JSON';
-                                            return <option key={opt} value={opt}>{optLabel}</option>;
+                                            return <option key={opt} value={opt}>{enumOptionLabel(opt)}</option>;
                                         })}
                                     </select>
                                 )}
@@ -143,6 +185,35 @@ export default function SchemaFormRenderer({ schema, defaultValues, onChange }: 
                                         />
                                     );
                                 }}
+                            />
+                        ) : type instanceof ZodRecord || type instanceof z.ZodObject ? (
+                            <Controller
+                                name={key}
+                                control={control}
+                                render={({ field }) => (
+                                    <textarea
+                                        value={formatJsonInput(field.value)}
+                                        onChange={event => field.onChange(parseJsonInput(event.target.value))}
+                                        className={styles.configTextarea}
+                                        rows={6}
+                                        spellCheck={false}
+                                    />
+                                )}
+                            />
+                        ) : type instanceof ZodBoolean ? (
+                            <Controller
+                                name={key}
+                                control={control}
+                                render={({ field }) => (
+                                    <label className={styles.configCheckbox}>
+                                        <input
+                                            type="checkbox"
+                                            checked={Boolean(field.value)}
+                                            onChange={event => field.onChange(event.target.checked)}
+                                        />
+                                        <span>启用</span>
+                                    </label>
+                                )}
                             />
                         ) : (
                             <Controller
