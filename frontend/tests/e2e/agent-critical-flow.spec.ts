@@ -48,29 +48,31 @@ test('PR E2E 覆盖登录、Agent 运行台、详情页、暂停恢复和 Gate �
   await login(page);
 
   await page.goto('/console/agents');
-  await expect(page.getByRole('heading', { name: '目标驱动的长程任务运行台' })).toBeVisible();
-  await expect(page.getByRole('region', { name: '启动自主 Agent' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '自主 Agent 控制台' })).toBeVisible();
+  await expect(page.getByRole('form', { name: '启动自主 Agent' })).toBeVisible();
 
   const createdGoal = `E2E 浏览器启动 Agent ${Date.now()}`;
   await page.getByPlaceholder('输入需要自主规划和长程执行的目标').fill(createdGoal);
-  await page.getByRole('button', { name: '启动 Agent' }).click();
-  await expect(page.getByTestId('agent-run-list')).toContainText(createdGoal, { timeout: 15_000 });
+  await page.getByRole('button', { name: '新建任务' }).click();
+  await expect(page.getByRole('button', { name: new RegExp(createdGoal) })).toBeVisible({
+    timeout: 15_000,
+  });
 
   await page.goto(`/console/agents/${seededRuns.running}`);
-  await expect(page.getByTestId('agent-run-status')).toHaveText('执行中');
+  await expect(page.getByTestId('agent-run-status')).toContainText('运行中');
   await expect(page.getByRole('heading', { name: '动态计划图' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: '执行步骤' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '节点详情' })).toBeVisible();
   await page.getByRole('button', { name: '暂停' }).click();
-  await expect(page.getByTestId('agent-run-status')).toHaveText('已暂停');
+  await expect(page.getByTestId('agent-run-status')).toContainText('已暂停');
 
   await page.goto(`/console/agents/${seededRuns.paused}`);
-  await expect(page.getByTestId('agent-run-status')).toHaveText('已暂停');
-  await page.getByRole('button', { name: '继续执行' }).click();
+  await expect(page.getByTestId('agent-run-status')).toContainText('已暂停');
+  await page.getByRole('button', { name: '继续' }).click();
   await expect(page.getByTestId('agent-run-status')).not.toHaveText('已暂停');
   await expect(page.getByText('继续执行失败')).toBeHidden();
 
   await page.goto(`/console/agents/${seededRuns.gate}`);
-  await expect(page.getByTestId('agent-run-status')).toHaveText('等待 Gate');
+  await expect(page.getByTestId('agent-run-status')).toContainText('等待 Gate');
   const gatePanel = page.getByTestId('agent-gate-panel');
   await expect(gatePanel).toBeVisible();
   await expect(gatePanel.getByRole('heading', { name: 'Gate 审批', exact: true })).toBeVisible();
