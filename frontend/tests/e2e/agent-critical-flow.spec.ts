@@ -1,4 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 
 const email = process.env.E2E_TEST_EMAIL || 'e2e-owner@example.com';
 const password = process.env.E2E_TEST_PASSWORD || 'E2ePassword123!';
@@ -8,6 +10,24 @@ const seededRuns = {
   paused: '00000000-0000-4000-8000-000000000102',
   gate: '00000000-0000-4000-8000-000000000103',
 };
+
+function resetSeedData() {
+  if (process.env.E2E_RESET_SEED !== 'true') {
+    return;
+  }
+
+  const backendDir = path.resolve(__dirname, '../../../backend');
+  // 该测试会修改固定种子运行状态；每次重试前重置数据，避免状态污染造成误判。
+  execFileSync('uv', ['run', 'python', 'scripts/seed_e2e.py'], {
+    cwd: backendDir,
+    env: {
+      ...process.env,
+      E2E_TEST_EMAIL: email,
+      E2E_TEST_PASSWORD: password,
+    },
+    stdio: 'inherit',
+  });
+}
 
 async function login(page: Page) {
   await page.goto('/login');
@@ -19,6 +39,10 @@ async function login(page: Page) {
 
   await expect(page).toHaveURL(/\/console/);
 }
+
+test.beforeEach(() => {
+  resetSeedData();
+});
 
 test('PR E2E 覆盖登录、Agent 运行台、详情页、暂停恢复和 Gate 审批', async ({ page }) => {
   await login(page);
@@ -47,8 +71,9 @@ test('PR E2E 覆盖登录、Agent 运行台、详情页、暂停恢复和 Gate �
 
   await page.goto(`/console/agents/${seededRuns.gate}`);
   await expect(page.getByTestId('agent-run-status')).toHaveText('等待 Gate');
-  await expect(page.getByTestId('agent-gate-panel')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Gate 审批' })).toBeVisible();
+  const gatePanel = page.getByTestId('agent-gate-panel');
+  await expect(gatePanel).toBeVisible();
+  await expect(gatePanel.getByRole('heading', { name: 'Gate 审批', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '批准继续' }).click();
   await expect(page.getByTestId('agent-gate-panel')).toBeHidden();
   await expect(page.getByTestId('agent-run-status')).not.toHaveText('等待 Gate');
