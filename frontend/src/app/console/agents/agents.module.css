@@ -410,12 +410,1125 @@
   background: rgba(217, 119, 6, 0.12);
 }
 
+.agentConsolePage {
+  gap: 14px;
+  color: var(--agent-text-primary);
+}
+
+.agentConsoleShell {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.agentConsolePage .primaryAction {
+  border-color: rgba(37, 99, 235, 0.24);
+  background: linear-gradient(135deg, #2563eb, #0ea5e9);
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.2);
+}
+
+.agentConsolePage .secondaryAction,
+.agentConsolePage .ghostAction {
+  border-color: var(--agent-border);
+  background: var(--agent-surface-muted);
+  color: var(--agent-text-secondary);
+  box-shadow: none;
+}
+
+.dangerAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid rgba(239, 68, 68, 0.18);
+  border-radius: 14px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #f87171;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dangerAction:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.agentTopbar,
+.agentMetricStrip,
+.agentCommandGrid,
+.agentBottomGrid,
+.agentAuxGrid {
+  width: 100%;
+}
+
+.agentTopbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.consoleSearch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(430px, 100%);
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--agent-border);
+  border-radius: 12px;
+  background: var(--agent-surface);
+  color: var(--agent-text-tertiary);
+  box-shadow: var(--console-shadow-sm, 0 10px 30px rgba(15, 23, 42, 0.08));
+}
+
+.consoleSearch input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--agent-text-primary);
+  outline: 0;
+}
+
+.consoleSearch kbd {
+  min-width: 34px;
+  padding: 3px 7px;
+  border: 1px solid var(--agent-border);
+  border-radius: 8px;
+  color: var(--agent-text-tertiary);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.consoleGoalComposer {
+  border: 1px solid var(--agent-border);
+  border-radius: 12px;
+  background: var(--agent-surface);
+  box-shadow: var(--console-shadow-sm, 0 10px 30px rgba(15, 23, 42, 0.08));
+}
+
+.consoleGoalComposer textarea {
+  display: block;
+  width: 100%;
+  min-height: 74px;
+  resize: vertical;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--agent-text-primary);
+  line-height: 1.7;
+  outline: 0;
+}
+
+.agentTitleBlock,
+.agentTitleRow,
+.agentToolbar,
+.graphTools,
+.tokenSummary,
+.tokenTabs,
+.compactPanelHeader,
+.panelChromeHeader,
+.nodeTitleLine,
+.timelineTableRow,
+.artifactList span {
+  display: flex;
+  align-items: center;
+}
+
+.agentTitleBlock {
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.backLink,
+.panelInlineLink {
+  color: var(--agent-text-tertiary);
+  text-decoration: none;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+}
+
+.backLink:hover,
+.panelInlineLink:hover {
+  color: var(--agent-accent);
+}
+
+.agentTitleRow {
+  gap: 12px;
+  min-width: 0;
+}
+
+.agentTitleIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: var(--agent-accent-soft);
+  color: var(--agent-accent);
+}
+
+.agentConsoleTitle,
+.agentConsoleSubtitle,
+.agentPanel h2,
+.workflowPanel h2,
+.nodeInspector h2,
+.timelinePanel h2,
+.tokenPanel h2,
+.inspectorCard h3,
+.approvalPanel h3 {
+  margin: 0;
+}
+
+.agentConsoleTitle {
+  color: var(--agent-text-primary);
+  font-size: 1.7rem;
+  line-height: 1.15;
+}
+
+.agentConsoleSubtitle {
+  max-width: 760px;
+  margin-top: 4px;
+  color: var(--agent-text-tertiary);
+  line-height: 1.5;
+}
+
+.agentToolbar {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.agentMetricStrip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.agentMetricCard,
+.agentPanel,
+.workflowPanel,
+.nodeInspector,
+.timelinePanel,
+.tokenPanel,
+.inspectorCard,
+.approvalPanel {
+  border: 1px solid var(--agent-border);
+  background: var(--agent-surface);
+  box-shadow: var(--console-shadow-sm, 0 10px 30px rgba(15, 23, 42, 0.08));
+}
+
+.agentMetricCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 84px;
+  padding: 16px 18px;
+  border-radius: 12px;
+}
+
+.agentMetricValue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  color: var(--agent-text-primary);
+  font-size: 1.1rem;
+  line-height: 1.2;
+}
+
+.liveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.14);
+}
+
+.agentMetricIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.metricIconSuccess {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.metricIconBlue {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
+}
+
+.metricIconPurple {
+  background: rgba(124, 58, 237, 0.12);
+  color: #7c3aed;
+}
+
+.metricIconWarning {
+  background: rgba(245, 158, 11, 0.14);
+  color: #d97706;
+}
+
+.agentCommandGrid {
+  display: grid;
+  grid-template-columns: 280px minmax(420px, 1fr) 420px;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.agentLeftRail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agentPanel,
+.workflowPanel,
+.nodeInspector,
+.timelinePanel,
+.tokenPanel {
+  border-radius: 12px;
+}
+
+.agentPanel {
+  padding: 16px;
+}
+
+.compactPanelHeader,
+.panelChromeHeader {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.compactPanelHeader h2,
+.panelChromeHeader h2 {
+  color: var(--agent-text-primary);
+  font-size: 1rem;
+}
+
+.panelChromeHeader p {
+  margin: 4px 0 0;
+  color: var(--agent-text-tertiary);
+  font-size: 0.86rem;
+}
+
+.iconOnlyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--agent-border);
+  border-radius: 10px;
+  background: var(--agent-surface-muted);
+  color: var(--agent-text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.iconOnlyButton:hover {
+  border-color: var(--agent-border-strong);
+  color: var(--agent-accent);
+}
+
+.agentRunNav,
+.recentRunList,
+.artifactList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.agentRunNavItem,
+.recentRunItem {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--agent-text-secondary);
+}
+
+.agentRunNavItem {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agentRunNavItem span,
+.recentRunItem span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentRunNavItem em {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.agentRunNavItemActive {
+  border-color: var(--agent-border-strong);
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--agent-text-primary);
+}
+
+.recentRunItem {
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  min-height: 26px;
+  font-size: 0.84rem;
+}
+
+.recentRunItem time,
+.timelineTableRow time,
+.timelineTableRow em {
+  color: var(--agent-text-tertiary);
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.eventDot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.toolRegistryList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.toolRegistryItem {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 42px;
+}
+
+.toolRegistryItem strong,
+.toolRegistryItem span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolRegistryItem strong {
+  color: var(--agent-text-primary);
+  font-size: 0.9rem;
+}
+
+.toolRegistryItem span {
+  color: var(--agent-text-tertiary);
+  font-size: 0.78rem;
+}
+
+.toolRegistryIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.toolIconSuccess {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.toolIconWarning {
+  background: rgba(245, 158, 11, 0.14);
+  color: #d97706;
+}
+
+.toolIconDanger {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.workflowPanel,
+.nodeInspector {
+  min-width: 0;
+  padding: 16px;
+}
+
+.graphTools {
+  gap: 8px;
+  color: var(--agent-text-secondary);
+}
+
+.workflowCanvas {
+  position: relative;
+  min-height: 430px;
+  margin-top: 16px;
+  padding: 24px 24px 24px 42px;
+  overflow: hidden;
+  border: 1px solid var(--agent-border);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 34%),
+    var(--agent-surface-muted);
+}
+
+.workflowSpine {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-height: 360px;
+}
+
+.graphRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 58px;
+}
+
+.graphNode {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 172px;
+  max-width: 240px;
+  min-height: 42px;
+  padding: 8px 14px;
+  border: 1px solid var(--agent-border);
+  border-radius: 13px;
+  background: var(--agent-surface);
+  color: var(--agent-text-primary);
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+.graphNodeSelected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14), 0 16px 28px rgba(37, 99, 235, 0.14);
+}
+
+.graphNodeIcon {
+  display: inline-flex;
+  color: var(--agent-accent);
+}
+
+.graphConnector {
+  position: absolute;
+  left: 86px;
+  bottom: -17px;
+  width: 1px;
+  height: 34px;
+  background: var(--agent-border-strong);
+}
+
+.graphSideCallout,
+.graphGateCallout {
+  position: absolute;
+  left: min(56vw, 360px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 13px;
+  background: var(--agent-surface);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.graphSideCallout {
+  top: 5px;
+  border: 1px dashed rgba(37, 99, 235, 0.5);
+  color: #2563eb;
+}
+
+.graphGateCallout {
+  top: 48px;
+  border: 1px dashed rgba(245, 158, 11, 0.56);
+  color: #d97706;
+}
+
+.miniMap {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  grid-template-columns: repeat(3, 18px);
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--agent-border);
+  border-radius: 12px;
+  background: var(--agent-surface);
+}
+
+.miniMap span {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.34);
+}
+
+.miniMap .miniMapActive {
+  background: #2563eb;
+}
+
+.nodeInspector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.approvalPanel,
+.inspectorCard {
+  padding: 16px;
+  border-radius: 12px;
+}
+
+.approvalPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.approvalPanel p,
+.inspectorText {
+  margin: 0;
+  color: var(--agent-text-secondary);
+  line-height: 1.65;
+}
+
+.nodeTitleLine {
+  gap: 9px;
+  min-width: 0;
+}
+
+.nodeTitleLine h3 {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--agent-text-primary);
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspectorCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--agent-surface-muted);
+  box-shadow: none;
+}
+
+.inspectorTabs {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--agent-border);
+  color: var(--agent-text-tertiary);
+  font-size: 0.84rem;
+}
+
+.inspectorTabs span:first-child {
+  color: var(--agent-accent);
+  border-bottom: 2px solid var(--agent-accent);
+}
+
+.inspectorTabs span {
+  padding-bottom: 10px;
+  white-space: nowrap;
+}
+
+.nodeMetaGrid {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--agent-border);
+  border-radius: 12px;
+  background: var(--agent-surface);
+}
+
+.nodeMetaGrid span {
+  color: var(--agent-text-tertiary);
+  font-size: 0.82rem;
+}
+
+.nodeMetaGrid strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--agent-text-primary);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifactList span {
+  gap: 9px;
+  min-height: 32px;
+  color: var(--agent-text-secondary);
+}
+
+.agentBottomGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.9fr);
+  gap: 14px;
+}
+
+.timelinePanel,
+.tokenPanel {
+  padding: 16px;
+}
+
+.timelineTable {
+  display: flex;
+  flex-direction: column;
+  margin-top: 12px;
+}
+
+.timelineTableRow {
+  display: grid;
+  grid-template-columns: 86px 12px 160px minmax(0, 1fr) 72px;
+  gap: 12px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+
+.timelineTableRow:nth-child(odd) {
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.timelineTableRow strong,
+.timelineTableRow p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timelineTableRow strong {
+  color: var(--agent-text-primary);
+}
+
+.timelineTableRow p {
+  color: var(--agent-text-secondary);
+}
+
+.tokenTabs {
+  gap: 26px;
+  border-bottom: 1px solid var(--agent-border);
+  color: var(--agent-text-tertiary);
+  font-weight: 800;
+}
+
+.tokenTabs span {
+  padding-bottom: 11px;
+}
+
+.tokenTabActive {
+  color: var(--agent-accent);
+  border-bottom: 2px solid var(--agent-accent);
+}
+
+.tokenSummary {
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 16px;
+  color: var(--agent-text-secondary);
+}
+
+.tokenSummary strong {
+  color: var(--agent-text-primary);
+  font-size: 1.1rem;
+}
+
+.tokenSummary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tokenLegendInput,
+.tokenLegendOutput {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.tokenLegendInput {
+  background: #2563eb;
+}
+
+.tokenLegendOutput {
+  background: #16a34a;
+}
+
+.tokenChart {
+  margin-top: 14px;
+}
+
+.tokenChart svg {
+  width: 100%;
+  height: 168px;
+}
+
+.tokenChart line {
+  stroke: rgba(148, 163, 184, 0.24);
+  stroke-width: 1;
+}
+
+.tokenChart polyline {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+
+.tokenLineInput {
+  stroke: #2563eb;
+}
+
+.tokenLineOutput {
+  stroke: #16a34a;
+  stroke-dasharray: 8 8;
+}
+
+.chartTicks {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--agent-text-tertiary);
+  font-size: 0.78rem;
+}
+
+.agentAuxGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.agentRunDetailPage {
+  gap: 16px;
+}
+
+.runDetailHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.85fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.runSummaryPanel,
+.goalCardPanel {
+  border: 1px solid var(--agent-border);
+  border-radius: 12px;
+  background: var(--agent-surface);
+  box-shadow: var(--console-shadow-sm, 0 10px 30px rgba(15, 23, 42, 0.08));
+}
+
+.runSummaryPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  min-width: 0;
+  padding: 18px 20px;
+}
+
+.goalCardPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+}
+
+.runDetailTitle {
+  max-width: 34ch;
+  margin: 0;
+  color: var(--agent-text-primary);
+  font-size: clamp(1.45rem, 2.3vw, 2.15rem);
+  line-height: 1.32;
+  letter-spacing: 0;
+}
+
+.runDetailMeta {
+  margin: 0;
+  color: var(--agent-text-tertiary);
+  line-height: 1.6;
+}
+
+.detailTagSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.runSummaryMetricStrip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.runDetailMainGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 370px);
+  gap: 16px;
+  align-items: start;
+}
+
+.runDetailPrimary,
+.runDetailSideRail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.runDetailSideRail {
+  position: sticky;
+  top: 16px;
+}
+
+.runDetailWorkGrid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1.22fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.planTimeline,
+.executionStepList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.planTimeline {
+  position: relative;
+}
+
+.planTimeline::before {
+  position: absolute;
+  top: 22px;
+  bottom: 22px;
+  left: 17px;
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.4), rgba(148, 163, 184, 0.2));
+  content: '';
+}
+
+.planTimelineItem {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 10px 8px 0;
+  border: 1px solid var(--agent-border);
+  border-radius: 12px;
+  background: var(--agent-surface-muted);
+  color: var(--agent-text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.planTimelineItem strong,
+.planTimelineItem em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planTimelineItem strong {
+  color: var(--agent-text-primary);
+  font-size: 0.9rem;
+}
+
+.planTimelineItem em {
+  padding-right: 4px;
+  color: var(--agent-text-tertiary);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.planTimelineItem .statusBadge,
+.planTimelineItem .chip,
+.planTimelineItem em {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.planTimelineItemActive {
+  border-color: rgba(37, 99, 235, 0.38);
+  background: rgba(37, 99, 235, 0.07);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.planTimelineIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-left: -1px;
+  border: 1px solid var(--agent-border-strong);
+  border-radius: 999px;
+  background: var(--agent-surface);
+  color: var(--agent-text-primary);
+  font-weight: 800;
+}
+
+.executionStepCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--agent-border);
+  border-radius: 12px;
+  background: var(--agent-surface-muted);
+}
+
+.executionStepCardActive {
+  border-color: rgba(37, 99, 235, 0.38);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.executionStepHeader {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.executionStepHeader strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--agent-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executionStepHeader time {
+  color: var(--agent-text-tertiary);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.finalScoreRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.finalScoreRow strong {
+  color: var(--agent-accent);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.finalScoreRow span {
+  color: var(--agent-text-secondary);
+}
+
+:global(html[data-theme='light']) .agentConsolePage .secondaryAction,
+:global(html[data-theme='light']) .agentConsolePage .ghostAction,
+:global(html[data-theme='light']) .iconOnlyButton,
+:global(html[data-theme='light']) .consoleSearch,
+:global(html[data-theme='light']) .consoleGoalComposer,
+:global(html[data-theme='light']) .graphNode,
+:global(html[data-theme='light']) .graphSideCallout,
+:global(html[data-theme='light']) .graphGateCallout,
+:global(html[data-theme='light']) .nodeMetaGrid,
+:global(html[data-theme='light']) .runSummaryPanel,
+:global(html[data-theme='light']) .goalCardPanel,
+:global(html[data-theme='light']) .planTimelineIndex {
+  background: #ffffff;
+}
+
+:global(html[data-theme='light']) .agentMetricCard,
+:global(html[data-theme='light']) .agentPanel,
+:global(html[data-theme='light']) .workflowPanel,
+:global(html[data-theme='light']) .nodeInspector,
+:global(html[data-theme='light']) .timelinePanel,
+:global(html[data-theme='light']) .tokenPanel,
+:global(html[data-theme='light']) .inspectorCard,
+:global(html[data-theme='light']) .runSummaryPanel,
+:global(html[data-theme='light']) .goalCardPanel {
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+}
+
 @media (max-width: 1080px) {
   .hero,
   .contentGrid,
   .detailGrid,
-  .metricsGrid {
+  .metricsGrid,
+  .agentCommandGrid,
+  .agentBottomGrid,
+  .agentAuxGrid,
+  .runDetailHero,
+  .runDetailMainGrid,
+  .runDetailWorkGrid {
     grid-template-columns: 1fr;
+  }
+
+  .agentMetricStrip,
+  .runSummaryMetricStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .runDetailSideRail {
+    position: static;
   }
 }
 
@@ -434,7 +1547,87 @@
 
   .primaryAction,
   .secondaryAction,
-  .ghostAction {
+  .ghostAction,
+  .dangerAction {
     width: 100%;
+  }
+
+  .agentTopbar,
+  .agentToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .consoleSearch {
+    width: 100%;
+  }
+
+  .agentMetricStrip,
+  .runSummaryMetricStrip {
+    grid-template-columns: 1fr;
+  }
+
+  .runSummaryPanel,
+  .goalCardPanel {
+    padding: 16px;
+  }
+
+  .runDetailTitle {
+    max-width: none;
+  }
+
+  .planTimeline::before {
+    display: none;
+  }
+
+  .planTimelineItem {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .planTimelineItem .statusBadge,
+  .planTimelineItem .chip,
+  .planTimelineItem em {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .executionStepHeader {
+    grid-template-columns: 10px minmax(0, 1fr);
+  }
+
+  .executionStepHeader .statusBadge,
+  .executionStepHeader time {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .workflowCanvas {
+    min-height: auto;
+    padding: 18px;
+  }
+
+  .graphRow {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding-bottom: 14px;
+  }
+
+  .graphConnector {
+    display: none;
+  }
+
+  .graphSideCallout,
+  .graphGateCallout {
+    position: static;
+  }
+
+  .timelineTableRow {
+    grid-template-columns: 74px 10px minmax(0, 1fr);
+  }
+
+  .timelineTableRow p,
+  .timelineTableRow em {
+    display: none;
   }
 }
