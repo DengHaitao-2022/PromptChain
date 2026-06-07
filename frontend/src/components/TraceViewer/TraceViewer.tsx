@@ -51,11 +51,14 @@ function isWorkflowGateState(value: unknown): value is WorkflowGateState {
 
     const gateType = value.gate_type;
     return (
-        (gateType === 'clarification' ||
+        (
+            gateType === 'clarification' ||
             gateType === 'outline_approval' ||
             gateType === 'fact_check' ||
-            gateType === 'tool_approval') &&
-        Array.isArray(value.questions)
+            gateType === 'tool_approval' ||
+            gateType === 'tool_risk_approval'
+        ) &&
+        (Array.isArray(value.questions) || typeof value.tool_name === 'string')
     );
 }
 

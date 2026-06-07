@@ -7,6 +7,7 @@
 3. 注册所有路由
 """
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -15,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
 from core.errors import install_error_infrastructure
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -80,6 +83,11 @@ def _register_routes(application: FastAPI) -> None:
         workflow_definition_router, prefix="/api", tags=["workflow-definition"]
     )
 
+    # Autonomous Agent 路由
+    from routes.agent_routes import router as agent_router
+
+    application.include_router(agent_router, prefix="/api", tags=["autonomous-agent"])
+
     # 版本管理路由
     from routes.workflow_version_routes import router as version_router
 
@@ -115,6 +123,10 @@ def _register_routes(application: FastAPI) -> None:
 async def _lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """集中管理应用启动和关闭资源。"""
     from db.postgres_store import dispose_postgres_store
+    from services.autonomous_agent_worker import (
+        dispose_agent_worker_queue,
+        get_agent_worker_queue,
+    )
     from services.knowledge_index_queue import dispose_knowledge_index_queue
     from services.knowledge_index_worker import (
         start_knowledge_index_worker,
@@ -125,11 +137,19 @@ async def _lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # 知识库普通上传走后台索引，避免请求线程长时间等待解析和 embedding。
     start_knowledge_index_worker()
     try:
+        recovered = await get_agent_worker_queue().recover_pending_runs()
+        if recovered:
+            logger.info("Autonomous Agent worker 恢复待执行任务: count=%s", recovered)
+    except Exception:
+        logger.exception("Autonomous Agent worker 恢复待执行任务失败")
+
+    try:
         yield
     finally:
         # 热重载或进程退出时主动释放外部连接，减少残留失效连接。
         await stop_knowledge_index_worker()
         await dispose_knowledge_index_queue()
+        await dispose_agent_worker_queue()
         await dispose_workflow_event_bus()
         await dispose_postgres_store()
 

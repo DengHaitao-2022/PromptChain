@@ -160,6 +160,18 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
     return [
         "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS workflow_definition_id VARCHAR(36)",
         "ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS workflow_version_id VARCHAR(36)",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS queue_status VARCHAR(32) NOT NULL DEFAULT 'idle'",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(100)",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS lease_token VARCHAR(64)",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS last_worker_error TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_agent_runs_queue_status ON agent_runs (queue_status)",
+        "CREATE INDEX IF NOT EXISTS ix_agent_runs_lease_expires_at ON agent_runs (lease_expires_at)",
+        "CREATE INDEX IF NOT EXISTS ix_agent_runs_worker_id ON agent_runs (worker_id)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS event_id VARCHAR(64)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS request_id VARCHAR(64)",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS trace_id VARCHAR(64)",
@@ -325,6 +337,8 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
         """
         CREATE TABLE IF NOT EXISTS tool_calls (
             id VARCHAR(36) PRIMARY KEY,
+            run_id VARCHAR(36) REFERENCES agent_runs(id),
+            step_id VARCHAR(36),
             workspace_id VARCHAR(36) REFERENCES workspaces(id),
             workflow_run_id VARCHAR(36) REFERENCES workflow_runs(id),
             node_run_id VARCHAR(36) REFERENCES node_runs(id),
@@ -337,6 +351,7 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
             output_json JSON,
             error_message TEXT,
             latency_ms INTEGER,
+            cost JSON DEFAULT '{}'::json,
             token_cost INTEGER,
             money_cost DOUBLE PRECISION,
             requires_approval INTEGER NOT NULL DEFAULT 0,
@@ -344,10 +359,28 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
             approved_at TIMESTAMPTZ,
             created_by VARCHAR(36) REFERENCES users(id),
             created_at TIMESTAMPTZ DEFAULT now(),
+            completed_at TIMESTAMPTZ,
             updated_at TIMESTAMPTZ DEFAULT now(),
             metadata_json JSON DEFAULT '{}'::json
         )
         """,
+        "ALTER TABLE tool_calls ALTER COLUMN run_id DROP NOT NULL",
+        "ALTER TABLE tool_calls ALTER COLUMN tool_name TYPE VARCHAR(160)",
+        "ALTER TABLE tool_calls ALTER COLUMN risk_level TYPE VARCHAR(40)",
+        "ALTER TABLE tool_calls ALTER COLUMN status TYPE VARCHAR(40)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(36) REFERENCES workspaces(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36) REFERENCES workflow_runs(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS node_run_id VARCHAR(36) REFERENCES node_runs(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS tool_version VARCHAR(40) NOT NULL DEFAULT '1.0.0'",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS source_type VARCHAR(40) NOT NULL DEFAULT 'internal'",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS cost JSON DEFAULT '{}'::json",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS token_cost INTEGER",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS money_cost DOUBLE PRECISION",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS requires_approval INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS approved_by VARCHAR(36) REFERENCES users(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS created_by VARCHAR(36) REFERENCES users(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now()",
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_workflow_created ON tool_calls (workflow_run_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_node_created ON tool_calls (node_run_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_workspace_status ON tool_calls (workspace_id, status, created_at DESC)",
@@ -633,6 +666,10 @@ class PostgresArtifactStore:
             await self.init_db()
             self._initialized = True
 
+    async def ensure_initialized(self) -> None:
+        """公开的运行态表初始化入口，供直接使用 async_session 的路由调用。"""
+        await self._ensure_initialized()
+
     async def init_db(self):
         """初始化数据库表。
 
@@ -644,6 +681,7 @@ class PostgresArtifactStore:
             "models.workflow_orm",
             "orm.knowledge_orm",
             "orm.tool_orm",
+            "orm.autonomous_agent_orm",
         ):
             importlib.import_module(module_name)
 
@@ -904,7 +942,7 @@ class PostgresArtifactStore:
         async def _operation(session: AsyncSession):
             from orm.tool_orm import ToolCallORM
 
-            orm = ToolCallORM.from_model(tool_call)
+            orm = ToolCallORM.from_workflow_model(tool_call)
             session.add(orm)
             await session.commit()
             return tool_call
@@ -948,7 +986,7 @@ class PostgresArtifactStore:
                 select(ToolCallORM).where(ToolCallORM.id == tool_call_id)
             )
             orm = result.scalar_one_or_none()
-            return orm.to_model() if orm else None
+            return orm.to_workflow_model() if orm else None
 
         return await self._run_with_session(_operation)
 
@@ -963,7 +1001,7 @@ class PostgresArtifactStore:
                 .where(ToolCallORM.workflow_run_id == workflow_run_id)
                 .order_by(ToolCallORM.created_at)
             )
-            return [orm.to_model() for orm in result.scalars().all()]
+            return [orm.to_workflow_model() for orm in result.scalars().all()]
 
         return await self._run_with_session(_operation)
 
@@ -978,7 +1016,7 @@ class PostgresArtifactStore:
                 .where(ToolCallORM.node_run_id == node_run_id)
                 .order_by(ToolCallORM.created_at)
             )
-            return [orm.to_model() for orm in result.scalars().all()]
+            return [orm.to_workflow_model() for orm in result.scalars().all()]
 
         return await self._run_with_session(_operation)
 
