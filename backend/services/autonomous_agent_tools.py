@@ -200,17 +200,18 @@ async def _ensure_workflow_visible(
     workflow_run_id: str,
     workspace_id: str | None,
     user_id: str | None,
+    resource_label: str = "Artifact",
 ) -> None:
     """校验工具读取的 WorkflowRun 仍在当前 Agent 可见范围内。"""
     workflow_run = await artifact_store.get_workflow_run(workflow_run_id)
     if workflow_run is None:
-        raise ValueError("Artifact 所属运行不存在或不可访问")
+        raise ValueError(f"{resource_label} 所属运行不存在或不可访问")
 
     metadata = workflow_run.metadata or {}
     if workspace_id and metadata.get("workspace_id") != workspace_id:
-        raise ValueError("Artifact 不属于当前工作空间")
+        raise ValueError(f"{resource_label} 不属于当前工作空间")
     if user_id and metadata.get("user_id") and metadata.get("user_id") != user_id:
-        raise ValueError("Artifact 不属于当前用户可见范围")
+        raise ValueError(f"{resource_label} 不属于当前用户可见范围")
 
 
 async def _ensure_artifact_visible(
@@ -640,6 +641,8 @@ def build_default_tool_registry(
 
     async def retrieve_trace(payload: dict[str, Any], step: AgentStep | None) -> dict[str, Any]:
         workflow_run_id = payload.get("workflow_run_id")
+        workspace_id = _optional_str(payload.get("workspace_id"))
+        user_id = _optional_str(payload.get("user_id"))
         if not workflow_run_id:
             return {
                 "workflow_run_id": None,
@@ -647,6 +650,13 @@ def build_default_tool_registry(
                 "trace_evidence": [],
                 "reason": "缺少 workflow_run_id",
             }
+        await _ensure_workflow_visible(
+            artifact_store=artifact_store,
+            workflow_run_id=str(workflow_run_id),
+            workspace_id=workspace_id,
+            user_id=user_id,
+            resource_label="Trace",
+        )
         try:
             limit = max(1, min(int(payload.get("limit") or 20), 50))
         except (TypeError, ValueError):

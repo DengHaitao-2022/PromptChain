@@ -398,12 +398,16 @@ class AutonomousAgentRuntime:
 
             step = await self._execute_node(run, plan, next_node)
             executed_steps += 1
+            # 节点执行可能较久，期间 pause/cancel 会更新持久态；这里必须重读，避免旧 run 覆盖控制面状态。
+            run = await self._require_run(run.id)
             run.current_step_id = step.id
             run.metadata["current_node_id"] = step.node_id
             run.metadata["executed_step_count"] = executed_steps
             run.updated_at = utc_now_naive()
             await self.store.update_run(run)
             await self._sync_workflow_run(run)
+            if run.status in {AgentRunStatus.PAUSED, AgentRunStatus.CANCELLED}:
+                return run
 
             if step.status == AgentStepStatus.BLOCKED:
                 run.status = AgentRunStatus.AWAITING_GATE

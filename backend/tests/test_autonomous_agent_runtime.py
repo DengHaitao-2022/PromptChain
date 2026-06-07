@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.config import get_settings
 from core.time import utc_now_naive
 from db.postgres_store import Base
-from models.artifact import ArtifactType, WorkflowRun
+from models.artifact import ArtifactType, NodeRun, NodeRunStatus, WorkflowRun
 from models.autonomous_agent import (
     AgentRun,
     AgentRunStatus,
@@ -1105,6 +1105,59 @@ def test_retrieve_trace_tool_reads_node_run_evidence():
     asyncio.run(_with_runtime(_scenario))
 
 
+def test_retrieve_trace_tool_rejects_cross_workspace_trace():
+    async def _scenario(runtime, store, artifact_store):
+        foreign_run = WorkflowRun(
+            id="foreign-trace-run",
+            workflow_name="foreign",
+            user_input="其他空间的 Trace",
+            metadata={"workspace_id": "ws-2", "user_id": "user-2"},
+        )
+        await artifact_store.create_workflow_run(foreign_run)
+        await artifact_store.create_node_run(
+            NodeRun(
+                id="foreign-node-run",
+                workflow_run_id=foreign_run.id,
+                node_name="secret_node",
+                node_type="llm_call",
+                status=NodeRunStatus.COMPLETED,
+            )
+        )
+        run = await runtime.start(
+            goal="验证 retrieve_trace 工具不会跨空间读取",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=False,
+        )
+        assert run.current_plan_id is not None
+        step = await store.create_step(
+            AgentStep(
+                run_id=run.id,
+                plan_id=run.current_plan_id,
+                node_id="manual_retrieve_trace",
+                step_type=AgentStepType.TOOL_CALL,
+                title="读取 Trace",
+                description="尝试读取其他工作空间 Trace",
+            )
+        )
+
+        tool_call = await runtime.tool_executor.execute(
+            run_id=run.id,
+            tool_name="retrieve_trace",
+            payload={
+                "workflow_run_id": foreign_run.id,
+                "workspace_id": run.workspace_id,
+                "user_id": run.user_id,
+            },
+            step=step,
+        )
+
+        assert tool_call.status.value == "failed"
+        assert tool_call.output["error"] == "Trace 不属于当前工作空间"
+
+    asyncio.run(_with_runtime(_scenario))
+
+
 def test_skip_node_resolves_dynamic_plan_dependency():
     async def _scenario(runtime, store, artifact_store):
         run = await runtime.start(
@@ -1222,5 +1275,61 @@ def test_pause_and_cancel_control_long_running_agent_run():
         assert cancelled.status == AgentRunStatus.CANCELLED
         assert stored.error_message == "目标已废弃"
         assert stored.completed_at is not None
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_pause_and_cancel_during_node_execution_preserve_terminal_control_state():
+    async def _scenario(runtime, store, _):
+        async def run_with_mid_node_control(target_status: AgentRunStatus) -> AgentRun:
+            run = await runtime.start(
+                goal=f"验证节点执行中 {target_status.value} 控制不会被旧运行态覆盖",
+                user_id="user-1",
+                workspace_id="ws-1",
+                budget_limit={"max_steps": 1, "max_replans": 0},
+                auto_execute=False,
+            )
+            started = asyncio.Event()
+            release = asyncio.Event()
+            original_dispatch = runtime._dispatch_node
+
+            async def blocking_dispatch(current_run, plan, node, step):
+                started.set()
+                await release.wait()
+                return await original_dispatch(current_run, plan, node, step)
+
+            runtime._dispatch_node = blocking_dispatch
+            execute_task = asyncio.create_task(runtime.execute_until_stop(run.id))
+            try:
+                await asyncio.wait_for(started.wait(), timeout=1)
+                if target_status == AgentRunStatus.PAUSED:
+                    await runtime.pause_run(run.id, reason="节点执行中暂停")
+                else:
+                    await runtime.cancel_run(run.id, reason="节点执行中取消")
+                release.set()
+                return await asyncio.wait_for(execute_task, timeout=2)
+            finally:
+                runtime._dispatch_node = original_dispatch
+                if not release.is_set():
+                    release.set()
+                with suppress(asyncio.CancelledError):
+                    if not execute_task.done():
+                        execute_task.cancel()
+                        await execute_task
+
+        paused = await run_with_mid_node_control(AgentRunStatus.PAUSED)
+        stored_paused = await store.get_run(paused.id)
+        assert stored_paused is not None
+        assert paused.status == AgentRunStatus.PAUSED
+        assert stored_paused.status == AgentRunStatus.PAUSED
+        assert stored_paused.metadata["pause"]["reason"] == "节点执行中暂停"
+
+        cancelled = await run_with_mid_node_control(AgentRunStatus.CANCELLED)
+        stored_cancelled = await store.get_run(cancelled.id)
+        assert stored_cancelled is not None
+        assert cancelled.status == AgentRunStatus.CANCELLED
+        assert stored_cancelled.status == AgentRunStatus.CANCELLED
+        assert stored_cancelled.error_message == "节点执行中取消"
+        assert stored_cancelled.completed_at is not None
 
     asyncio.run(_with_runtime(_scenario))
