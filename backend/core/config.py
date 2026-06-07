@@ -110,6 +110,8 @@ class Settings:
             "KNOWLEDGE_EMBEDDING_PROVIDER",
             "hash",
         ).lower()
+        if self.KNOWLEDGE_EMBEDDING_PROVIDER not in {"hash", "openai"}:
+            raise RuntimeError("KNOWLEDGE_EMBEDDING_PROVIDER 仅支持 hash 或 openai")
         self.KNOWLEDGE_EMBEDDING_MODEL: str = os.getenv(
             "KNOWLEDGE_EMBEDDING_MODEL",
             "promptchain-hash-embedding-v1",
@@ -117,12 +119,89 @@ class Settings:
         self.KNOWLEDGE_EMBEDDING_DIMENSION: int = int(
             os.getenv("KNOWLEDGE_EMBEDDING_DIMENSION", "1536")
         )
+        self.KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH: bool = (
+            os.getenv("KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH", "true").lower() == "true"
+        )
+        self.KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING_FOR_PRIVATE_SCOPES: bool = (
+            os.getenv("KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING_FOR_PRIVATE_SCOPES", "false").lower()
+            == "true"
+        )
+        self.KNOWLEDGE_OBJECT_STORAGE_BACKEND: str = os.getenv(
+            "KNOWLEDGE_OBJECT_STORAGE_BACKEND",
+            "local",
+        ).lower()
+        if self.KNOWLEDGE_OBJECT_STORAGE_BACKEND not in {"local", "s3"}:
+            raise RuntimeError("KNOWLEDGE_OBJECT_STORAGE_BACKEND 仅支持 local 或 s3")
+        self.KNOWLEDGE_S3_BUCKET: str = os.getenv("KNOWLEDGE_S3_BUCKET", "")
+        self.KNOWLEDGE_S3_ENDPOINT_URL: str = os.getenv("KNOWLEDGE_S3_ENDPOINT_URL", "")
+        self.KNOWLEDGE_S3_REGION: str = os.getenv("KNOWLEDGE_S3_REGION", "us-east-1")
+        self.KNOWLEDGE_S3_ACCESS_KEY_ID: str = os.getenv("KNOWLEDGE_S3_ACCESS_KEY_ID", "")
+        self.KNOWLEDGE_S3_SECRET_ACCESS_KEY: str = os.getenv(
+            "KNOWLEDGE_S3_SECRET_ACCESS_KEY",
+            "",
+        )
+        self.KNOWLEDGE_S3_PREFIX: str = os.getenv("KNOWLEDGE_S3_PREFIX", "knowledge").strip("/")
+        self.KNOWLEDGE_S3_FORCE_PATH_STYLE: bool = (
+            os.getenv("KNOWLEDGE_S3_FORCE_PATH_STYLE", "true").lower() == "true"
+        )
         self.KNOWLEDGE_CHUNK_TARGET_TOKENS: int = int(
             os.getenv("KNOWLEDGE_CHUNK_TARGET_TOKENS", "1000")
         )
         self.KNOWLEDGE_CHUNK_OVERLAP_TOKENS: int = int(
             os.getenv("KNOWLEDGE_CHUNK_OVERLAP_TOKENS", "150")
         )
+        self.KNOWLEDGE_MAX_UPLOAD_BYTES: int = int(
+            os.getenv("KNOWLEDGE_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))
+        )
+        self.KNOWLEDGE_MAX_DOCUMENTS_PER_KB: int = int(
+            os.getenv("KNOWLEDGE_MAX_DOCUMENTS_PER_KB", "200")
+        )
+        self.KNOWLEDGE_INDEX_WORKER_ENABLED: bool = (
+            os.getenv("KNOWLEDGE_INDEX_WORKER_ENABLED", "true").lower() == "true"
+        )
+        self.KNOWLEDGE_INDEX_WORKER_INTERVAL_SECONDS: float = float(
+            os.getenv("KNOWLEDGE_INDEX_WORKER_INTERVAL_SECONDS", "2")
+        )
+        self.KNOWLEDGE_INDEX_WORKER_BATCH_SIZE: int = int(
+            os.getenv("KNOWLEDGE_INDEX_WORKER_BATCH_SIZE", "5")
+        )
+        self.KNOWLEDGE_INDEX_WORKER_STALE_SECONDS: int = int(
+            os.getenv("KNOWLEDGE_INDEX_WORKER_STALE_SECONDS", "900")
+        )
+        self.KNOWLEDGE_INDEX_QUEUE_BACKEND: str = os.getenv(
+            "KNOWLEDGE_INDEX_QUEUE_BACKEND",
+            "database",
+        ).lower()
+        if self.KNOWLEDGE_INDEX_QUEUE_BACKEND not in {"database", "redis"}:
+            raise RuntimeError("KNOWLEDGE_INDEX_QUEUE_BACKEND 仅支持 database 或 redis")
+        self.KNOWLEDGE_INDEX_QUEUE_REDIS_STREAM: str = os.getenv(
+            "KNOWLEDGE_INDEX_QUEUE_REDIS_STREAM",
+            "promptchain:knowledge-index",
+        )
+        self.KNOWLEDGE_INDEX_QUEUE_REDIS_GROUP: str = os.getenv(
+            "KNOWLEDGE_INDEX_QUEUE_REDIS_GROUP",
+            "knowledge-index-workers",
+        )
+        self.KNOWLEDGE_INDEX_QUEUE_REDIS_CONSUMER: str = os.getenv(
+            "KNOWLEDGE_INDEX_QUEUE_REDIS_CONSUMER",
+            "",
+        )
+        self.KNOWLEDGE_INDEX_QUEUE_BLOCK_MS: int = int(
+            os.getenv("KNOWLEDGE_INDEX_QUEUE_BLOCK_MS", "1000")
+        )
+        self.KNOWLEDGE_INDEX_QUEUE_MAXLEN: int = int(
+            os.getenv("KNOWLEDGE_INDEX_QUEUE_MAXLEN", "10000")
+        )
+        self.KNOWLEDGE_GENERATION_EVAL_PROVIDER: str = os.getenv(
+            "KNOWLEDGE_GENERATION_EVAL_PROVIDER",
+            "heuristic",
+        ).lower()
+        if self.KNOWLEDGE_GENERATION_EVAL_PROVIDER not in {"heuristic", "llm", "ragas"}:
+            raise RuntimeError("KNOWLEDGE_GENERATION_EVAL_PROVIDER 仅支持 heuristic、llm 或 ragas")
+        self.KNOWLEDGE_GENERATION_EVAL_ALLOW_EXTERNAL_JUDGE: bool = (
+            os.getenv("KNOWLEDGE_GENERATION_EVAL_ALLOW_EXTERNAL_JUDGE", "false").lower() == "true"
+        )
+        self.KNOWLEDGE_RAGAS_MODEL: str = os.getenv("KNOWLEDGE_RAGAS_MODEL", "gpt-4o-mini")
 
 
 @lru_cache

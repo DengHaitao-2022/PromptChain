@@ -77,8 +77,10 @@ PromptChain 的目标不是“再包一层 Prompt”，而是把复杂内容生�
 flowchart LR
     A["用户输入"] --> B["parse_intent<br/>意图解析"]
     B -->|"存在不确定点"| C["clarify_intent<br/>澄清补全"]
-    B -->|"信息充分"| D["generate_outline<br/>生成提纲"]
-    C --> D
+    B -->|"信息充分"| K["retrieve_knowledge<br/>检索知识库"]
+    C --> K
+    K --> L["Evidence Artifact<br/>证据包"]
+    L --> D["generate_outline<br/>生成提纲"]
     D --> E["approve_outline<br/>提纲审批"]
     E --> F["generate_content<br/>生成正文/脚本"]
     F --> G["self_refine<br/>自检修订"]
@@ -91,6 +93,7 @@ flowchart LR
 对应的产物和状态会被记录到版本化模型中：
 
 - `Artifact`：节点产物，按版本写入，不覆盖旧版本。
+- `Evidence Artifact`：知识库检索产生的证据包，供提纲、正文、事实核查和引用回放复用。
 - `NodeRun`：节点执行记录，保留输入输出关联、耗时与决策信息。
 - `WorkflowRun`：一次完整工作流运行的顶层记录。
 
@@ -258,19 +261,20 @@ PromptChain/
 
 - 内容工作流运行数据默认使用 PostgreSQL 持久化，服务重启后可保留历史；仅在显式切换到内存模式时才会在重启后丢失运行态数据。
 - 首页启动、工作流详情、运行记录总览、工作流编辑/发布、版本对比/恢复、Trace、Artifact、Rerun 和 DOCX 导出都已进入主线。
+- 知识库 / RAG 主链路已进入主线：工作空间库、个人库、本次运行上传资料、后台索引、pgvector 候选召回、Evidence Artifact、检索评测和使用统计均已可用。
 - WebSocket / SSE 是实时体验增强通道；REST + Trace 仍是最终对账入口，不应把“事件已推送”当成唯一事实源。
 - MVP1 当前主要剩余项是 `dev@699bf53` 上的最终 live smoke 与验收归档，不再是核心功能补齐。
 - 统一错误体系与前端错误归一化目前在 PR #5，尚未合入 `dev`；生产 CI/CD 与部署基线在 PR #4，当前 PR 检查已通过但仍未合入主线。
-- 生产态能力仍缺少版本化数据库迁移、独立 worker/队列、通用重试/超时/熔断、完整 CI/CD、可观测性与灾难恢复闭环。
+- 生产态能力已补入 Redis Streams 独立索引队列、S3 兼容对象存储、Alembic 迁移 gate 与基础 E2E gate；仍需要继续强化通用重试/超时/熔断、可观测性、灾难恢复和发布审批闭环。
 
 下一步更合理的演进方向：
 
 1. 在 `dev@699bf53` 上完成 MVP1 最终 smoke：标准生成、Gate、pause/resume、trace/artifact history、rerun、DOCX 导出和 auth/access。
 2. 合入并验收统一错误体系，使后端错误 envelope、错误码和前端错误消费从 PR 候选变成主线契约。
 3. 修复生产 CI/CD PR 的质量检查失败，并补齐可复用部署说明。
-4. 引入 Alembic 等版本化迁移体系，避免继续依赖启动期 `create_all` 和手写 `ALTER TABLE`。
-5. 将长任务执行从进程内后台任务演进到 worker/queue 模式，并补齐超时、重试、熔断、限流与死信处理。
-6. 引入更明确的评测、模型路由、成本统计和质量指标闭环。
+4. 继续强化知识库独立 queue / worker：补齐重试退避、限流、死信、任务审计和横向扩容运行手册。
+5. 继续扩展 RAG 生成质量评测、模型路由、成本统计和质量指标闭环。
+6. 基于 S3 兼容对象存储补齐病毒扫描、MIME 检测、敏感信息治理和对象生命周期策略。
 
 ## 设计目标
 

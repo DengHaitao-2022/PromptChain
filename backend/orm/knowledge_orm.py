@@ -67,6 +67,7 @@ class KnowledgeDocumentORM(Base):
     parse_status = Column(String(20), nullable=False, default=KnowledgeDocumentStatus.PENDING.value)
     index_status = Column(String(20), nullable=False, default=KnowledgeDocumentStatus.PENDING.value)
     error_message = Column(Text, nullable=True)
+    metadata_json = Column(JSON, default=dict)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
@@ -146,4 +147,19 @@ class KnowledgeRetrievalLogORM(Base):
     retrieved_chunk_ids = Column(JSON, default=list)
     scores = Column(JSON, default=list)
     metadata_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=utc_now_naive)
+
+
+class KnowledgeRetrievalEvaluationRunORM(Base):
+    """知识库检索评测运行记录表。"""
+
+    __tablename__ = "kb_retrieval_evaluation_runs"
+
+    id = Column(String(36), primary_key=True)
+    workspace_id = Column(String(36), ForeignKey("workspaces.id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    evaluation_type = Column(String(40), nullable=False, default="retrieval", index=True)
+    request_json = Column(JSON, default=dict, nullable=False)
+    summary_json = Column(JSON, default=dict, nullable=False)
+    results_json = Column(JSON, default=list, nullable=False)
     created_at = Column(DateTime, default=utc_now_naive)

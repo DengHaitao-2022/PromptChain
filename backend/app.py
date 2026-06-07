@@ -8,6 +8,8 @@
 """
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +28,7 @@ def create_app() -> FastAPI:
         title=settings.APP_TITLE,
         description=settings.APP_DESCRIPTION,
         version=settings.APP_VERSION,
+        lifespan=_lifespan,
     )
 
     # CORS 中间件
@@ -41,8 +44,6 @@ def create_app() -> FastAPI:
 
     # 注册路由
     _register_routes(application)
-    _register_lifecycle(application)
-
     return application
 
 
@@ -113,28 +114,36 @@ def _register_routes(application: FastAPI) -> None:
         }
 
 
-def _register_lifecycle(application: FastAPI) -> None:
-    """注册应用生命周期钩子。"""
+@asynccontextmanager
+async def _lifespan(_application: FastAPI) -> AsyncIterator[None]:
+    """集中管理应用启动和关闭资源。"""
+    from db.postgres_store import dispose_postgres_store
+    from services.autonomous_agent_worker import (
+        dispose_agent_worker_queue,
+        get_agent_worker_queue,
+    )
+    from services.knowledge_index_queue import dispose_knowledge_index_queue
+    from services.knowledge_index_worker import (
+        start_knowledge_index_worker,
+        stop_knowledge_index_worker,
+    )
+    from services.workflow_event_bus import dispose_workflow_event_bus
 
-    @application.on_event("startup")
-    async def recover_agent_worker_runs() -> None:
-        # 进程重启后恢复已持久化的 AgentRun 队列状态，避免长程任务永久停在 running。
-        from services.autonomous_agent_worker import get_agent_worker_queue
+    # 知识库普通上传走后台索引，避免请求线程长时间等待解析和 embedding。
+    start_knowledge_index_worker()
+    try:
+        recovered = await get_agent_worker_queue().recover_pending_runs()
+        if recovered:
+            logger.info("Autonomous Agent worker 恢复待执行任务: count=%s", recovered)
+    except Exception:
+        logger.exception("Autonomous Agent worker 恢复待执行任务失败")
 
-        try:
-            recovered = await get_agent_worker_queue().recover_pending_runs()
-            if recovered:
-                logger.info("Autonomous Agent worker 恢复待执行任务: count=%s", recovered)
-        except Exception:
-            logger.exception("Autonomous Agent worker 恢复待执行任务失败")
-
-    @application.on_event("shutdown")
-    async def shutdown_runtime_resources() -> None:
+    try:
+        yield
+    finally:
         # 热重载或进程退出时主动释放外部连接，减少残留失效连接。
-        from db.postgres_store import dispose_postgres_store
-        from services.autonomous_agent_worker import dispose_agent_worker_queue
-        from services.workflow_event_bus import dispose_workflow_event_bus
-
+        await stop_knowledge_index_worker()
+        await dispose_knowledge_index_queue()
         await dispose_agent_worker_queue()
         await dispose_workflow_event_bus()
         await dispose_postgres_store()

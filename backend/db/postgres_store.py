@@ -246,6 +246,7 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
             parse_status VARCHAR(20) NOT NULL DEFAULT 'pending',
             index_status VARCHAR(20) NOT NULL DEFAULT 'pending',
             error_message TEXT,
+            metadata_json JSON DEFAULT '{}'::json,
             created_by VARCHAR(36) NOT NULL REFERENCES users(id),
             created_at TIMESTAMPTZ DEFAULT now(),
             updated_at TIMESTAMPTZ DEFAULT now()
@@ -254,6 +255,7 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
         "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36)",
         "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36)",
         "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'",
+        "ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS metadata_json JSON DEFAULT '{}'::json",
         """
         CREATE TABLE IF NOT EXISTS kb_chunks (
             id VARCHAR(36) PRIMARY KEY,
@@ -308,6 +310,7 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
         "CREATE INDEX IF NOT EXISTS ix_knowledge_bases_owner ON knowledge_bases (owner_user_id)",
         "CREATE INDEX IF NOT EXISTS ix_knowledge_bases_run_upload ON knowledge_bases (workspace_id, owner_user_id, workflow_run_id, scope)",
         "CREATE INDEX IF NOT EXISTS ix_kb_documents_kb_status ON kb_documents (kb_id, index_status)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_documents_index_claim ON kb_documents (index_status, updated_at, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_kb_documents_kb_lifecycle ON kb_documents (kb_id, status, version)",
         "CREATE INDEX IF NOT EXISTS ix_kb_documents_workspace ON kb_documents (workspace_id)",
         "CREATE INDEX IF NOT EXISTS ix_kb_chunks_kb ON kb_chunks (kb_id)",
@@ -315,6 +318,22 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
         "CREATE INDEX IF NOT EXISTS ix_kb_chunks_run_upload ON kb_chunks (workspace_id, owner_user_id, workflow_run_id)",
         "CREATE INDEX IF NOT EXISTS ix_kb_embeddings_chunk ON kb_embeddings (chunk_id)",
         "CREATE INDEX IF NOT EXISTS ix_kb_retrieval_logs_workflow ON kb_retrieval_logs (workflow_run_id)",
+        """
+        CREATE TABLE IF NOT EXISTS kb_retrieval_evaluation_runs (
+            id VARCHAR(36) PRIMARY KEY,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+            evaluation_type VARCHAR(40) NOT NULL DEFAULT 'retrieval',
+            request_json JSON NOT NULL DEFAULT '{}'::json,
+            summary_json JSON NOT NULL DEFAULT '{}'::json,
+            results_json JSON NOT NULL DEFAULT '[]'::json,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "ALTER TABLE kb_retrieval_evaluation_runs ADD COLUMN IF NOT EXISTS evaluation_type VARCHAR(40) NOT NULL DEFAULT 'retrieval'",
+        "CREATE INDEX IF NOT EXISTS ix_kb_eval_runs_workspace_created ON kb_retrieval_evaluation_runs (workspace_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_eval_runs_user_created ON kb_retrieval_evaluation_runs (user_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_kb_eval_runs_type_created ON kb_retrieval_evaluation_runs (evaluation_type, created_at DESC)",
         """
         DO $$
         BEGIN

@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 import routes.workflow_helpers as workflow_helpers
 from db.postgres_store import get_postgres_store
 from models.knowledge import (
+    GenerationFaithfulnessEvaluationRequest,
+    GenerationFaithfulnessEvaluationResponse,
     KnowledgeBase,
     KnowledgeBaseStatus,
     KnowledgeDocument,
@@ -17,6 +19,10 @@ from models.knowledge import (
     KnowledgeScope,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    KnowledgeUsageStats,
+    RetrievalEvaluationRequest,
+    RetrievalEvaluationResponse,
+    RetrievalEvaluationRunListResponse,
 )
 from services.knowledge_service import KnowledgeService
 
@@ -296,6 +302,7 @@ async def upload_knowledge_document(
                 file_name=file.filename or "untitled.txt",
                 content=content,
                 metadata=metadata,
+                index_immediately=False,
             )
         except ValueError as exc:
             raise _normalize_service_error(exc, not_found=True) from exc
@@ -377,6 +384,7 @@ async def reindex_knowledge_document(
                 workspace_id=workspace_id,
                 user_id=user_id,
                 role=role,
+                index_immediately=False,
             )
         except ValueError as exc:
             raise _normalize_service_error(exc, not_found=True) from exc
@@ -401,3 +409,71 @@ async def search_knowledge(
             )
         except ValueError as exc:
             raise _normalize_service_error(exc) from exc
+
+
+@router.post("/knowledge/evaluate", response_model=RetrievalEvaluationResponse)
+async def evaluate_knowledge_retrieval(
+    request: Request,
+    body: RetrievalEvaluationRequest,
+) -> RetrievalEvaluationResponse:
+    """执行一组检索评测用例，返回命中率、MRR 和 Precision@k。"""
+    user_id, workspace_id, _ = await _knowledge_context(request, action="read")
+    async with _postgres_store().initialized_session() as session:
+        try:
+            return await KnowledgeService(session).evaluate_retrieval(
+                request=body,
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
+        except ValueError as exc:
+            raise _normalize_service_error(exc) from exc
+
+
+@router.post(
+    "/knowledge/evaluate/generation-faithfulness",
+    response_model=GenerationFaithfulnessEvaluationResponse,
+)
+async def evaluate_knowledge_generation_faithfulness(
+    request: Request,
+    body: GenerationFaithfulnessEvaluationRequest,
+) -> GenerationFaithfulnessEvaluationResponse:
+    """执行 RAG 生成忠实性评测，支持 heuristic / LLM judge / Ragas provider。"""
+    user_id, workspace_id, _ = await _knowledge_context(request, action="read")
+    async with _postgres_store().initialized_session() as session:
+        try:
+            return await KnowledgeService(session).evaluate_generation_faithfulness(
+                request=body,
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
+        except ValueError as exc:
+            raise _normalize_service_error(exc) from exc
+
+
+@router.get("/knowledge/evaluations", response_model=RetrievalEvaluationRunListResponse)
+async def list_knowledge_retrieval_evaluations(
+    request: Request,
+    limit: int = 20,
+) -> RetrievalEvaluationRunListResponse:
+    """读取检索评测历史，管理者可看工作空间汇总，普通成员只看自己发起的评测。"""
+    user_id, workspace_id, role = await _knowledge_context(request, action="read")
+    async with _postgres_store().initialized_session() as session:
+        runs = await KnowledgeService(session).list_retrieval_evaluation_runs(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            role=role,
+            limit=limit,
+        )
+        return RetrievalEvaluationRunListResponse(runs=runs)
+
+
+@router.get("/knowledge/stats", response_model=KnowledgeUsageStats)
+async def get_knowledge_usage_stats(request: Request) -> KnowledgeUsageStats:
+    """读取当前用户在当前工作空间的知识库使用统计。"""
+    user_id, workspace_id, role = await _knowledge_context(request, action="read")
+    async with _postgres_store().initialized_session() as session:
+        return await KnowledgeService(session).get_usage_stats(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            role=role,
+        )

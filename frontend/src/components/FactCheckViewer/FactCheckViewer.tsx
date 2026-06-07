@@ -54,6 +54,32 @@ const DECISION_OPTIONS: DecisionOption[] = [
     },
 ];
 
+function getEvidenceStatusText(status?: VerificationResult['evidence_status']) {
+    switch (status) {
+        case 'supported':
+            return '有证据支持';
+        case 'unsupported':
+            return '无证据支持';
+        case 'conflicting':
+            return '证据冲突';
+        default:
+            return '未检查证据';
+    }
+}
+
+function getEvidenceStatusClass(status?: VerificationResult['evidence_status']) {
+    switch (status) {
+        case 'supported':
+            return styles.evidenceSupported;
+        case 'unsupported':
+            return styles.evidenceUnsupported;
+        case 'conflicting':
+            return styles.evidenceConflicting;
+        default:
+            return styles.evidenceNotChecked;
+    }
+}
+
 export function FactCheckViewer({
     report,
     onApprove,
@@ -217,6 +243,13 @@ export function FactCheckViewer({
                                         <span className={styles.claimCategory}>
                                             {claim.category}
                                         </span>
+                                        <span
+                                            className={`${styles.evidenceBadge} ${getEvidenceStatusClass(
+                                                result.evidence_status
+                                            )}`}
+                                        >
+                                            {getEvidenceStatusText(result.evidence_status)}
+                                        </span>
                                         <span className={styles.claimState}>
                                             {isResolved ? (
                                                 <>
@@ -291,6 +324,16 @@ export function FactCheckViewer({
                                     <span>
                                         置信度 {Math.round(selectedResult.confidence * 100)}%
                                     </span>
+                                    <span
+                                        className={`${styles.evidenceBadge} ${getEvidenceStatusClass(
+                                            selectedResult.evidence_status
+                                        )}`}
+                                    >
+                                        {getEvidenceStatusText(selectedResult.evidence_status)}
+                                    </span>
+                                    {selectedResult.source ? (
+                                        <span>来源：{selectedResult.source}</span>
+                                    ) : null}
                                 </div>
                             </div>
 

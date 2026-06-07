@@ -68,6 +68,13 @@ docker compose -f docker-compose.prod.yml up --build -d
 docker compose -f docker-compose.prod.yml ps
 ```
 
+首次部署或数据库结构升级时，先执行版本化迁移：
+
+```bash
+cd backend
+uv run alembic upgrade head
+```
+
 默认端口：
 
 - 前端：`http://localhost:3000`
@@ -91,6 +98,34 @@ docker compose -f docker-compose.prod.yml ps
 | `DEFAULT_MODEL_NAME` | 默认模型名 | `claude-3-5-sonnet-20241022` |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GITHUB_MODEL_TOKEN` | LLM Provider 凭据，至少配置一个 | `...` |
 | `SMTP_*` | 邮件发送配置 | `SMTP_HOST=smtp.example.com` |
+| `KNOWLEDGE_STORAGE_DIR` | 知识库原文存储目录；Compose 示例挂载到 `knowledge_data` volume | `/app/.data/knowledge` |
+| `KNOWLEDGE_OBJECT_STORAGE_BACKEND` | 知识库原文对象存储后端，支持 `local` / `s3` | `s3` |
+| `KNOWLEDGE_S3_BUCKET` / `KNOWLEDGE_S3_ENDPOINT_URL` / `KNOWLEDGE_S3_REGION` | S3 或 MinIO 知识库原文存储配置 | `promptchain-knowledge` |
+| `KNOWLEDGE_S3_ACCESS_KEY_ID` / `KNOWLEDGE_S3_SECRET_ACCESS_KEY` | S3 或 MinIO 访问凭据，生产必须显式设置 | `...` |
+| `KNOWLEDGE_EMBEDDING_PROVIDER` | 知识库 Embedding 提供方，仅支持 `hash` 或 `openai` | `openai` |
+| `KNOWLEDGE_EMBEDDING_MODEL` | Embedding 模型名；OpenAI 生产建议使用真实 embedding 模型 | `text-embedding-3-small` |
+| `KNOWLEDGE_EMBEDDING_FALLBACK_TO_HASH` | OpenAI Embedding 失败时是否回退本地 hash，生产建议按隐私和质量要求显式决定 | `false` |
+| `KNOWLEDGE_ALLOW_EXTERNAL_EMBEDDING_FOR_PRIVATE_SCOPES` | 是否允许个人库和本次运行资料调用外部 Embedding；默认关闭 | `false` |
+| `KNOWLEDGE_INDEX_WORKER_ENABLED` | 是否启动进程内知识库索引 worker | `true` |
+| `KNOWLEDGE_INDEX_WORKER_BATCH_SIZE` | 单轮领取待索引文档数量 | `5` |
+| `KNOWLEDGE_INDEX_WORKER_STALE_SECONDS` | processing 文档超过该秒数后可被重新领取 | `900` |
+| `KNOWLEDGE_INDEX_QUEUE_BACKEND` | 知识库索引队列后端，支持 `database` / `redis`；生产 Compose 默认 `redis` | `redis` |
+| `KNOWLEDGE_INDEX_QUEUE_REDIS_STREAM` / `KNOWLEDGE_INDEX_QUEUE_REDIS_GROUP` | Redis Streams 队列名和 consumer group | `promptchain:knowledge-index` |
+| `KNOWLEDGE_GENERATION_EVAL_PROVIDER` | 生成忠实性评测 provider，支持 `heuristic` / `llm` / `ragas` | `heuristic` |
+| `KNOWLEDGE_GENERATION_EVAL_ALLOW_EXTERNAL_JUDGE` | 是否允许 LLM/Ragas judge 外发问题、回答和证据上下文 | `false` |
+| `KNOWLEDGE_RAGAS_MODEL` | Ragas Faithfulness 使用的 judge 模型 | `gpt-4o-mini` |
+| `BACKEND_EXTRAS` | 后端镜像构建时安装的可选依赖 extra；启用 Ragas provider 时设为 `eval` | `eval` |
+
+## 知识库 / RAG 生产说明
+
+- PostgreSQL 镜像必须支持 pgvector；Compose 示例使用 `pgvector/pgvector:pg16`，Alembic 迁移会创建 `vector` 扩展、知识库表和 HNSW 向量索引。
+- 普通知识库上传后先写入文档记录和原文文件，再由后台 worker 索引；请求线程不再同步解析、切分和 Embedding。
+- 当前 worker 可通过 `KNOWLEDGE_INDEX_QUEUE_BACKEND=redis` 使用 Redis Streams 作为独立索引队列；生产 Compose 已拆出 `knowledge-worker` 容器作为独立消费进程，多实例 worker 使用 consumer group 读取任务，处理后 ACK。
+- 生产 Compose 默认关闭 API 容器内置索引 worker，并由 `knowledge-worker` 消费队列；本地开发可继续使用 FastAPI lifespan 中的进程内 worker。
+- 数据库仍保留 `database` 后端作为本地开发和 Redis 异常回退。PostgreSQL 下领取任务时会先把文档 claim 为 `processing`，并使用 `FOR UPDATE SKIP LOCKED` 降低多实例重复索引风险；`KNOWLEDGE_INDEX_WORKER_STALE_SECONDS` 用于回收异常退出后卡住的 processing 文档。
+- 生产 Compose 示例默认使用 S3 兼容对象存储，并内置 MinIO 初始化 bucket；多实例部署时应使用共享对象存储，避免 worker 读不到其他实例写入的原文。
+- 生成忠实性评测默认使用本地 heuristic provider。若切换到 `llm` 或 `ragas`，必须显式开启 `KNOWLEDGE_GENERATION_EVAL_ALLOW_EXTERNAL_JUDGE=true`，并完成个人资料外发授权、脱敏和审计策略。Ragas provider 使用可选依赖，生产 Compose 可通过 `BACKEND_EXTRAS=eval` 构建包含 Ragas 的后端镜像。
+- `/api/knowledge/evaluate` 评估检索 hit rate / MRR / Precision@k；`/api/knowledge/evaluate/generation-faithfulness` 评估回答是否被证据支持；评测运行会持久化到 `kb_retrieval_evaluation_runs`。
 
 ## 本地验证步骤
 
@@ -117,6 +152,17 @@ npm run build
 # Compose 配置检查
 cd ..
 docker compose -f docker-compose.prod.yml config
+
+# 迁移流水线检查
+cd backend
+uv run alembic heads
+uv run alembic upgrade head
+uv run alembic downgrade -1
+uv run alembic upgrade head
+
+# 端到端浏览器冒烟；会启动本地 Next.js dev server
+cd ../frontend
+npm run test:e2e
 ```
 
 如需完整容器烟测：
@@ -131,9 +177,9 @@ docker compose -f docker-compose.prod.yml down
 ## 当前未覆盖验证
 
 - 未配置镜像仓库推送、镜像签名或 SBOM。
-- 未配置生产环境数据库迁移流水线。
+- PR CI 已配置 Alembic 生产迁移流水线检查，覆盖 `heads`、`upgrade head`、`downgrade -1`、再次 `upgrade head`；真实生产发布仍需要在部署系统中接入审批 gate 和备份策略。
 - 未配置 Kubernetes、Ingress、证书自动签发或弹性伸缩。
-- 未配置端到端浏览器测试。
+- 已配置 Playwright 浏览器冒烟测试入口，当前覆盖登录页可用性；更多生产关键路径仍需继续扩展。
 - 完整四服务容器烟测已执行到镜像构建阶段，后端镜像可通过 `uv sync --frozen` 完成冻结安装；当前仍被既有前端 TypeScript 错误阻塞，尚未进入前端 healthcheck 阶段。已补充执行 `postgres` / `redis` / `backend` 服务级烟测，后端 `/` 健康检查通过。
 - 未覆盖真实 SMTP 与真实 LLM Provider 的生产连通性验证。
 - 未覆盖多实例部署下的 WebSocket 粘性会话和反向代理策略。

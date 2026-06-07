@@ -128,19 +128,63 @@ def _format_evidence_context(state: dict, *, max_chunks: int = 10) -> str:
             return f"未检索到足够证据；需标记未验证点：{', '.join(map(str, unverified))}"
         return "未启用知识库或未检索到可用证据。"
 
-    lines: list[str] = []
+    lines: list[str] = ["使用规则：workspace scope 为权威事实源；personal scope 仅作补充。"]
     for index, chunk in enumerate(chunks[:max_chunks], start=1):
         document_name = getattr(chunk, "document_name", None)
         content = getattr(chunk, "content", None)
         score = getattr(chunk, "score", None)
+        scope = getattr(chunk, "scope", None)
         if isinstance(chunk, dict):
             document_name = chunk.get("document_name")
             content = chunk.get("content")
             score = chunk.get("score")
+            scope = chunk.get("scope")
         if not content:
             continue
-        lines.append(f"[{index}] 来源：{document_name or '未知文档'}；分数：{score}\n{content}")
+        scope_value = getattr(scope, "value", scope) or "unknown"
+        lines.append(
+            f"[{index}] scope={scope_value}；来源：{document_name or '未知文档'}；分数：{score}\n{content}"
+        )
     return "\n\n".join(lines) if lines else "未启用知识库或未检索到可用证据。"
+
+
+def _extract_evidence_parts(state: dict) -> tuple[list, list, list]:
+    """从 state 中提取证据片段、冲突和未验证点，兼容 Pydantic 与 dict。"""
+    evidence_pack = state.get("evidence_pack")
+    if not evidence_pack:
+        return [], [], []
+
+    chunks = getattr(evidence_pack, "chunks", None)
+    conflicts = getattr(evidence_pack, "conflicts", None)
+    unverified_points = getattr(evidence_pack, "unverified_points", None)
+    if isinstance(evidence_pack, dict):
+        chunks = evidence_pack.get("chunks")
+        conflicts = evidence_pack.get("conflicts")
+        unverified_points = evidence_pack.get("unverified_points")
+    return list(chunks or []), list(conflicts or []), list(unverified_points or [])
+
+
+def _apply_evidence_status(result: VerificationResult, state: dict) -> None:
+    """把 Evidence Artifact 的证据状态写回事实核查结果。"""
+    chunks, conflicts, unverified_points = _extract_evidence_parts(state)
+    if conflicts:
+        result.evidence_status = "conflicting"
+        result.is_verified = False
+        result.risk_level = "high"
+        result.source = result.source or "Evidence Artifact"
+        return
+
+    if not chunks or unverified_points:
+        result.evidence_status = "unsupported"
+        result.is_verified = False
+        result.risk_level = "high"
+        result.source = result.source or "Evidence Artifact"
+        return
+
+    result.evidence_status = "supported" if result.is_verified else "unsupported"
+    result.source = result.source or "Evidence Artifact"
+    if not result.is_verified and result.risk_level == "low":
+        result.risk_level = "medium"
 
 
 def _mark_result_resolved(result: VerificationResult) -> None:
@@ -189,6 +233,8 @@ def _build_final_content_payload(
         "refinement_history": state.get("refinement_history", []),
         "fact_corrections": corrections,
         "fact_check_artifact_id": fact_check_artifact_id,
+        "citations": state.get("citations", []),
+        "evidence_artifact_id": state.get("evidence_artifact_id"),
     }
 
 
@@ -308,6 +354,7 @@ async def check_facts(state: dict) -> dict:
                     model_provider_name,
                     model_name,
                 )
+                _apply_evidence_status(result, state)
                 end_time = utc_now_naive()
 
                 all_results.append(result)

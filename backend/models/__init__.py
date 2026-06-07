@@ -95,6 +95,7 @@ from .knowledge import (
     KnowledgeScope,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
+    KnowledgeUsageStats,
     RetrievalConfig,
     RetrievalMode,
 )
@@ -156,6 +157,7 @@ __all__ = [
     "KnowledgeChunk",
     "KnowledgeSearchRequest",
     "KnowledgeSearchResponse",
+    "KnowledgeUsageStats",
     "RetrievalConfig",
     # fact_check
     "FactClaim",

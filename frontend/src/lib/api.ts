@@ -323,10 +323,14 @@ export interface FactClaim {
   section_id: string;
 }
 
+export type EvidenceStatus = 'supported' | 'unsupported' | 'conflicting' | 'not_checked';
+
 export interface VerificationResult {
   claim_id: string;
   is_verified: boolean;
   confidence: number;
+  evidence_status?: EvidenceStatus;
+  source?: string | null;
   risk_level: 'low' | 'medium' | 'high';
   suggested_correction: string | null;
   verification_question: string;
@@ -338,6 +342,7 @@ export interface FactCheckReport {
   results: VerificationResult[];
   total_claims: number;
   verified_count: number;
+  unverified_count?: number;
   high_risk_count: number;
 }
 
@@ -361,6 +366,7 @@ export interface EvidenceChunk {
   rerank_score?: number | null;
   content: string;
   metadata: Record<string, unknown>;
+  redacted?: boolean;
 }
 
 export interface EvidencePack {
@@ -422,6 +428,7 @@ export interface KnowledgeDocument {
   parse_status: KnowledgeDocumentStatus;
   index_status: KnowledgeDocumentStatus;
   error_message?: string | null;
+  metadata: Record<string, unknown>;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -442,6 +449,62 @@ export interface KnowledgeSearchRequest {
   enable_conflict_detection?: boolean;
   workflow_run_id?: string | null;
   node_run_id?: string | null;
+}
+
+export interface RetrievalEvaluationCase {
+  id?: string | null;
+  query: string;
+  expected_document_ids: string[];
+  expected_chunk_ids: string[];
+}
+
+export interface RetrievalEvaluationRequest {
+  cases: RetrievalEvaluationCase[];
+  scopes: KnowledgeScope[];
+  top_k?: number;
+  min_score?: number;
+  mode?: RetrievalMode;
+  filters?: Record<string, unknown>;
+  enable_query_rewrite?: boolean;
+  enable_multi_query?: boolean;
+  enable_rerank?: boolean;
+  enable_context_compression?: boolean;
+  enable_conflict_detection?: boolean;
+}
+
+export interface RetrievalEvaluationResponse {
+  summary: {
+    total_cases: number;
+    hit_count: number;
+    hit_rate: number;
+    mean_reciprocal_rank: number;
+    mean_precision_at_k: number;
+    empty_expected_count: number;
+  };
+  results: Array<{
+    case_id?: string | null;
+    query: string;
+    expected_document_ids: string[];
+    expected_chunk_ids: string[];
+    retrieved_document_ids: string[];
+    retrieved_chunk_ids: string[];
+    hit: boolean;
+    first_relevant_rank?: number | null;
+    reciprocal_rank: number;
+    precision_at_k: number;
+  }>;
+}
+
+export interface KnowledgeUsageStats {
+  workspace_id: string;
+  total_searches: number;
+  total_chunks_returned: number;
+  average_chunks_per_search: number;
+  conflict_search_count: number;
+  unverified_search_count: number;
+  last_search_at?: string | null;
+  scope_counts: Record<string, number>;
+  mode_counts: Record<string, number>;
 }
 
 export interface WorkflowTrace {
@@ -1408,6 +1471,14 @@ export const knowledgeApi = {
         body: JSON.stringify(body),
       }
     ),
+
+  evaluate: (body: RetrievalEvaluationRequest) =>
+    request<RetrievalEvaluationResponse>('/knowledge/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  stats: () => request<KnowledgeUsageStats>('/knowledge/stats'),
 };
 
 // Artifact API

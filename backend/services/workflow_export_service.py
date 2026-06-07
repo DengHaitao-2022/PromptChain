@@ -27,6 +27,7 @@ class WorkflowExportPayload:
     title: str
     abstract: str
     sections: list[ExportSection]
+    citations: list[dict[str, Any]]
     raw: dict[str, Any] | list[Any] | str | None
 
 
@@ -306,6 +307,48 @@ def _build_sections_from_section_artifacts(
     return sorted(sections, key=sort_key)
 
 
+def _extract_citations(raw: Any, graph_state: dict[str, Any]) -> list[dict[str, Any]]:
+    """从最终产物或图状态中提取结构化引用来源。"""
+    candidates: Any = None
+    if _is_record(raw):
+        candidates = raw.get("citations")
+    if not isinstance(candidates, list):
+        candidates = graph_state.get("citations")
+    if not isinstance(candidates, list):
+        return []
+
+    citations: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in candidates:
+        if not _is_record(item):
+            continue
+        chunk_id = item.get("chunk_id")
+        document_id = item.get("document_id")
+        document_name = item.get("document_name")
+        if not isinstance(document_name, str) or not document_name.strip():
+            continue
+        key = (str(chunk_id or ""), str(document_id or document_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        citations.append(
+            {
+                "chunk_id": chunk_id if isinstance(chunk_id, str) else None,
+                "document_id": document_id if isinstance(document_id, str) else None,
+                "document_name": document_name.strip(),
+                "scope": item.get("scope") if isinstance(item.get("scope"), str) else None,
+                "score": item.get("score") if isinstance(item.get("score"), (int, float)) else None,
+                "page_number": item.get("page_number")
+                if isinstance(item.get("page_number"), int)
+                else None,
+                "heading_path": item.get("heading_path")
+                if isinstance(item.get("heading_path"), list)
+                else [],
+            }
+        )
+    return citations
+
+
 def build_workflow_export_payload(
     graph_state: dict[str, Any] | None,
     trace: dict[str, Any] | None,
@@ -345,8 +388,31 @@ def build_workflow_export_payload(
         title=title,
         abstract=abstract,
         sections=sections,
+        citations=_extract_citations(raw, state),
         raw=raw,
     )
+
+
+def _format_citation_label(citation: dict[str, Any], index: int) -> str:
+    document_name = citation.get("document_name") or f"来源 {index}"
+    details: list[str] = []
+    scope = citation.get("scope")
+    if isinstance(scope, str) and scope:
+        details.append(scope)
+    page_number = citation.get("page_number")
+    if isinstance(page_number, int):
+        details.append(f"第 {page_number} 页")
+    heading_path = citation.get("heading_path")
+    if isinstance(heading_path, list):
+        heading = " / ".join(str(item) for item in heading_path if item)
+        if heading:
+            details.append(heading)
+    score = citation.get("score")
+    if isinstance(score, (int, float)):
+        details.append(f"score={score:.3f}")
+
+    suffix = f"（{'；'.join(details)}）" if details else ""
+    return f"[{index}] {document_name}{suffix}"
 
 
 def build_markdown(payload: WorkflowExportPayload) -> str:
@@ -358,6 +424,13 @@ def build_markdown(payload: WorkflowExportPayload) -> str:
 
     for index, section in enumerate(payload.sections, start=1):
         blocks.append(f"## {index}. {section.title}\n\n{section.content.strip()}")
+
+    if payload.citations:
+        citation_lines = [
+            _format_citation_label(citation, index)
+            for index, citation in enumerate(payload.citations, start=1)
+        ]
+        blocks.append("## 参考来源\n\n" + "\n".join(f"- {line}" for line in citation_lines))
 
     return "\n\n".join(blocks).strip() + "\n"
 
@@ -445,6 +518,11 @@ def build_docx(payload: WorkflowExportPayload) -> BytesIO:
     for index, section in enumerate(payload.sections, start=1):
         document.add_heading(f"{index}. {section.title}", level=1)
         add_markdown_like_content(document, section.content)
+
+    if payload.citations:
+        document.add_heading("参考来源", level=1)
+        for index, citation in enumerate(payload.citations, start=1):
+            document.add_paragraph(_format_citation_label(citation, index), style="List Bullet")
 
     buffer = BytesIO()
     document.save(buffer)

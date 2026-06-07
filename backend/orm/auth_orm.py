@@ -58,7 +58,7 @@ class WorkspaceORM(Base):
     secrets = relationship("SecretORM", back_populates="workspace", lazy="dynamic")
     api_keys = relationship("ApiKeyORM", back_populates="workspace", lazy="dynamic")
     audit_logs = relationship("AuditLogORM", back_populates="workspace", lazy="dynamic")
-    knowledge_bases = relationship("KnowledgeBaseORM", lazy="dynamic")
+    # 知识库服务按 workspace_id 查询，避免认证 ORM 反向依赖知识库模块注册顺序。
 
 
 class MembershipORM(Base):

@@ -41,6 +41,8 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
+test-results/
+playwright-report/
 
 # 数据库
 *.db

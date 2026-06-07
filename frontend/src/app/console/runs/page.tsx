@@ -160,7 +160,7 @@ export default function RunsPage() {
             <span className={styles.eyebrow}>运行总览</span>
             <h1 className={styles.title}>把每一次生成放进可值守的监控面板</h1>
             <p className={styles.description}>
-              运行记录页会收拢工作流执行、当前节点、异常状态和回看入口。当前先完成页面视觉与状态层，等待列表接口接入真实数据。
+              运行记录页会收拢工作流执行、当前节点、异常状态和回看入口。
             </p>
 
             <div className={styles.heroActions}>

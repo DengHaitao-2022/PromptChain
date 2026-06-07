@@ -356,6 +356,19 @@
   color: var(--console-accent);
 }
 
+.documentName span {
+  min-width: 0;
+}
+
+.documentError {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-danger, #ef4444);
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 .rowActions {
   display: flex;
   flex-wrap: wrap;

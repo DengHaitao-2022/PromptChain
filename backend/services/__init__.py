@@ -23,6 +23,7 @@ from .autonomous_agent_worker import (
     dispose_agent_worker_queue,
     get_agent_worker_queue,
 )
+from .knowledge_index_queue import dispose_knowledge_index_queue, get_knowledge_index_queue
 from .llm_errors import (
     format_workflow_error,
     is_llm_rate_limit_error,
@@ -111,6 +112,8 @@ __all__ = [
     "ensure_usage_metadata",
     "estimate_tokens",
     "invoke_structured_with_usage",
+    "dispose_knowledge_index_queue",
+    "get_knowledge_index_queue",
     # rerun_service
     "RerunService",
     "get_rerun_service",
