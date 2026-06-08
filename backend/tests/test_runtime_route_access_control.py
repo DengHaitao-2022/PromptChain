@@ -130,6 +130,8 @@ class _FakeStore:
             "art-123": _FakeArtifact("art-123", "wf-123"),
             "art-foreign": _FakeArtifact("art-foreign", "wf-foreign"),
         }
+        self.rerun_prepare_calls = []
+        self.rerun_workflow_calls = []
 
     async def get_workflow_run(self, workflow_run_id: str):
         return self.workflow_runs.get(workflow_run_id)
@@ -194,6 +196,13 @@ class _FakeRerunService:
     async def prepare_rerun_state(
         self, workflow_run_id: str, from_node: str, updated_input: dict | None = None
     ):
+        self.store.rerun_prepare_calls.append(
+            {
+                "workflow_run_id": workflow_run_id,
+                "from_node": from_node,
+                "updated_input": updated_input,
+            }
+        )
         return updated_input or {}
 
     async def create_rerun_workflow(
@@ -203,6 +212,14 @@ class _FakeRerunService:
         reason: str = "",
         updated_user_input: str | None = None,
     ):
+        self.store.rerun_workflow_calls.append(
+            {
+                "workflow_run_id": workflow_run_id,
+                "from_node": from_node,
+                "reason": reason,
+                "updated_user_input": updated_user_input,
+            }
+        )
         return self.store.workflow_runs["wf-rerun"]
 
     async def get_rerun_history(self, workflow_run_id: str):
@@ -257,6 +274,14 @@ class _FakeWorkflow:
         from_node: str,
         preserved_state: dict,
     ):
+        self.store.rerun_workflow_calls.append(
+            {
+                "workflow_run_id": workflow_run_id,
+                "from_node": from_node,
+                "preserved_state": preserved_state,
+                "runtime": "workflow",
+            }
+        )
         return {
             "workflow_run_id": workflow_run_id,
             "status": "running",
@@ -518,3 +543,24 @@ def test_rerun_persists_runtime_ownership(monkeypatch):
     assert response.status_code == 200
     assert store.workflow_runs["wf-rerun"].metadata["user_id"] == "user-1"
     assert store.workflow_runs["wf-rerun"].metadata["workspace_id"] == "ws-1"
+
+
+def test_novel_semantic_rerun_node_maps_to_runtime_node(monkeypatch):
+    store = _install_runtime_fakes(monkeypatch)
+    store.workflow_runs["wf-123"].metadata["scenario_code"] = "novel_writing"
+    monkeypatch.setattr(
+        workflow_helpers,
+        "require_workspace_permission",
+        _allow_workspace_permission,
+        raising=False,
+    )
+    client = _make_client(user_id="user-1", workspace_id="ws-1")
+
+    response = client.post("/api/workflow/wf-123/rerun", json={"from_node": "plan_scene"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rerun_from_node"] == "plan_scene"
+    assert body["runtime_from_node"] == "generate_outline"
+    assert store.rerun_prepare_calls[-1]["from_node"] == "generate_outline"
+    assert store.rerun_workflow_calls[-1]["from_node"] == "generate_outline"

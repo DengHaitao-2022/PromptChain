@@ -28,6 +28,7 @@ from models.knowledge import (
     KnowledgeSearchRequest,
     RetrievalEvaluationCase,
     RetrievalEvaluationRequest,
+    RetrievalMode,
 )
 from orm.knowledge_orm import (
     KnowledgeBaseORM,
@@ -466,6 +467,65 @@ def test_run_upload_documents_are_scoped_to_workflow_run(run_with_knowledge_sess
         assert [chunk.document_id for chunk in current_run_search.evidence_pack.chunks] == [
             document.id
         ]
+
+    run_with_knowledge_session(scenario)
+
+
+def test_project_filters_do_not_exclude_current_run_upload_documents(run_with_knowledge_session):
+    async def scenario(knowledge_session):
+        service = KnowledgeService(knowledge_session)
+        workspace_kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            name="项目记忆",
+            description=None,
+            scope=KnowledgeScope.WORKSPACE,
+        )
+        await service.add_document(
+            kb_id=workspace_kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.OWNER,
+            file_name="project-memory.md",
+            content=b"project filtered memory mentions fog tower",
+            metadata={"project_id": "project-1", "asset_id": "asset-1"},
+        )
+        run_upload_kb = await service.create_knowledge_base(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.VIEWER,
+            name="本次运行资料",
+            description=None,
+            scope=KnowledgeScope.RUN_UPLOAD,
+            workflow_run_id="run-1",
+        )
+        run_document = await service.add_document(
+            kb_id=run_upload_kb.id,
+            workspace_id="ws-1",
+            user_id="user-owner",
+            role=MemberRole.VIEWER,
+            file_name="run-brief.md",
+            content=b"temporary upload evidence mentions fog tower",
+            metadata={"source": "run_upload"},
+        )
+
+        search = await service.search(
+            request=KnowledgeSearchRequest(
+                query="fog tower evidence",
+                scopes=[KnowledgeScope.WORKSPACE, KnowledgeScope.RUN_UPLOAD],
+                top_k=10,
+                min_score=0.0,
+                mode=RetrievalMode.KEYWORD,
+                filters={"project_id": "project-1", "asset_id": "asset-1"},
+                workflow_run_id="run-1",
+            ),
+            workspace_id="ws-1",
+            user_id="user-owner",
+        )
+
+        document_ids = [chunk.document_id for chunk in search.evidence_pack.chunks]
+        assert run_document.id in document_ids
 
     run_with_knowledge_session(scenario)
 

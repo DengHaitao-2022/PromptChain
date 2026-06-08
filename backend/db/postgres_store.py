@@ -699,6 +699,7 @@ class PostgresArtifactStore:
             "orm.knowledge_orm",
             "orm.tool_orm",
             "orm.autonomous_agent_orm",
+            "orm.scenario_orm",
         ):
             importlib.import_module(module_name)
 

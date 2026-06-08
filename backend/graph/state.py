@@ -31,6 +31,14 @@ class GraphState(TypedDict, total=False):
     pause_reason: str | None
     rerun_from_node: str | None
     rerun_instruction: str | None
+    scenario_code: str | None
+    project_id: str | None
+    edit_mode: str | None
+    generation_mode: str | None
+    target_asset_id: str | None
+    project_memory_context: dict[str, Any] | None
+    scenario_check_report: dict[str, Any] | None
+    project_memory_update_candidates: list[dict[str, Any]]
 
     # 意图解析
     intent_card: IntentCard | None

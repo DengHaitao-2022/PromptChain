@@ -735,6 +735,11 @@ export interface StartWorkflowOptions {
   modelName?: string;
   retrievalConfig?: RetrievalConfig;
   runUploadFiles?: File[];
+  scenarioCode?: string;
+  projectId?: string;
+  editMode?: string;
+  generationMode?: string;
+  targetAssetId?: string;
 }
 
 export interface WorkflowRunSummary {
@@ -743,9 +748,124 @@ export interface WorkflowRunSummary {
   status: WorkflowStatus | string;
   current_node: string | null;
   user_input: string;
+  runtime_plan?: Record<string, unknown> | null;
+  runtime_progress?: Record<string, unknown> | null;
+  quality_metrics?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
   started_at: string;
   completed_at: string | null;
   total_duration_ms: number | null;
+}
+
+export type ScenarioTemplateStatus = 'active' | 'disabled' | 'archived';
+export type ContentProjectStatus = 'active' | 'archived';
+export type ProjectAssetEmbeddingStatus = 'skipped' | 'pending' | 'processing' | 'ready' | 'failed';
+
+export interface ScenarioTemplate {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  description?: string | null;
+  schema_version: number;
+  input_schema: Record<string, unknown>;
+  ui_schema: {
+    fields?: ScenarioFormField[];
+    [key: string]: unknown;
+  };
+  artifact_schema: {
+    asset_types?: string[];
+    [key: string]: unknown;
+  };
+  default_workflow_definition_id?: string | null;
+  default_workflow_version_id?: string | null;
+  default_generation_modes: ScenarioGenerationMode[];
+  checker_rules: Record<string, unknown>;
+  config: Record<string, unknown>;
+  status: ScenarioTemplateStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScenarioFormField {
+  name: string;
+  label: string;
+  type?: 'text' | 'textarea' | 'number' | 'select';
+  required?: boolean;
+  placeholder?: string;
+  options?: Array<{ label: string; value: string }>;
+}
+
+export interface ScenarioGenerationMode {
+  code: string;
+  name: string;
+  description?: string;
+}
+
+export interface ContentProject {
+  id: string;
+  workspace_id: string;
+  scenario_code: string;
+  title: string;
+  description?: string | null;
+  status: ContentProjectStatus;
+  config: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectAsset {
+  id: string;
+  project_id: string;
+  asset_type: string;
+  title: string;
+  content: unknown;
+  version: number;
+  source_artifact_id?: string | null;
+  metadata: Record<string, unknown>;
+  embedding_status: ProjectAssetEmbeddingStatus;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectAssetVersion {
+  id: string;
+  asset_id: string;
+  version: number;
+  content: unknown;
+  source_artifact_id?: string | null;
+  metadata: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+}
+
+export interface CreateContentProjectRequest {
+  scenario_code: string;
+  title: string;
+  description?: string | null;
+  config?: Record<string, unknown>;
+}
+
+export interface CreateProjectAssetRequest {
+  asset_type: string;
+  title: string;
+  content: unknown;
+  source_artifact_id?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface StartProjectRunRequest {
+  user_input: string;
+  edit_mode?: string | null;
+  generation_mode?: string | null;
+  target_asset_id?: string | null;
+  workflow_definition_id?: string | null;
+  workflow_version_id?: string | null;
+  model_provider_id?: string | null;
+  model_name?: string | null;
+  retrieval_config?: RetrievalConfig | null;
 }
 
 export interface RerunOption {
@@ -1149,6 +1269,22 @@ export const workflowApi = {
       if (options.retrievalConfig) {
         formData.append('retrieval_config', JSON.stringify(options.retrievalConfig));
       }
+      // multipart 启动同样保留场景项目上下文，保证带上传资料的运行仍可追踪到项目资产。
+      if (options.scenarioCode) {
+        formData.append('scenario_code', options.scenarioCode);
+      }
+      if (options.projectId) {
+        formData.append('project_id', options.projectId);
+      }
+      if (options.editMode) {
+        formData.append('edit_mode', options.editMode);
+      }
+      if (options.generationMode) {
+        formData.append('generation_mode', options.generationMode);
+      }
+      if (options.targetAssetId) {
+        formData.append('target_asset_id', options.targetAssetId);
+      }
       for (const file of options.runUploadFiles) {
         formData.append('files', file);
       }
@@ -1174,6 +1310,11 @@ export const workflowApi = {
         model_provider_id: options.modelProviderId,
         model_name: options.modelName,
         retrieval_config: options.retrievalConfig,
+        scenario_code: options.scenarioCode,
+        project_id: options.projectId,
+        edit_mode: options.editMode,
+        generation_mode: options.generationMode,
+        target_asset_id: options.targetAssetId,
       }),
     });
   },
@@ -1377,6 +1518,100 @@ export const workflowApi = {
 
   exportDocx: (workflowRunId: string) =>
     requestBlob(`/workflow/${workflowRunId}/exports/docx`),
+};
+
+// MVP3 场景工作台 API
+export const scenarioApi = {
+  listScenarios: () => request<{ scenarios: ScenarioTemplate[] }>('/scenarios'),
+  getScenario: (scenarioCode: string) =>
+    request<ScenarioTemplate>(`/scenarios/${scenarioCode}`),
+  createProject: (body: CreateContentProjectRequest) =>
+    request<ContentProject>('/content-projects', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  listProjects: (query: { scenarioCode?: string; status?: ContentProjectStatus } = {}) => {
+    const params = new URLSearchParams();
+    if (query.scenarioCode) {
+      params.set('scenario_code', query.scenarioCode);
+    }
+    if (query.status) {
+      params.set('status', query.status);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    return request<{ projects: ContentProject[] }>(`/content-projects${suffix}`);
+  },
+  getProject: (projectId: string) =>
+    request<ContentProject>(`/content-projects/${projectId}`),
+  updateProject: (
+    projectId: string,
+    body: {
+      title?: string;
+      description?: string | null;
+      status?: ContentProjectStatus;
+      config?: Record<string, unknown>;
+    }
+  ) =>
+    request<ContentProject>(`/content-projects/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  listAssets: (projectId: string, assetType?: string) => {
+    const suffix = assetType ? `?asset_type=${encodeURIComponent(assetType)}` : '';
+    return request<{ assets: ProjectAsset[] }>(
+      `/content-projects/${projectId}/assets${suffix}`
+    );
+  },
+  createAsset: (projectId: string, body: CreateProjectAssetRequest) =>
+    request<ProjectAsset>(`/content-projects/${projectId}/assets`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  getAsset: (assetId: string) => request<ProjectAsset>(`/project-assets/${assetId}`),
+  updateAsset: (
+    assetId: string,
+    body: {
+      title?: string;
+      content?: unknown;
+      source_artifact_id?: string | null;
+      metadata?: Record<string, unknown>;
+      embedding_status?: ProjectAssetEmbeddingStatus;
+    }
+  ) =>
+    request<ProjectAsset>(`/project-assets/${assetId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  listAssetVersions: (assetId: string) =>
+    request<{ versions: ProjectAssetVersion[] }>(`/project-assets/${assetId}/versions`),
+  restoreAsset: (assetId: string, version: number) =>
+    request<ProjectAsset>(`/project-assets/${assetId}/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    }),
+  syncAssetToKnowledge: (assetId: string) =>
+    request<ProjectAsset>(`/project-assets/${assetId}/sync-knowledge`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  startProjectRun: (projectId: string, body: StartProjectRunRequest) =>
+    request<WorkflowResponse>(`/content-projects/${projectId}/runs`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  listProjectRuns: (projectId: string) =>
+    request<{ runs: WorkflowRunSummary[] }>(`/content-projects/${projectId}/runs`),
+  applyMemoryUpdates: (
+    projectId: string,
+    body: { workflow_run_id: string; candidate_indexes?: number[]; sync_to_knowledge?: boolean }
+  ) =>
+    request<{ assets: ProjectAsset[] }>(
+      `/content-projects/${projectId}/memory-updates/apply`,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }
+    ),
 };
 
 // Autonomous Agent API

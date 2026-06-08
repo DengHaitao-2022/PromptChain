@@ -20,6 +20,7 @@ from models import (
     NodeRunStatus,
     Outline,
 )
+from nodes.scenario_context import format_project_memory_context
 from services import (
     build_structured_chain_for_workspace,
     ensure_usage_metadata,
@@ -43,6 +44,9 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 ## 可用证据
 {evidence_context}
 
+## 项目记忆
+{project_memory_context}
+
 ## 要求
 1. 提纲应包含3-7个主要章节
 2. 每个章节应有明确的目标和字数分配
@@ -51,6 +55,7 @@ OUTLINE_GENERATION_PROMPT = """基于以下意图卡，生成一份结构清晰�
 5. 避免"禁止内容"中的项目
 6. 总字数分配应接近目标字数
 7. 如果存在可用证据，优先围绕证据组织章节；证据不足的主题不要虚构来源
+8. 如果存在项目记忆，必须延续 Story Bible、人物卡、世界观、时间线、品牌或产品知识等长期约束
 
 ## 输出格式
 请生成完整的提纲结构，包括：
@@ -200,6 +205,7 @@ async def generate_outline(state: dict) -> dict:
                     "must_include": ", ".join(intent_card.must_include) or "无特殊要求",
                     "must_exclude": ", ".join(intent_card.must_exclude) or "无",
                     "evidence_context": _format_evidence_context(state),
+                    "project_memory_context": format_project_memory_context(state),
                 },
             )
         )

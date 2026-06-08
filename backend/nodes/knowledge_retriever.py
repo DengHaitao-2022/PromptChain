@@ -38,6 +38,18 @@ def _restore_retrieval_config(state: dict) -> RetrievalConfig:
         return RetrievalConfig()
 
 
+def _build_project_memory_filters(state: dict) -> dict:
+    """项目运行默认限定到当前项目记忆，避免跨项目资产串线。"""
+    project_id = state.get("project_id")
+    if not project_id:
+        return {}
+    filters = {"project_id": project_id}
+    target_asset_id = state.get("target_asset_id")
+    if target_asset_id:
+        filters["asset_id"] = target_asset_id
+    return filters
+
+
 def _empty_evidence_pack(state: dict, retrieval_config: RetrievalConfig) -> EvidencePack:
     """构造跳过态证据包，保证详情页和后续节点有稳定的检索结果结构。"""
     query = _build_retrieval_query(state) or str(state.get("user_input") or "").strip()
@@ -104,6 +116,7 @@ async def retrieve_knowledge(state: dict) -> dict:
                         top_k=retrieval_config.top_k,
                         min_score=retrieval_config.min_score,
                         mode=retrieval_config.mode,
+                        filters=_build_project_memory_filters(state),
                         enable_query_rewrite=retrieval_config.enable_query_rewrite,
                         enable_multi_query=retrieval_config.enable_multi_query,
                         enable_rerank=retrieval_config.enable_rerank,
