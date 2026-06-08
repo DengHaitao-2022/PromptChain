@@ -325,10 +325,12 @@ class AutonomousPlanner:
         nodes = [node.model_copy(deep=True) for node in previous_plan.plan_graph.nodes]
         edges = [edge.model_copy(deep=True) for edge in previous_plan.plan_graph.edges]
         repair_node_id = f"repair_{next_version}_{failed_node_id}"
+        recheck_node_id = f"recheck_{next_version}_{failed_node_id}"
         evaluate_node_id = f"evaluate_repair_{next_version}_{failed_node_id}"
         repair_strategy = self._repair_strategy(reflection)
         repair_step_type = repair_strategy["step_type"]
         repair_tool_name = repair_strategy.get("tool_name")
+        follow_up = repair_strategy.get("follow_up")
 
         # 将失败节点的直接下游改为等待修复复评，避免新计划绕过修复步骤继续执行。
         for node in nodes:
@@ -357,21 +359,41 @@ class AutonomousPlanner:
                 risk_level=ToolRiskLevel.LOW,
             )
         )
+        evaluation_dependency_id = repair_node_id
+        if isinstance(follow_up, dict):
+            nodes.append(
+                PlanNode(
+                    id=recheck_node_id,
+                    title=str(follow_up["title"]),
+                    step_type=follow_up["step_type"],
+                    description=str(follow_up["description"]),
+                    depends_on=[repair_node_id],
+                    tool_name=follow_up.get("tool_name"),
+                    input=follow_up.get("input", {}),
+                    expected_output=str(follow_up["expected_output"]),
+                    acceptance_criteria=follow_up["acceptance_criteria"],
+                    risk_level=ToolRiskLevel.LOW,
+                )
+            )
+            evaluation_dependency_id = recheck_node_id
         nodes.append(
             PlanNode(
                 id=evaluate_node_id,
                 title="复评修复结果",
                 step_type=AgentStepType.EVALUATION,
                 description="重新评估修复后的结果是否满足目标约束。",
-                depends_on=[repair_node_id],
+                depends_on=[evaluation_dependency_id],
                 expected_output="复评结果",
                 acceptance_criteria=["复评分数达到阈值", "无未关闭的高风险问题"],
             )
         )
+        repair_edges = [PlanEdge(source=failed_node_id, target=repair_node_id)]
+        if isinstance(follow_up, dict):
+            repair_edges.append(PlanEdge(source=repair_node_id, target=recheck_node_id))
+        repair_edges.append(PlanEdge(source=evaluation_dependency_id, target=evaluate_node_id))
         edges.extend(
             [
-                PlanEdge(source=failed_node_id, target=repair_node_id),
-                PlanEdge(source=repair_node_id, target=evaluate_node_id),
+                *repair_edges,
                 *[
                     PlanEdge(source=evaluate_node_id, target=node.id)
                     for node in nodes
@@ -417,14 +439,23 @@ class AutonomousPlanner:
             }
         if root_cause == "FACT_CHECK_FAILED":
             return {
-                "id": "fact_check_repair",
-                "title": "事实风险修复",
-                "step_type": AgentStepType.TOOL_CALL,
-                "tool_name": "fact_check",
-                "description": "基于补充证据重新执行事实核查，定位需改写的事实风险。",
-                "input": {"mode": "cove"},
-                "expected_output": "复核后的事实风险报告",
-                "acceptance_criteria": ["事实核查报告可审计", "高风险项数量下降或明确修正建议"],
+                "id": "rewrite_and_recheck_fact_risk",
+                "title": "改写事实风险内容",
+                "step_type": AgentStepType.GENERATION,
+                "tool_name": "write_artifact",
+                "description": "基于证据与核查意见改写不确定事实表述，生成新的待复核正文。",
+                "input": {"repair_reason": "fact_check_failed"},
+                "expected_output": "已改写并弱化高风险事实表述的内容草稿",
+                "acceptance_criteria": ["不确定事实已限定表述", "输出可供事实核查再次验证"],
+                "follow_up": {
+                    "title": "复核事实风险",
+                    "step_type": AgentStepType.TOOL_CALL,
+                    "tool_name": "fact_check",
+                    "description": "对改写后的正文重新执行 CoVe 事实核查。",
+                    "input": {"mode": "cove"},
+                    "expected_output": "复核后的事实风险报告",
+                    "acceptance_criteria": ["事实核查报告可审计", "无未关闭的高风险事实项"],
+                },
             }
         if root_cause == "LOW_GOAL_COVERAGE":
             return {

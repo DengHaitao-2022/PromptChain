@@ -352,10 +352,79 @@ def test_replanner_selects_repair_strategy_by_root_cause():
         repair_node = next(
             node for node in new_plan.plan_graph.nodes if node.id.startswith("repair_2_")
         )
+        recheck_node = next(
+            node for node in new_plan.plan_graph.nodes if node.id.startswith("recheck_2_")
+        )
+        evaluate_node = next(
+            node for node in new_plan.plan_graph.nodes if node.id.startswith("evaluate_repair_2_")
+        )
 
-        assert new_plan.metadata["repair_strategy"] == "fact_check_repair"
-        assert repair_node.tool_name == "fact_check"
-        assert repair_node.input["mode"] == "cove"
+        assert new_plan.metadata["repair_strategy"] == "rewrite_and_recheck_fact_risk"
+        assert repair_node.step_type == AgentStepType.GENERATION
+        assert repair_node.tool_name == "write_artifact"
+        assert recheck_node.tool_name == "fact_check"
+        assert recheck_node.depends_on == [repair_node.id]
+        assert recheck_node.input["mode"] == "cove"
+        assert evaluate_node.depends_on == [recheck_node.id]
+
+    asyncio.run(_with_runtime(_scenario))
+
+
+def test_fact_check_text_prefers_generated_content_over_previous_report():
+    async def _scenario(runtime, store, _):
+        run = await runtime.start(
+            goal="验证事实核查修复时的正文选择",
+            user_id="user-1",
+            workspace_id="ws-1",
+            auto_execute=False,
+        )
+        plan = await store.get_plan(run.current_plan_id)
+        assert plan is not None
+        base_time = utc_now_naive()
+
+        await store.create_step(
+            AgentStep(
+                run_id=run.id,
+                plan_id=plan.id,
+                node_id="generate_content",
+                step_type=AgentStepType.GENERATION,
+                title="生成主体产物",
+                description="构造可复核正文",
+                status=AgentStepStatus.COMPLETED,
+                started_at=base_time,
+                ended_at=base_time + timedelta(seconds=1),
+                output={
+                    "artifact": {
+                        "content": {
+                            "body": "PromptChain 使用 PostgreSQL 作为主数据库，并使用 Redis 作为缓存。"
+                        }
+                    }
+                },
+            )
+        )
+        await store.create_step(
+            AgentStep(
+                run_id=run.id,
+                plan_id=plan.id,
+                node_id="fact_check_content",
+                step_type=AgentStepType.TOOL_CALL,
+                title="核查事实风险",
+                description="构造上一轮事实核查报告",
+                status=AgentStepStatus.COMPLETED,
+                started_at=base_time + timedelta(seconds=2),
+                ended_at=base_time + timedelta(seconds=3),
+                output={
+                    "passed": False,
+                    "fact_check_mode": "cove",
+                    "findings": [{"risk": "high", "suggestion": "上一轮报告不应被当作正文"}],
+                },
+            )
+        )
+
+        text = await runtime._latest_step_text(run.id)
+
+        assert "PostgreSQL" in text
+        assert "上一轮报告不应被当作正文" not in text
 
     asyncio.run(_with_runtime(_scenario))
 

@@ -1115,6 +1115,8 @@ class AutonomousAgentRuntime:
         """提取最近一步输出文本，供核查类工具复用。"""
         steps = await self.store.list_steps(run_id)
         for step in reversed(steps):
+            if step.output.get("fact_check_mode") is not None:
+                continue
             text = self._flatten_text(step.output)
             if text.strip():
                 return text
