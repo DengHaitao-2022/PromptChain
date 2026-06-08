@@ -3,14 +3,22 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.errors.exceptions import DomainError
 from graph.runtime_plan import compile_workflow_runtime_plan
 from models import ArtifactType, MemberRole, NodeRunStatus, WorkflowRun
+from models.auth_models import MemberRole as AuthMemberRole
+from models.auth_orm import UserORM, WorkspaceORM
+from orm.tool_orm import WorkspaceToolPolicyORM
+from routes import tool_routes
 from routes.workflow_routes import _assert_tool_gate_call_matches
 from services.artifact_store import ArtifactStore
+from services.tool_policy_service import ToolPolicyService
 from tools import (
     BaseTool,
     RiskLevel,
@@ -25,6 +33,9 @@ from tools import (
     ToolSpec,
 )
 from tools.audit import ToolAuditService
+from tools.policy import ToolPolicyEngine
+from tools.rate_limit import RateLimitUnavailableError, ToolRateLimiter
+from tools.redaction import REDACTED_VALUE
 
 pytestmark = pytest.mark.anyio
 
@@ -67,6 +78,20 @@ class DestructiveEchoTool(ExternalEchoTool):
     )
 
 
+class ExternalAutoCandidateTool(ExternalEchoTool):
+    spec = ToolSpec(
+        name="test.external_auto_candidate",
+        title="可配置外部动作",
+        description="测试用可被 workspace policy 放行的外部动作工具。",
+        category="test",
+        source_type=ToolSourceType.INTERNAL,
+        input_schema=ExternalEchoTool.spec.input_schema,
+        risk_level=RiskLevel.EXTERNAL_ACTION,
+        permissions=["workflow.execute"],
+        requires_approval=False,
+    )
+
+
 class FlakyGateTool(BaseTool):
     calls = 0
 
@@ -101,6 +126,7 @@ class FlakyGateTool(BaseTool):
 def _executor_with_test_tool(store: ArtifactStore) -> ToolExecutor:
     registry = ToolRegistry()
     registry.register(ExternalEchoTool)
+    registry.register(ExternalAutoCandidateTool)
     registry.register(DestructiveEchoTool)
     registry.register(FlakyGateTool)
     return ToolExecutor(
@@ -230,6 +256,97 @@ async def test_approved_tool_call_cannot_be_reused_for_different_input():
     assert result.error.code == "TOOL_APPROVAL_INPUT_MISMATCH"
 
 
+async def test_approved_tool_call_cannot_be_reused_for_different_runtime_context():
+    store = ArtifactStore()
+    executor = _executor_with_test_tool(store)
+    runtime = ToolRuntime(
+        user_id="user-1",
+        workspace_id="workspace-1",
+        workflow_run_id="wf-tool",
+        node_run_id="node-tool-1",
+        role=MemberRole.EDITOR.value,
+        store=store,
+        approval_context={"phase": "pre_outline", "tool_step_id": "external-echo"},
+    )
+    pending = await executor.execute("test.external_echo", {"message": "hello"}, runtime)
+    tool_call_id = pending.approval_request["tool_call_id"]
+    await executor.approve_tool_call(tool_call_id, approved_by="reviewer-1", approved=True)
+
+    reused_from_other_workflow = await executor.execute(
+        "test.external_echo",
+        {"message": "hello"},
+        ToolRuntime(
+            user_id="user-1",
+            workspace_id="workspace-1",
+            workflow_run_id="wf-other",
+            node_run_id="node-tool-2",
+            role=MemberRole.EDITOR.value,
+            store=store,
+            approval_context={"phase": "pre_outline", "tool_step_id": "external-echo"},
+        ),
+        existing_tool_call_id=tool_call_id,
+    )
+    reused_from_other_step = await executor.execute(
+        "test.external_echo",
+        {"message": "hello"},
+        ToolRuntime(
+            user_id="user-1",
+            workspace_id="workspace-1",
+            workflow_run_id="wf-tool",
+            node_run_id="node-tool-3",
+            role=MemberRole.EDITOR.value,
+            store=store,
+            approval_context={"phase": "pre_outline", "tool_step_id": "other-step"},
+        ),
+        existing_tool_call_id=tool_call_id,
+    )
+
+    assert reused_from_other_workflow.success is False
+    assert reused_from_other_workflow.error is not None
+    assert reused_from_other_workflow.error.code == "TOOL_APPROVAL_CONTEXT_MISMATCH"
+    assert reused_from_other_step.success is False
+    assert reused_from_other_step.error is not None
+    assert reused_from_other_step.error.code == "TOOL_APPROVAL_CONTEXT_MISMATCH"
+
+
+async def test_tool_audit_redacts_sensitive_input_output_but_keeps_fingerprint():
+    store = ArtifactStore()
+    audit = ToolAuditService(store)
+    call = await audit.create_call(
+        ExternalAutoCandidateTool.spec,
+        {
+            "message": "hello",
+            "Authorization": "Bearer secret-token",
+            "nested": {"api_key": "sk-test"},
+        },
+        ToolRuntime(
+            user_id="user-1",
+            workspace_id="workspace-1",
+            workflow_run_id="wf-tool",
+            node_run_id="node-tool",
+            store=store,
+        ),
+        status=ToolCallStatus.RUNNING,
+        requires_approval=False,
+    )
+    await audit.update_call(
+        call,
+        status=ToolCallStatus.SUCCEEDED,
+        output={"password": "raw-password", "safe": "ok"},
+    )
+
+    saved = await store.get_tool_call(call.id)
+    assert saved is not None
+    assert saved.input_json["Authorization"] == REDACTED_VALUE
+    assert saved.input_json["nested"]["api_key"] == REDACTED_VALUE
+    assert saved.output_json["password"] == REDACTED_VALUE
+    assert saved.output_json["safe"] == "ok"
+    assert "input_fingerprint" in saved.metadata
+    dumped = tool_routes._dump_tool_call(saved)
+    assert dumped["input_json"]["Authorization"] == REDACTED_VALUE
+    assert dumped["output_json"]["password"] == REDACTED_VALUE
+
+
 async def test_artifact_read_direct_execution_enforces_workflow_visibility():
     store = ArtifactStore()
     workflow_run = await store.create_workflow_run(
@@ -276,6 +393,68 @@ async def test_artifact_read_direct_execution_enforces_workflow_visibility():
     assert allowed.output["content"] == {"secret": "owner-only"}
 
 
+async def test_artifact_write_parent_version_must_be_visible_to_runtime():
+    store = ArtifactStore()
+    owner_run = await store.create_workflow_run(
+        WorkflowRun(
+            user_input="owner",
+            metadata={"workspace_id": "workspace-1", "user_id": "owner-1"},
+        )
+    )
+    foreign_run = await store.create_workflow_run(
+        WorkflowRun(
+            user_input="foreign",
+            metadata={"workspace_id": "workspace-2", "user_id": "owner-2"},
+        )
+    )
+    parent = await store.create_artifact(
+        ArtifactType.TOOL_RESULT,
+        content={"secret": "foreign"},
+        workflow_run_id=foreign_run.id,
+        node_run_id="foreign-node",
+    )
+    executor = ToolExecutor(audit_service=ToolAuditService(store))
+
+    denied = await executor.execute(
+        "artifact.write",
+        {"content": {"password": "keep-real"}, "parent_version_id": parent.id},
+        ToolRuntime(
+            user_id="owner-1",
+            workspace_id="workspace-1",
+            workflow_run_id=owner_run.id,
+            node_run_id="node-1",
+            role=MemberRole.EDITOR.value,
+            store=store,
+        ),
+    )
+    assert denied.success is False
+    assert denied.error is not None
+    assert denied.error.code == "ARTIFACT_ACCESS_DENIED"
+
+    own_parent = await store.create_artifact(
+        ArtifactType.TOOL_RESULT,
+        content={"secret": "owner"},
+        workflow_run_id=owner_run.id,
+        node_run_id="node-1",
+    )
+    written = await executor.execute(
+        "artifact.write",
+        {"content": {"password": "keep-real"}, "parent_version_id": own_parent.id},
+        ToolRuntime(
+            user_id="owner-1",
+            workspace_id="workspace-1",
+            workflow_run_id=owner_run.id,
+            node_run_id="node-2",
+            role=MemberRole.EDITOR.value,
+            store=store,
+        ),
+    )
+    assert written.success is True
+    artifact = await store.get_artifact(written.artifact_ids[0])
+    assert artifact is not None
+    assert artifact.content == {"password": "keep-real"}
+
+
 async def test_destructive_tool_forces_admin_and_approval_even_in_auto_mode():
     store = ArtifactStore()
     executor = _executor_with_test_tool(store)
@@ -308,6 +487,213 @@ async def test_destructive_tool_forces_admin_and_approval_even_in_auto_mode():
 
     assert pending.requires_approval is True
     assert pending.approval_request["risk_level"] == RiskLevel.DESTRUCTIVE.value
+
+
+async def test_policy_order_keeps_requires_approval_gate_despite_workspace_auto_policy():
+    class _AllowAllPolicyService:
+        async def is_auto_run_enabled(self, workspace_id: str, tool_name: str) -> bool:
+            return True
+
+    class _FakeSession:
+        pass
+
+    store = ArtifactStore()
+    executor = _executor_with_test_tool(store)
+    runtime = ToolRuntime(
+        user_id="user-1",
+        workspace_id="workspace-1",
+        workflow_run_id="wf-tool",
+        node_run_id="node-tool",
+        role=MemberRole.EDITOR.value,
+        db_session=_FakeSession(),
+        store=store,
+    )
+
+    from tools import policy as policy_module
+
+    original_service = policy_module.ToolPolicyService
+    policy_module.ToolPolicyService = lambda session: _AllowAllPolicyService()
+    try:
+        forced = await executor.execute(
+            "test.external_echo",
+            {"message": "hello"},
+            runtime,
+            approval_mode="auto",
+        )
+        candidate = await executor.execute(
+            "test.external_auto_candidate",
+            {"message": "hello"},
+            runtime,
+            approval_mode="auto",
+        )
+    finally:
+        policy_module.ToolPolicyService = original_service
+
+    assert forced.requires_approval is True
+    assert forced.approval_request["tool_name"] == "test.external_echo"
+    assert candidate.success is True
+    assert candidate.output == {"echo": "hello"}
+
+
+async def test_rate_limit_redis_failure_denies_policy_evaluation():
+    class _FailingLimiter:
+        async def hit(self, key: str, *, limit: int, window_seconds: int = 60) -> bool:
+            raise RateLimitUnavailableError("redis unavailable")
+
+    engine = ToolPolicyEngine(rate_limiter=_FailingLimiter())
+    spec = ToolSpec(
+        name="test.rate_limited",
+        description="限流测试工具",
+        category="test",
+        risk_level=RiskLevel.READ_PRIVATE,
+        permissions=[],
+        cost_policy={"max_calls_per_minute": 1},
+    )
+    decision = await engine.evaluate(
+        spec,
+        ToolRuntime(
+            user_id="user-1",
+            workspace_id="workspace-1",
+            role=MemberRole.EDITOR.value,
+        ),
+    )
+
+    assert decision.allowed is False
+    assert decision.reason == "redis unavailable"
+
+
+async def test_tool_rate_limiter_redis_backend_fails_closed(monkeypatch):
+    from core.config import get_settings
+
+    class _BrokenRedisLimiter:
+        async def hit(self, key: str, *, limit: int, window_seconds: int = 60) -> bool:
+            raise RuntimeError("redis down")
+
+    monkeypatch.setenv("TOOL_RATE_LIMIT_BACKEND", "redis")
+    get_settings.cache_clear()
+    try:
+        limiter = ToolRateLimiter()
+        limiter._redis = _BrokenRedisLimiter()
+        with pytest.raises(RateLimitUnavailableError):
+            await limiter.hit("workspace:user:tool", limit=1)
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_tool_policy_service_upserts_and_lists_workspace_policy():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(UserORM.__table__.create)
+            await conn.run_sync(WorkspaceORM.__table__.create)
+            await conn.run_sync(WorkspaceToolPolicyORM.__table__.create)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as session:
+            service = ToolPolicyService(session)
+            created = await service.upsert_policy(
+                workspace_id="workspace-1",
+                tool_name="test.external_auto_candidate",
+                auto_run_enabled=True,
+                actor_user_id="user-1",
+                metadata={"reason": "允许自动执行"},
+            )
+            await session.commit()
+
+            assert created.auto_run_enabled is True
+            assert await service.is_auto_run_enabled(
+                "workspace-1",
+                "test.external_auto_candidate",
+            )
+            policies = await service.list_policies("workspace-1")
+            assert [policy.tool_name for policy in policies] == ["test.external_auto_candidate"]
+
+            updated = await service.upsert_policy(
+                workspace_id="workspace-1",
+                tool_name="test.external_auto_candidate",
+                auto_run_enabled=False,
+                actor_user_id="user-2",
+                metadata={"reason": "关闭"},
+            )
+            await session.commit()
+            assert updated.id == created.id
+            assert updated.auto_run_enabled is False
+
+            rows = (await session.execute(select(WorkspaceToolPolicyORM))).scalars().all()
+            assert len(rows) == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_tool_policy_route_rejects_forced_approval_and_allows_auto_candidate(monkeypatch):
+    class _FakePolicy:
+        def __init__(self):
+            self.id = "policy-1"
+            self.workspace_id = "workspace-1"
+            self.tool_name = "test.external_auto_candidate"
+            self.auto_run_enabled = True
+            self.created_by = "user-1"
+            self.updated_by = "user-1"
+            self.created_at = None
+            self.updated_at = None
+            self.metadata_json = {}
+
+    class _FakePolicyService:
+        async def upsert_policy(self, **kwargs):
+            return _FakePolicy()
+
+    class _FakeSession:
+        async def commit(self):
+            return None
+
+    class _FakeStore:
+        def initialized_session(self):
+            class _Context:
+                async def __aenter__(self):
+                    return _FakeSession()
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return None
+
+            return _Context()
+
+    async def _allow_manage(request, resource: str, action: str):
+        return "user-1", "workspace-1", AuthMemberRole.ADMIN
+
+    async def _noop_record_tool_audit(*args, **kwargs):
+        return None
+
+    async def _noop_record(*args, **kwargs):
+        return None
+
+    registry = ToolRegistry()
+    registry.register(ExternalEchoTool)
+    registry.register(ExternalAutoCandidateTool)
+    monkeypatch.setattr(tool_routes, "get_tool_registry", lambda: registry)
+    monkeypatch.setattr(tool_routes.workflow_helpers, "require_workspace_permission", _allow_manage)
+    monkeypatch.setattr(tool_routes, "get_postgres_store", lambda: _FakeStore())
+    monkeypatch.setattr(tool_routes, "ToolPolicyService", lambda session: _FakePolicyService())
+    monkeypatch.setattr(tool_routes, "_record_tool_audit", _noop_record_tool_audit)
+    monkeypatch.setattr(
+        tool_routes.AuditLogService,
+        "record",
+        _noop_record,
+        raising=False,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await tool_routes.update_tool_policy(
+            "test.external_echo",
+            object(),
+            tool_routes.ToolPolicyRequest(auto_run_enabled=True),
+        )
+    allowed = await tool_routes.update_tool_policy(
+        "test.external_auto_candidate",
+        object(),
+        tool_routes.ToolPolicyRequest(auto_run_enabled=True),
+    )
+
+    assert exc_info.value.status_code == 403
+    assert allowed["policy"]["auto_run_enabled"] is True
 
 
 async def test_workflow_tool_phase_applies_output_mapping_and_audit(monkeypatch):

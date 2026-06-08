@@ -10,6 +10,7 @@ from tools.audit import ToolAuditService
 from tools.base import ToolExecutionError, tool_failure_result
 from tools.factory import ToolFactory
 from tools.policy import ToolPolicyEngine
+from tools.redaction import redact_sensitive_payload, sensitive_payload_fingerprint
 from tools.runtime import ToolRuntime
 from tools.schemas import (
     ToolApprovalMode,
@@ -76,6 +77,18 @@ class ToolExecutor:
         # 失败进入 Gate 的工具可能本身不需要风险审批，也要允许复用已批准的调用记录重试。
         approved_call = await self._load_approved_call(existing_tool_call_id)
         if approved_call is not None:
+            mismatch = self._approval_context_mismatch(approved_call, input_data, runtime)
+            if mismatch:
+                return ToolResult(
+                    success=False,
+                    summary="工具审批记录与当前运行上下文不匹配",
+                    metadata={"tool_call_id": approved_call.id},
+                    error=ToolError(
+                        code="TOOL_APPROVAL_CONTEXT_MISMATCH",
+                        message="工具审批记录与当前运行上下文不匹配",
+                        details=mismatch,
+                    ),
+                )
             if approved_call.tool_name != spec.name:
                 return ToolResult(
                     success=False,
@@ -90,7 +103,12 @@ class ToolExecutor:
                         },
                     ),
                 )
-            if approved_call.input_json != input_data:
+            input_fingerprint = (approved_call.metadata or {}).get("input_fingerprint")
+            if input_fingerprint:
+                input_matches = input_fingerprint == sensitive_payload_fingerprint(input_data)
+            else:
+                input_matches = approved_call.input_json == redact_sensitive_payload(input_data)
+            if not input_matches:
                 return ToolResult(
                     success=False,
                     summary="工具审批记录与当前输入不匹配",
@@ -128,7 +146,7 @@ class ToolExecutor:
                     "title": spec.title or spec.name,
                     "risk_level": spec.risk_level.value,
                     "required_permissions": decision.required_permissions,
-                    "input_preview": input_data,
+                    "input_preview": redact_sensitive_payload(input_data),
                 },
                 metadata={"tool_call_id": call.id},
             )
@@ -223,6 +241,37 @@ class ToolExecutor:
         if call is None:
             return None
         return call if call.status in {ToolCallStatus.APPROVED, ToolCallStatus.DENIED} else None
+
+    @staticmethod
+    def _approval_context_mismatch(call, input_data: dict[str, Any], runtime: ToolRuntime):
+        """复用审批必须绑定同一运行上下文，防止跨工作流或跨节点借用授权。"""
+        mismatches: dict[str, Any] = {}
+        for field in ("workspace_id", "workflow_run_id", "created_by"):
+            runtime_value = runtime.user_id if field == "created_by" else getattr(runtime, field)
+            call_value = getattr(call, field, None)
+            if (
+                runtime_value is not None or call_value is not None
+            ) and runtime_value != call_value:
+                mismatches[field] = {"approved": call_value, "current": runtime_value}
+
+        metadata = call.metadata or {}
+        approved_context = (metadata.get("runtime_context") or {}).get("approval_context") or {}
+        current_context = runtime.approval_context or {}
+        if approved_context or current_context:
+            if approved_context != current_context:
+                mismatches["approval_context"] = {
+                    "approved": approved_context,
+                    "current": current_context,
+                }
+        elif (
+            runtime.node_run_id is not None or call.node_run_id is not None
+        ) and runtime.node_run_id != call.node_run_id:
+            mismatches["node_run_id"] = {
+                "approved": call.node_run_id,
+                "current": runtime.node_run_id,
+            }
+
+        return mismatches
 
     @staticmethod
     def _resolve_attempts(retry_policy: dict[str, Any] | None) -> int:

@@ -17,6 +17,11 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def normalize_to_utc(value: datetime) -> datetime:
+    """将 aware 或 naive UTC datetime 归一为带时区的 UTC 时间。"""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 def utc_now_naive() -> datetime:
     """返回 naive UTC 当前时间，用于兼容现有数据库 DateTime 字段。"""
     return utc_now().replace(tzinfo=None)

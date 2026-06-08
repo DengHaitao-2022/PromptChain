@@ -115,13 +115,19 @@ class ArtifactWriteTool(BaseTool):
             raise ToolExecutionError(
                 "TOOL_RUNTIME_MISSING_WORKFLOW", "写入 Artifact 需要 workflow_run_id"
             )
+        parent_version_id = input_data.get("parent_version_id")
+        if parent_version_id:
+            parent = await _store(runtime).get_artifact(parent_version_id)
+            if parent is None:
+                raise ToolExecutionError("ARTIFACT_PARENT_NOT_FOUND", "父 Artifact 版本不存在")
+            await ensure_artifact_visible(parent, runtime)
         node_run_id = runtime.node_run_id or runtime.workflow_run_id
         artifact = await _store(runtime).create_artifact(
             artifact_type=_artifact_type(input_data.get("artifact_type")),
             content=input_data["content"],
             workflow_run_id=runtime.workflow_run_id,
             node_run_id=node_run_id,
-            parent_version_id=input_data.get("parent_version_id"),
+            parent_version_id=parent_version_id,
             metadata={
                 **(input_data.get("metadata") or {}),
                 "tool_name": self.spec.name,

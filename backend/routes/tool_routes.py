@@ -8,13 +8,21 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 import routes.workflow_helpers as workflow_helpers
+from db.postgres_store import get_postgres_store
+from models.admin_models import AuditAction
+from models.auth_models import MemberRole
+from services.audit_log_service import AuditLogService
+from services.permission_service import is_admin_role
+from services.tool_policy_service import ToolPolicyService
 from tools import (
+    RiskLevel,
     ToolApprovalMode,
     ToolCallStatus,
     ToolRuntime,
     get_tool_executor,
     get_tool_registry,
 )
+from tools.redaction import redact_sensitive_payload
 
 router = APIRouter(tags=["tools"])
 
@@ -37,8 +45,73 @@ class ApproveToolCallRequest(BaseModel):
     reason: str | None = None
 
 
+class ToolPolicyRequest(BaseModel):
+    """Workspace 工具策略更新请求。"""
+
+    auto_run_enabled: bool = False
+    reason: str | None = None
+
+
 def _dump_tool_call(call) -> dict[str, Any]:
-    return call.model_dump(mode="json") if hasattr(call, "model_dump") else dict(call)
+    payload = call.model_dump(mode="json") if hasattr(call, "model_dump") else dict(call)
+    if "input_json" in payload:
+        payload["input_json"] = redact_sensitive_payload(payload["input_json"])
+    if "output_json" in payload:
+        payload["output_json"] = redact_sensitive_payload(payload["output_json"])
+    if "metadata" in payload:
+        payload["metadata"] = redact_sensitive_payload(payload["metadata"])
+    return payload
+
+
+def _dump_tool_policy(policy) -> dict[str, Any]:
+    return {
+        "id": policy.id,
+        "workspace_id": policy.workspace_id,
+        "tool_name": policy.tool_name,
+        "auto_run_enabled": bool(policy.auto_run_enabled),
+        "created_by": policy.created_by,
+        "updated_by": policy.updated_by,
+        "created_at": policy.created_at,
+        "updated_at": policy.updated_at,
+        "metadata": policy.metadata_json or {},
+    }
+
+
+def _coerce_member_role(value: Any) -> MemberRole | None:
+    """兼容测试替身或旧调用传入字符串角色的情况。"""
+    if isinstance(value, MemberRole):
+        return value
+    if isinstance(value, str):
+        try:
+            return MemberRole(value)
+        except ValueError:
+            return None
+    return None
+
+
+async def _record_tool_audit(
+    request: Request,
+    *,
+    actor_user_id: str,
+    workspace_id: str,
+    action: AuditAction,
+    tool_name: str,
+    outcome: str,
+    detail: dict[str, Any],
+) -> None:
+    store = get_postgres_store()
+    async with store.async_session() as session:
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            request=request,
+            outcome=outcome,  # type: ignore[arg-type]
+            target_type="tool",
+            target_id=tool_name,
+            detail=detail,
+        )
+        await session.commit()
 
 
 @router.get("/tools")
@@ -76,6 +149,97 @@ async def get_tool(tool_name: str, request: Request):
     }
 
 
+@router.get("/tool-policies")
+async def list_tool_policies(request: Request):
+    """列出当前 workspace 的工具 auto-run 策略。"""
+    _, workspace_id, _ = await workflow_helpers.require_workspace_permission(
+        request,
+        "workflow",
+        "manage",
+    )
+    store = get_postgres_store()
+    async with store.initialized_session() as session:
+        policies = await ToolPolicyService(session).list_policies(workspace_id)
+        return {"policies": [_dump_tool_policy(policy) for policy in policies]}
+
+
+@router.put("/tool-policies/{tool_name:path}")
+async def update_tool_policy(tool_name: str, request: Request, body: ToolPolicyRequest):
+    """更新单个工具在当前 workspace 的显式 auto-run 授权。"""
+    user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
+        request,
+        "workflow",
+        "manage",
+    )
+    try:
+        spec = get_tool_registry().get_spec(tool_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if body.auto_run_enabled and spec.risk_level == RiskLevel.DESTRUCTIVE:
+        await _record_tool_audit(
+            request,
+            actor_user_id=user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.TOOL_POLICY_UPDATE,
+            tool_name=tool_name,
+            outcome="failure",
+            detail={"reason": "destructive_tool_auto_run_forbidden"},
+        )
+        raise HTTPException(status_code=403, detail="破坏性工具不允许配置自动执行")
+    if body.auto_run_enabled and spec.requires_approval:
+        await _record_tool_audit(
+            request,
+            actor_user_id=user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.TOOL_POLICY_UPDATE,
+            tool_name=tool_name,
+            outcome="failure",
+            detail={"reason": "tool_requires_explicit_approval"},
+        )
+        raise HTTPException(status_code=403, detail="该工具声明必须审批，不能配置自动执行")
+    if body.auto_run_enabled and spec.risk_level != RiskLevel.EXTERNAL_ACTION:
+        await _record_tool_audit(
+            request,
+            actor_user_id=user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.TOOL_POLICY_UPDATE,
+            tool_name=tool_name,
+            outcome="failure",
+            detail={"reason": "auto_run_only_for_external_action"},
+        )
+        raise HTTPException(status_code=400, detail="仅 external_action 工具支持显式自动执行策略")
+
+    store = get_postgres_store()
+    async with store.initialized_session() as session:
+        policy = await ToolPolicyService(session).upsert_policy(
+            workspace_id=workspace_id,
+            tool_name=tool_name,
+            auto_run_enabled=body.auto_run_enabled,
+            actor_user_id=user_id,
+            metadata={
+                "reason": body.reason,
+                "risk_level": spec.risk_level.value,
+                "requires_approval": spec.requires_approval,
+            },
+        )
+        await AuditLogService(session).record(
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+            action=AuditAction.TOOL_POLICY_UPDATE,
+            request=request,
+            target_type="tool",
+            target_id=tool_name,
+            detail={
+                "auto_run_enabled": body.auto_run_enabled,
+                "risk_level": spec.risk_level.value,
+                "has_reason": bool(body.reason),
+            },
+        )
+        await session.commit()
+        return {"policy": _dump_tool_policy(policy)}
+
+
 @router.post("/tools/execute")
 async def execute_tool(request: Request, body: ExecuteToolRequest):
     """受控直接执行工具。"""
@@ -84,6 +248,35 @@ async def execute_tool(request: Request, body: ExecuteToolRequest):
         "workflow",
         "execute",
     )
+    try:
+        spec = get_tool_registry().get_spec(body.tool_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    role_value = _coerce_member_role(role)
+    if not is_admin_role(role_value):
+        await _record_tool_audit(
+            request,
+            actor_user_id=user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.TOOL_EXECUTE,
+            tool_name=body.tool_name,
+            outcome="failure",
+            detail={"reason": "direct_tool_execute_requires_admin"},
+        )
+        raise HTTPException(status_code=403, detail="直接工具执行仅允许管理员或拥有者")
+    if spec.risk_level == RiskLevel.DESTRUCTIVE:
+        await _record_tool_audit(
+            request,
+            actor_user_id=user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.TOOL_EXECUTE,
+            tool_name=body.tool_name,
+            outcome="failure",
+            detail={"reason": "destructive_tool_direct_execute_forbidden"},
+        )
+        raise HTTPException(status_code=403, detail="破坏性工具只能通过工作流 Gate 执行")
+
     if body.workflow_run_id:
         await workflow_helpers.require_workflow_run_access(
             request,
@@ -118,7 +311,7 @@ async def execute_tool(request: Request, body: ExecuteToolRequest):
         node_run_id=body.node_run_id,
         graph_state={},
         node_config={},
-        role=role.value if hasattr(role, "value") else str(role),
+        role=role_value.value if role_value is not None else str(role),
     )
     result = await get_tool_executor().execute(
         body.tool_name,
@@ -127,7 +320,7 @@ async def execute_tool(request: Request, body: ExecuteToolRequest):
         approval_mode=body.approval_mode,
         existing_tool_call_id=body.existing_tool_call_id,
     )
-    return result.model_dump(mode="json")
+    return redact_sensitive_payload(result.model_dump(mode="json"))
 
 
 @router.post("/tool-calls/{tool_call_id}/approval")

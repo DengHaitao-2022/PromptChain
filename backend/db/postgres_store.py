@@ -386,6 +386,23 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_workspace_status ON tool_calls (workspace_id, status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS ix_tool_calls_name_created ON tool_calls (tool_name, created_at DESC)",
         """
+        CREATE TABLE IF NOT EXISTS workspace_tool_policies (
+            id VARCHAR(36) PRIMARY KEY,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            tool_name VARCHAR(160) NOT NULL,
+            auto_run_enabled BOOLEAN NOT NULL DEFAULT false,
+            created_by VARCHAR(36) NOT NULL REFERENCES users(id),
+            updated_by VARCHAR(36) NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now(),
+            metadata_json JSON DEFAULT '{}'::json,
+            CONSTRAINT uq_workspace_tool_policy UNIQUE (workspace_id, tool_name)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tool_policies_workspace_id ON workspace_tool_policies (workspace_id)",
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tool_policies_tool_name ON workspace_tool_policies (tool_name)",
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tool_policies_workspace_tool ON workspace_tool_policies (workspace_id, tool_name)",
+        """
         DO $$
         BEGIN
             IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
@@ -966,6 +983,7 @@ class PostgresArtifactStore:
                 orm.latency_ms = tool_call.latency_ms
                 orm.token_cost = tool_call.token_cost
                 orm.money_cost = tool_call.money_cost
+                orm.completed_at = tool_call.completed_at
                 orm.requires_approval = 1 if tool_call.requires_approval else 0
                 orm.approved_by = tool_call.approved_by
                 orm.approved_at = tool_call.approved_at

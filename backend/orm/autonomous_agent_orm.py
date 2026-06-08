@@ -2,7 +2,7 @@
 
 from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
 
-from core.time import utc_now_naive
+from core.time import normalize_to_utc, utc_now, utc_now_naive
 from db.postgres_store import Base
 from models.autonomous_agent import (
     AgentPlan,
@@ -257,11 +257,11 @@ class ToolCallORM(Base):
     money_cost = Column(Float, nullable=True)
     requires_approval = Column(Integer, nullable=False, default=0)
     approved_by = Column(String(36), ForeignKey("users.id"), nullable=True)
-    approved_at = Column(DateTime, nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive)
-    completed_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     metadata_json = Column(JSON, default=dict)
 
     def to_model(self) -> ToolCall:
@@ -317,6 +317,7 @@ class ToolCallORM(Base):
             approved_at=self.approved_at,
             created_by=self.created_by,
             created_at=self.created_at,
+            completed_at=self.completed_at,
             updated_at=self.updated_at,
             metadata=self.metadata_json or {},
         )
@@ -362,10 +363,11 @@ class ToolCallORM(Base):
             money_cost=model.money_cost,
             requires_approval=1 if model.requires_approval else 0,
             approved_by=model.approved_by,
-            approved_at=model.approved_at,
+            approved_at=_to_aware_datetime(model.approved_at),
             created_by=model.created_by,
-            created_at=model.created_at,
-            updated_at=model.updated_at,
+            created_at=_to_aware_datetime(model.created_at),
+            completed_at=_to_aware_datetime(getattr(model, "completed_at", None)),
+            updated_at=_to_aware_datetime(model.updated_at),
             metadata_json=model.metadata,
         )
 
@@ -416,6 +418,13 @@ class EvalResultORM(Base):
             created_at=model.created_at,
             metadata_json=model.metadata,
         )
+
+
+def _to_aware_datetime(value):
+    """写入 TIMESTAMPTZ 前统一按 UTC 归一，兼容旧 naive UTC 数据。"""
+    if value is None:
+        return None
+    return normalize_to_utc(value)
 
 
 class MemoryRecordORM(Base):

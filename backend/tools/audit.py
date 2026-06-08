@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.time import utc_now_naive
+from core.time import utc_now
+from tools.redaction import redact_sensitive_payload, sensitive_payload_fingerprint
 from tools.runtime import ToolRuntime
 from tools.schemas import ToolCall, ToolCallStatus, ToolSpec
+
+TERMINAL_TOOL_CALL_STATUSES = {
+    ToolCallStatus.DENIED,
+    ToolCallStatus.SUCCEEDED,
+    ToolCallStatus.FAILED,
+    ToolCallStatus.TIMEOUT,
+}
 
 
 class ToolAuditService:
@@ -30,6 +38,13 @@ class ToolAuditService:
         requires_approval: bool,
         metadata: dict[str, Any] | None = None,
     ) -> ToolCall:
+        safe_metadata = dict(metadata or {})
+        safe_metadata["input_fingerprint"] = sensitive_payload_fingerprint(input_data)
+        safe_metadata["runtime_context"] = {
+            "workflow_run_id": runtime.workflow_run_id,
+            "node_run_id": runtime.node_run_id,
+            "approval_context": runtime.approval_context or {},
+        }
         call = ToolCall(
             workspace_id=runtime.workspace_id,
             workflow_run_id=runtime.workflow_run_id,
@@ -39,11 +54,13 @@ class ToolAuditService:
             source_type=spec.source_type,
             risk_level=spec.risk_level,
             status=status,
-            input_json=input_data,
+            input_json=redact_sensitive_payload(input_data),
             requires_approval=requires_approval,
             created_by=runtime.user_id,
-            metadata=metadata or {},
+            metadata=redact_sensitive_payload(safe_metadata),
         )
+        if status in TERMINAL_TOOL_CALL_STATUSES:
+            call.completed_at = call.updated_at
         if hasattr(self.store, "create_tool_call"):
             return await self.store.create_tool_call(call)
         return call
@@ -61,14 +78,16 @@ class ToolAuditService:
         metadata: dict[str, Any] | None = None,
     ) -> ToolCall:
         call.status = status
-        call.output_json = output
+        call.output_json = redact_sensitive_payload(output)
         call.error_message = error_message
         call.latency_ms = latency_ms
         call.token_cost = token_cost
         call.money_cost = money_cost
-        call.updated_at = utc_now_naive()
+        call.updated_at = utc_now()
+        if status in TERMINAL_TOOL_CALL_STATUSES:
+            call.completed_at = call.updated_at
         if metadata:
-            call.metadata = {**(call.metadata or {}), **metadata}
+            call.metadata = redact_sensitive_payload({**(call.metadata or {}), **metadata})
         if hasattr(self.store, "update_tool_call"):
             return await self.store.update_tool_call(call)
         return call
@@ -91,8 +110,10 @@ class ToolAuditService:
             return None
         call.status = ToolCallStatus.APPROVED if approved else ToolCallStatus.DENIED
         call.approved_by = approved_by
-        call.approved_at = utc_now_naive()
-        call.updated_at = utc_now_naive()
+        call.approved_at = utc_now()
+        call.updated_at = call.approved_at
+        if not approved:
+            call.completed_at = call.updated_at
         metadata = dict(call.metadata or {})
         metadata["approval_reason"] = reason
         call.metadata = metadata

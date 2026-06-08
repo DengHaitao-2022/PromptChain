@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import time
-from collections import defaultdict, deque
 from typing import Any
 
 from models.auth_models import MemberRole
 from services.permission_service import PermissionService, check_permission, is_admin_role
+from services.tool_policy_service import ToolPolicyService
+from tools.rate_limit import RateLimitUnavailableError, ToolRateLimiter
 from tools.runtime import ToolRuntime
 from tools.schemas import RiskLevel, ToolApprovalMode, ToolPolicyDecision, ToolSpec
 
@@ -23,8 +23,8 @@ DEFAULT_RISK_PERMISSIONS: dict[RiskLevel, list[str]] = {
 class ToolPolicyEngine:
     """后端强制执行工具治理策略，不信任模型或前端判断。"""
 
-    def __init__(self):
-        self._rate_windows: dict[str, deque[float]] = defaultdict(deque)
+    def __init__(self, rate_limiter: ToolRateLimiter | None = None):
+        self.rate_limiter = rate_limiter or ToolRateLimiter()
 
     async def evaluate(
         self,
@@ -57,7 +57,7 @@ class ToolPolicyEngine:
                 required_permissions=required_permissions,
             )
 
-        rate_denied = self._check_rate_limit(spec, runtime)
+        rate_denied = await self._check_rate_limit(spec, runtime)
         if rate_denied:
             return ToolPolicyDecision(
                 allowed=False,
@@ -65,24 +65,51 @@ class ToolPolicyEngine:
                 required_permissions=required_permissions,
             )
 
-        requires_approval = self._requires_approval(spec, approval_mode)
+        requires_approval = await self._requires_approval(spec, runtime, approval_mode)
         return ToolPolicyDecision(
             allowed=True,
             requires_approval=requires_approval,
             required_permissions=required_permissions,
         )
 
-    def _requires_approval(self, spec: ToolSpec, approval_mode: ToolApprovalMode) -> bool:
+    async def _requires_approval(
+        self,
+        spec: ToolSpec,
+        runtime: ToolRuntime,
+        approval_mode: ToolApprovalMode,
+    ) -> bool:
         if spec.risk_level == RiskLevel.DESTRUCTIVE:
             return True
-        if approval_mode == ToolApprovalMode.AUTO:
-            return False
         if approval_mode == ToolApprovalMode.GATE_REQUIRED:
             return True
-        return spec.requires_approval or spec.risk_level in {
-            RiskLevel.EXTERNAL_ACTION,
-            RiskLevel.DESTRUCTIVE,
-        }
+        if spec.requires_approval:
+            return True
+        if spec.risk_level == RiskLevel.EXTERNAL_ACTION:
+            return not await self._is_external_auto_run_enabled(spec, runtime)
+        if approval_mode == ToolApprovalMode.AUTO:
+            return False
+        return False
+
+    async def _is_external_auto_run_enabled(self, spec: ToolSpec, runtime: ToolRuntime) -> bool:
+        """external_action 只有 workspace 管理员显式开启策略后才允许自动执行。"""
+        if not runtime.workspace_id:
+            return False
+        if runtime.db_session is not None:
+            return await ToolPolicyService(runtime.db_session).is_auto_run_enabled(
+                runtime.workspace_id,
+                spec.name,
+            )
+
+        try:
+            from db.postgres_store import get_postgres_store
+
+            async with get_postgres_store().initialized_session() as session:
+                return await ToolPolicyService(session).is_auto_run_enabled(
+                    runtime.workspace_id,
+                    spec.name,
+                )
+        except Exception:
+            return False
 
     async def _check_permissions(
         self,
@@ -135,7 +162,7 @@ class ToolPolicyEngine:
         except Exception:
             return "无法校验工具权限"
 
-    def _check_rate_limit(self, spec: ToolSpec, runtime: ToolRuntime) -> str | None:
+    async def _check_rate_limit(self, spec: ToolSpec, runtime: ToolRuntime) -> str | None:
         policy = spec.cost_policy or {}
         limit = self._positive_int(policy.get("max_calls_per_minute"))
         if not limit:
@@ -148,13 +175,12 @@ class ToolPolicyEngine:
                 spec.name,
             ]
         )
-        now = time.monotonic()
-        window = self._rate_windows[key]
-        while window and now - window[0] > 60:
-            window.popleft()
-        if len(window) >= limit:
+        try:
+            allowed = await self.rate_limiter.hit(key, limit=limit, window_seconds=60)
+        except RateLimitUnavailableError as exc:
+            return str(exc)
+        if not allowed:
             return f"工具 {spec.name} 超过每分钟 {limit} 次调用限制"
-        window.append(now)
         return None
 
     @staticmethod

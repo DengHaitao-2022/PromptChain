@@ -9,6 +9,53 @@ from graph.state import GraphState
 from models import ArtifactType, NodeRun, NodeRunStatus
 from services import get_artifact_store
 from tools import ToolApprovalMode, ToolFailureStrategy, ToolRuntime, get_tool_executor
+from tools.redaction import is_sensitive_field_name
+
+ALLOWED_STATE_MAPPING_ROOTS = {
+    "citations",
+    "draft_sections",
+    "evidence_artifact_id",
+    "evidence_pack",
+    "fact_check_artifact_id",
+    "fact_check_report",
+    "fact_corrections",
+    "final_content",
+    "final_content_artifact_id",
+    "generated_content",
+    "intent_card",
+    "intent_card_artifact_id",
+    "knowledge_conflicts",
+    "manual_corrections",
+    "outline",
+    "outline_artifact_id",
+    "outline_feedback",
+    "refinement_history",
+    "section_artifact_ids",
+    "section_feedback",
+    "tool_results",
+    "unverified_points",
+    "user_clarifications",
+    "user_input",
+}
+
+ALLOWED_CONFIG_MAPPING_ROOTS = {
+    "approvalMode",
+    "approval_mode",
+    "executionPhase",
+    "execution_phase",
+    "failureStrategy",
+    "failure_strategy",
+    "input",
+    "inputMapping",
+    "input_mapping",
+    "maxAttempts",
+    "max_attempts",
+    "metadata",
+    "outputMapping",
+    "output_mapping",
+    "toolName",
+    "tool_name",
+}
 
 
 async def run_pre_outline_tools(state: GraphState) -> GraphState:
@@ -63,6 +110,11 @@ async def _run_tool_phase(state: GraphState, phase: str, node_name: str) -> Grap
                 node_config=step.get("config") if isinstance(step.get("config"), dict) else {},
                 store=store,
                 role=state.get("workspace_role"),
+                approval_context={
+                    "phase": phase,
+                    "node_name": node_name,
+                    "tool_step_id": step_id,
+                },
             )
             strategy = _coerce_failure_strategy(step.get("failure_strategy"))
             attempts = _resolve_step_attempts(step) if strategy == ToolFailureStrategy.RETRY else 1
@@ -283,23 +335,49 @@ def _resolve_mapping_value(source: Any, state: dict[str, Any], step: dict[str, A
         path = source.get("path")
         if source_type == "literal":
             return source.get("value")
+        _assert_mapping_path_allowed(str(source_type), str(path or ""))
         if source_type == "config":
             return _resolve_path(step.get("config"), str(path or ""))
-        return _resolve_path(state, str(path or ""))
+        if source_type == "state":
+            return _resolve_path(state, str(path or ""))
+        raise ValueError(f"不支持的工具输入映射来源: {source_type}")
     if isinstance(source, str):
         if source.startswith("$"):
             source = source[1:]
         if source.startswith("state."):
-            return _resolve_path(state, source[6:])
+            path = source[6:]
+            _assert_mapping_path_allowed("state", path)
+            return _resolve_path(state, path)
         if source.startswith("config."):
-            return _resolve_path(step.get("config"), source[7:])
+            path = source[7:]
+            _assert_mapping_path_allowed("config", path)
+            return _resolve_path(step.get("config"), path)
+        _assert_mapping_path_allowed("state", source)
         return _resolve_path(state, source)
     return source
+
+
+def _assert_mapping_path_allowed(source_type: str, path: str) -> None:
+    parts = [item for item in path.split(".") if item]
+    if not parts:
+        raise ValueError("工具输入映射必须指定明确路径")
+    if any(is_sensitive_field_name(part) for part in parts):
+        raise ValueError("工具输入映射禁止读取敏感字段")
+
+    root = parts[0]
+    if source_type == "state" and root not in ALLOWED_STATE_MAPPING_ROOTS:
+        raise ValueError(f"工具输入映射不允许读取 state.{root}")
+    if source_type == "config" and root not in ALLOWED_CONFIG_MAPPING_ROOTS:
+        raise ValueError(f"工具输入映射不允许读取 config.{root}")
 
 
 def _resolve_path(root: Any, path: str) -> Any:
     value = root
     for part in [item for item in path.split(".") if item]:
+        if is_sensitive_field_name(part):
+            raise ValueError("工具输入映射禁止读取敏感字段")
+        if hasattr(value, "model_dump"):
+            value = value.model_dump(mode="json")
         if isinstance(value, dict):
             value = value.get(part)
         elif isinstance(value, list):
@@ -308,7 +386,7 @@ def _resolve_path(root: Any, path: str) -> Any:
             except (ValueError, IndexError):
                 return None
         else:
-            return getattr(value, part, None)
+            return None
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     return value

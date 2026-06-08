@@ -7,9 +7,9 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from core.time import utc_now_naive
+from core.time import normalize_to_utc, utc_now
 
 
 class ToolSourceType(StrEnum):
@@ -158,9 +158,27 @@ class ToolCall(BaseModel):
     approved_by: str | None = None
     approved_at: datetime | None = None
     created_by: str | None = None
-    created_at: datetime = Field(default_factory=utc_now_naive)
-    updated_at: datetime = Field(default_factory=utc_now_naive)
+    created_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("approved_at", "created_at", "completed_at", "updated_at", mode="before")
+    @classmethod
+    def _normalize_datetime(cls, value: Any) -> Any:
+        """兼容旧 naive UTC 数据，并统一输出带时区的 UTC 时间。"""
+        if value is None or value == "":
+            return None
+        if isinstance(value, datetime):
+            return normalize_to_utc(value)
+        return value
+
+    @field_validator("approved_at", "created_at", "completed_at", "updated_at")
+    @classmethod
+    def _ensure_utc_datetime(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return normalize_to_utc(value)
 
 
 ToolApprovalAction = Literal["approve", "deny"]
