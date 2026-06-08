@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from core.time import normalize_api_datetime, to_utc_iso, to_utc_iso_or_none
 from models.artifact import Artifact, NodeRun, NodeRunStatus, WorkflowRun
 from services.artifact_store import ArtifactStore, get_artifact_store
+from tools.schemas import ToolCall
 
 
 def _dump_workflow_run(workflow: WorkflowRun) -> dict:
@@ -40,6 +41,11 @@ def _dump_artifact(artifact: Artifact) -> dict:
     data = artifact.model_dump()
     data["created_at"] = to_utc_iso_or_none(artifact.created_at)
     return normalize_api_datetime(data)
+
+
+def _dump_tool_call(tool_call: ToolCall) -> dict:
+    """统一序列化 ToolCall，确保审批与更新时间输出稳定。"""
+    return normalize_api_datetime(tool_call.model_dump(mode="json"))
 
 
 class TraceService:
@@ -85,17 +91,49 @@ class TraceService:
             if artifact:
                 artifacts[aid] = artifact
 
+        tool_calls = await self._get_tool_calls_by_workflow(workflow_run_id)
+        tool_calls_by_node: dict[str, list[ToolCall]] = {}
+        for call in tool_calls:
+            if call.node_run_id:
+                tool_calls_by_node.setdefault(call.node_run_id, []).append(call)
+
+        nodes_payload = []
+        for node in nodes:
+            payload = _dump_node_run(node)
+            payload["tool_calls"] = [
+                _dump_tool_call(call) for call in tool_calls_by_node.get(node.id, [])
+            ]
+            nodes_payload.append(payload)
+
         # 构建时间线
-        timeline = self._build_timeline(nodes, artifacts)
+        timeline = self._build_timeline(nodes, artifacts, tool_calls)
 
         return {
             "workflow": _dump_workflow_run(workflow),
-            "nodes": [_dump_node_run(n) for n in nodes],
+            "nodes": nodes_payload,
             "artifacts": {k: _dump_artifact(v) for k, v in artifacts.items()},
+            "tool_calls": {call.id: _dump_tool_call(call) for call in tool_calls},
             "timeline": timeline,
         }
 
-    def _build_timeline(self, nodes: list[NodeRun], artifacts: dict[str, Artifact]) -> list:
+    async def _get_tool_calls_by_workflow(self, workflow_run_id: str) -> list[ToolCall]:
+        """读取工具调用历史，兼容内存与 PostgreSQL store。"""
+        if hasattr(self.store, "list_tool_calls_by_workflow"):
+            return await self.store.list_tool_calls_by_workflow(workflow_run_id)
+        return []
+
+    async def _get_tool_calls_by_node(self, node_run_id: str) -> list[ToolCall]:
+        """读取节点工具调用历史。"""
+        if hasattr(self.store, "list_tool_calls_by_node"):
+            return await self.store.list_tool_calls_by_node(node_run_id)
+        return []
+
+    def _build_timeline(
+        self,
+        nodes: list[NodeRun],
+        artifacts: dict[str, Artifact],
+        tool_calls: list[ToolCall],
+    ) -> list:
         """构建执行时间线"""
         events = []
 
@@ -166,6 +204,32 @@ class TraceService:
                     }
                 )
 
+        for call in tool_calls:
+            events.append(
+                {
+                    "timestamp": to_utc_iso(call.created_at),
+                    "event": "tool_call",
+                    "tool_call_id": call.id,
+                    "node_run_id": call.node_run_id,
+                    "tool_name": call.tool_name,
+                    "status": call.status.value,
+                    "risk_level": call.risk_level.value,
+                    "latency_ms": call.latency_ms,
+                    "_sort_ts": call.created_at,
+                }
+            )
+            if call.approved_at:
+                events.append(
+                    {
+                        "timestamp": to_utc_iso(call.approved_at),
+                        "event": "tool_approval",
+                        "tool_call_id": call.id,
+                        "tool_name": call.tool_name,
+                        "status": call.status.value,
+                        "_sort_ts": call.approved_at,
+                    }
+                )
+
         # 按时间排序
         events.sort(key=self._timeline_sort_epoch)
         return [{k: v for k, v in event.items() if k != "_sort_ts"} for event in events]
@@ -214,6 +278,9 @@ class TraceService:
             "node": _dump_node_run(node),
             "input_artifacts": input_artifacts,
             "output_artifacts": output_artifacts,
+            "tool_calls": [
+                _dump_tool_call(call) for call in await self._get_tool_calls_by_node(node_run_id)
+            ],
         }
 
     async def get_artifact_history(self, artifact_id: str) -> list[dict]:

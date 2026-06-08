@@ -14,6 +14,8 @@ import {
     ChevronDown,
     ChevronRight,
     AlertTriangle,
+    Wrench,
+    ShieldCheck,
 } from 'lucide-react';
 import styles from './TraceViewer.module.css';
 import type { WorkflowGateState, WorkflowTrace, TimelineEvent } from '@/lib/api';
@@ -53,6 +55,7 @@ function isWorkflowGateState(value: unknown): value is WorkflowGateState {
             gateType === 'clarification' ||
             gateType === 'outline_approval' ||
             gateType === 'fact_check' ||
+            gateType === 'tool_approval' ||
             gateType === 'tool_risk_approval'
         ) &&
         (Array.isArray(value.questions) || typeof value.tool_name === 'string')
@@ -193,6 +196,10 @@ function getEventIcon(event: string) {
             return <RefreshCcw size={16} />;
         case 'workflow_gate_waiting':
             return <Hourglass size={16} />;
+        case 'tool_call':
+            return <Wrench size={16} />;
+        case 'tool_approval':
+            return <ShieldCheck size={16} />;
         default:
             return <Info size={16} />;
     }
@@ -216,6 +223,10 @@ function getEventDescription(event: TimelineEvent) {
             return '工作流已恢复';
         case 'workflow_gate_waiting':
             return '工作流等待人工介入';
+        case 'tool_call':
+            return `工具调用: ${event.tool_name ?? '-'} (${event.status ?? '-'})`;
+        case 'tool_approval':
+            return `工具审批: ${event.tool_name ?? '-'} (${event.status ?? '-'})`;
         default:
             return event.event;
     }
@@ -309,6 +320,7 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
                         const nodeName = asString(node.node_name);
                         const status = asString(node.status, 'pending');
                         const llmCalls = asArray<Record<string, unknown>>(node.llm_calls);
+                        const toolCalls = asArray<Record<string, unknown>>(node.tool_calls);
                         const inputArtifacts = getArtifacts(node.input_artifact_ids);
                         const outputArtifacts = getArtifacts(node.output_artifact_ids);
                         const expanded = expandedNodeId === nodeId;
@@ -335,6 +347,7 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
                                         <span className={styles.nodeMeta}>
                                             <span><Hourglass size={12} className={styles.nodeMetaIcon} /> {formatDuration(node.duration_ms)}</span>
                                             <span><Bot size={12} className={styles.nodeMetaIcon} /> {llmCalls.length} 次调用</span>
+                                            <span><Wrench size={12} className={styles.nodeMetaIcon} /> {toolCalls.length} 个工具</span>
                                             <span><Package size={12} className={styles.nodeMetaIcon} /> {outputArtifacts.length} 个产物</span>
                                         </span>
                                     </span>
@@ -395,6 +408,30 @@ export function TraceViewer({ trace, focusedNodeId, onNodeClick }: TraceViewerPr
                                                             </div>
                                                         );
                                                     })}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {toolCalls.length > 0 && (
+                                            <div className={styles.detailSection}>
+                                                <h5>工具调用</h5>
+                                                <div className={styles.llmList}>
+                                                    {toolCalls.map((call, callIndex) => (
+                                                        <div key={`${nodeId}-tool-${callIndex}`} className={styles.llmCard}>
+                                                            <div className={styles.llmHeader}>
+                                                                <strong>{asString(call.tool_name)}</strong>
+                                                                <span>{asString(call.status)}</span>
+                                                            </div>
+                                                            <p>
+                                                                <strong>风险：</strong>{asString(call.risk_level)}
+                                                                {' · '}
+                                                                <strong>耗时：</strong>{formatDuration(call.latency_ms)}
+                                                            </p>
+                                                            {typeof call.error_message === 'string' && call.error_message ? (
+                                                                <p><strong>错误：</strong>{call.error_message}</p>
+                                                            ) : null}
+                                                        </div>
+                                                    ))}
                                                 </div>
                                             </div>
                                         )}

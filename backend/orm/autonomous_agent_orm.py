@@ -2,7 +2,7 @@
 
 from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
 
-from core.time import utc_now_naive
+from core.time import normalize_to_utc, utc_now, utc_now_naive
 from db.postgres_store import Base
 from models.autonomous_agent import (
     AgentPlan,
@@ -238,18 +238,30 @@ class ToolCallORM(Base):
     __tablename__ = "tool_calls"
 
     id = Column(String(36), primary_key=True)
-    run_id = Column(String(36), ForeignKey("agent_runs.id"), nullable=False, index=True)
+    run_id = Column(String(36), ForeignKey("agent_runs.id"), nullable=True, index=True)
     step_id = Column(String(36), nullable=True, index=True)
-    tool_name = Column(String(100), nullable=False, index=True)
+    workspace_id = Column(String(36), ForeignKey("workspaces.id"), nullable=True, index=True)
+    workflow_run_id = Column(String(36), ForeignKey("workflow_runs.id"), nullable=True, index=True)
+    node_run_id = Column(String(36), ForeignKey("node_runs.id"), nullable=True, index=True)
+    tool_name = Column(String(160), nullable=False, index=True)
+    tool_version = Column(String(40), nullable=False, default="1.0.0")
+    source_type = Column(String(40), nullable=False, default="internal")
     input_json = Column(JSON, default=dict)
     output_json = Column(JSON, default=dict)
     status = Column(String(32), nullable=False, index=True)
-    risk_level = Column(String(32), nullable=False)
+    risk_level = Column(String(40), nullable=False)
     error_message = Column(Text, nullable=True)
     latency_ms = Column(Integer, nullable=True)
     cost = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=utc_now_naive)
-    completed_at = Column(DateTime, nullable=True)
+    token_cost = Column(Integer, nullable=True)
+    money_cost = Column(Float, nullable=True)
+    requires_approval = Column(Integer, nullable=False, default=0)
+    approved_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     metadata_json = Column(JSON, default=dict)
 
     def to_model(self) -> ToolCall:
@@ -271,6 +283,45 @@ class ToolCallORM(Base):
             metadata=self.metadata_json or {},
         )
 
+    def to_workflow_model(self):
+        """转换为工作流 Tool Factory 的工具调用模型。"""
+        from tools.schemas import (
+            RiskLevel,
+            ToolSourceType,
+        )
+        from tools.schemas import (
+            ToolCall as WorkflowToolCall,
+        )
+        from tools.schemas import (
+            ToolCallStatus as WorkflowToolCallStatus,
+        )
+
+        return WorkflowToolCall(
+            id=self.id,
+            workspace_id=self.workspace_id,
+            workflow_run_id=self.workflow_run_id,
+            node_run_id=self.node_run_id,
+            tool_name=self.tool_name,
+            tool_version=self.tool_version or "1.0.0",
+            source_type=ToolSourceType(self.source_type or ToolSourceType.INTERNAL.value),
+            risk_level=RiskLevel(self.risk_level),
+            status=WorkflowToolCallStatus(self.status),
+            input_json=self.input_json or {},
+            output_json=self.output_json,
+            error_message=self.error_message,
+            latency_ms=self.latency_ms,
+            token_cost=self.token_cost,
+            money_cost=self.money_cost,
+            requires_approval=bool(self.requires_approval),
+            approved_by=self.approved_by,
+            approved_at=self.approved_at,
+            created_by=self.created_by,
+            created_at=self.created_at,
+            completed_at=self.completed_at,
+            updated_at=self.updated_at,
+            metadata=self.metadata_json or {},
+        )
+
     @classmethod
     def from_model(cls, model: ToolCall) -> ToolCallORM:
         """从 Pydantic 模型创建 ORM。"""
@@ -288,6 +339,35 @@ class ToolCallORM(Base):
             cost=model.cost,
             created_at=model.created_at,
             completed_at=model.completed_at,
+            metadata_json=model.metadata,
+        )
+
+    @classmethod
+    def from_workflow_model(cls, model) -> ToolCallORM:
+        """从工作流 Tool Factory 模型创建 ORM。"""
+        return cls(
+            id=model.id,
+            workspace_id=model.workspace_id,
+            workflow_run_id=model.workflow_run_id,
+            node_run_id=model.node_run_id,
+            tool_name=model.tool_name,
+            tool_version=model.tool_version,
+            source_type=model.source_type.value,
+            input_json=model.input_json,
+            output_json=model.output_json,
+            status=model.status.value,
+            risk_level=model.risk_level.value,
+            error_message=model.error_message,
+            latency_ms=model.latency_ms,
+            token_cost=model.token_cost,
+            money_cost=model.money_cost,
+            requires_approval=1 if model.requires_approval else 0,
+            approved_by=model.approved_by,
+            approved_at=_to_aware_datetime(model.approved_at),
+            created_by=model.created_by,
+            created_at=_to_aware_datetime(model.created_at),
+            completed_at=_to_aware_datetime(getattr(model, "completed_at", None)),
+            updated_at=_to_aware_datetime(model.updated_at),
             metadata_json=model.metadata,
         )
 
@@ -338,6 +418,13 @@ class EvalResultORM(Base):
             created_at=model.created_at,
             metadata_json=model.metadata,
         )
+
+
+def _to_aware_datetime(value):
+    """写入 TIMESTAMPTZ 前统一按 UTC 归一，兼容旧 naive UTC 数据。"""
+    if value is None:
+        return None
+    return normalize_to_utc(value)
 
 
 class MemoryRecordORM(Base):

@@ -14,6 +14,7 @@ export type WorkflowStatus =
   | 'needs_clarification'
   | 'awaiting_outline_approval'
   | 'awaiting_fact_check_approval'
+  | 'awaiting_tool_approval'
   | 'completed'
   | 'failed';
 
@@ -23,6 +24,7 @@ export type WorkflowGateType =
   | 'clarification'
   | 'outline_approval'
   | 'fact_check'
+  | 'tool_approval'
   | 'tool_risk_approval';
 export type ApiErrorDomain =
   | 'AUTH'
@@ -511,7 +513,84 @@ export interface WorkflowTrace {
   workflow: Record<string, unknown>;
   nodes: Record<string, unknown>[];
   artifacts: Record<string, Record<string, unknown>>;
+  tool_calls?: Record<string, ToolCallRecord>;
   timeline: TimelineEvent[];
+}
+
+export interface ToolCallRecord {
+  id: string;
+  workspace_id?: string | null;
+  workflow_run_id?: string | null;
+  node_run_id?: string | null;
+  tool_name: string;
+  tool_version: string;
+  source_type: string;
+  risk_level: string;
+  status: string;
+  input_json: Record<string, unknown>;
+  output_json?: unknown;
+  error_message?: string | null;
+  latency_ms?: number | null;
+  token_cost?: number | null;
+  money_cost?: number | null;
+  requires_approval: boolean;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export type ToolSourceType =
+  | 'internal'
+  | 'http'
+  | 'openapi'
+  | 'mcp'
+  | 'langchain'
+  | 'workflow';
+
+export type ToolRiskLevel =
+  | 'read_public'
+  | 'read_private'
+  | 'write_internal'
+  | 'external_action'
+  | 'destructive';
+
+export interface ToolSpec {
+  name: string;
+  title?: string | null;
+  description: string;
+  category: string;
+  version: string;
+  source_type: ToolSourceType | string;
+  input_schema: Record<string, unknown>;
+  output_schema?: Record<string, unknown> | null;
+  annotations: Record<string, unknown>;
+  risk_level: ToolRiskLevel | string;
+  permissions: string[];
+  requires_approval: boolean;
+  timeout_seconds: number;
+  retry_policy?: Record<string, unknown> | null;
+  cost_policy?: Record<string, unknown> | null;
+  enabled: boolean;
+  metadata: Record<string, unknown>;
+}
+
+export interface ToolExecutionResult {
+  success: boolean;
+  output?: unknown;
+  summary?: string | null;
+  state_patch?: Record<string, unknown>;
+  artifact_ids?: string[];
+  metadata?: Record<string, unknown>;
+  requires_approval?: boolean;
+  approval_request?: Record<string, unknown> | null;
+  error?: {
+    code: string;
+    message: string;
+    details?: unknown;
+  } | null;
 }
 
 export interface WorkflowEventSnapshot {
@@ -585,6 +664,9 @@ export interface TimelineEvent {
   current_node?: string;
   gate_type?: WorkflowGateType;
   questions?: WorkflowGateQuestion[];
+  tool_call_id?: string;
+  tool_name?: string;
+  risk_level?: string;
 }
 
 export interface WorkflowConnectedEvent {
@@ -1377,6 +1459,21 @@ export const workflowApi = {
       }),
     }),
 
+  approveToolCall: (
+    workflowRunId: string,
+    toolCallId: string,
+    action: 'approve' | 'deny',
+    reason?: string
+  ) =>
+    request<WorkflowResponse>(`/workflow/${workflowRunId}/approve-tool-call`, {
+      method: 'POST',
+      body: JSON.stringify({
+        tool_call_id: toolCallId,
+        action,
+        reason,
+      }),
+    }),
+
   // 手动暂停
   pause: (workflowRunId: string, reason?: string) =>
     request<WorkflowResponse>(`/workflow/${workflowRunId}/pause`, {
@@ -1592,6 +1689,63 @@ export const traceApi = {
   // 获取节点详情
   getNodeDetail: (nodeRunId: string) =>
     request<Record<string, unknown>>(`/trace/node/${nodeRunId}`),
+};
+
+export const toolApi = {
+  listTools: (options: { category?: string; query?: string; includeDisabled?: boolean } = {}) => {
+    const params = new URLSearchParams();
+    if (options.category) params.set('category', options.category);
+    if (options.query) params.set('query', options.query);
+    if (options.includeDisabled) params.set('include_disabled', 'true');
+    const query = params.toString();
+    return request<{ tools: ToolSpec[]; categories: string[] }>(
+      `/tools${query ? `?${query}` : ''}`
+    );
+  },
+
+  getTool: (toolName: string) =>
+    request<{ tool: ToolSpec; mcp_tool: Record<string, unknown> }>(
+      `/tools/${encodeURIComponent(toolName)}`
+    ),
+
+  execute: (
+    toolName: string,
+    input: Record<string, unknown>,
+    options: {
+      workflowRunId?: string;
+      nodeRunId?: string;
+      approvalMode?: 'policy_default' | 'auto' | 'gate_required';
+      existingToolCallId?: string;
+    } = {}
+  ) =>
+    request<ToolExecutionResult>('/tools/execute', {
+      method: 'POST',
+      body: JSON.stringify({
+        tool_name: toolName,
+        input,
+        workflow_run_id: options.workflowRunId,
+        node_run_id: options.nodeRunId,
+        approval_mode: options.approvalMode ?? 'policy_default',
+        existing_tool_call_id: options.existingToolCallId,
+      }),
+    }),
+
+  approveToolCall: (toolCallId: string, action: 'approve' | 'deny', reason?: string) =>
+    request<{ tool_call: ToolCallRecord }>(
+      `/tool-calls/${encodeURIComponent(toolCallId)}/approval`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ action, reason }),
+      }
+    ),
+
+  listToolCalls: (workflowRunId: string) =>
+    request<{ tool_calls: ToolCallRecord[] }>(
+      `/tool-calls?workflow_run_id=${encodeURIComponent(workflowRunId)}`
+    ),
+
+  getToolCall: (toolCallId: string) =>
+    request<{ tool_call: ToolCallRecord }>(`/tool-calls/${encodeURIComponent(toolCallId)}`),
 };
 
 // 审计日志 API

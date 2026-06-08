@@ -273,6 +273,16 @@
   --node-type-text: #c2410c;
 }
 
+.toolNode {
+  --node-accent: #14b8a6;
+  --node-accent-soft: rgba(20, 184, 166, 0.14);
+  --node-type-text: #99f6e4;
+}
+
+:global(html[data-theme='light']) .toolNode {
+  --node-type-text: #0f766e;
+}
+
 .outputNode {
   --node-accent: #a855f7;
   --node-accent-soft: rgba(168, 85, 247, 0.14);

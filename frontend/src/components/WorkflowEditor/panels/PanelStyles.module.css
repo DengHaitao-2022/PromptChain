@@ -147,7 +147,8 @@
 }
 
 .configInput,
-.configSelect {
+.configSelect,
+.configTextarea {
   width: 100%;
   padding: 10px 12px;
   font-size: 0.9rem;
@@ -159,7 +160,8 @@
 }
 
 .configInput:focus,
-.configSelect:focus {
+.configSelect:focus,
+.configTextarea:focus {
   outline: none;
   border-color: var(--console-border-strong);
   box-shadow: 0 0 0 4px var(--console-focus-ring);
@@ -167,4 +169,19 @@
 
 .configSelect {
   cursor: pointer;
+}
+
+.configTextarea {
+  min-height: 132px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height: 1.5;
+}
+
+.configCheckbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--console-text-secondary);
+  font-size: 0.9rem;
 }

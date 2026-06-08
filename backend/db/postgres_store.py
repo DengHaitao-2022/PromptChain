@@ -335,6 +335,74 @@ def _runtime_upgrade_statements(database_url: str) -> list[str]:
         "CREATE INDEX IF NOT EXISTS ix_kb_eval_runs_user_created ON kb_retrieval_evaluation_runs (user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS ix_kb_eval_runs_type_created ON kb_retrieval_evaluation_runs (evaluation_type, created_at DESC)",
         """
+        CREATE TABLE IF NOT EXISTS tool_calls (
+            id VARCHAR(36) PRIMARY KEY,
+            run_id VARCHAR(36) REFERENCES agent_runs(id),
+            step_id VARCHAR(36),
+            workspace_id VARCHAR(36) REFERENCES workspaces(id),
+            workflow_run_id VARCHAR(36) REFERENCES workflow_runs(id),
+            node_run_id VARCHAR(36) REFERENCES node_runs(id),
+            tool_name VARCHAR(160) NOT NULL,
+            tool_version VARCHAR(40) NOT NULL DEFAULT '1.0.0',
+            source_type VARCHAR(40) NOT NULL DEFAULT 'internal',
+            risk_level VARCHAR(40) NOT NULL DEFAULT 'read_public',
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            input_json JSON NOT NULL DEFAULT '{}'::json,
+            output_json JSON,
+            error_message TEXT,
+            latency_ms INTEGER,
+            cost JSON DEFAULT '{}'::json,
+            token_cost INTEGER,
+            money_cost DOUBLE PRECISION,
+            requires_approval INTEGER NOT NULL DEFAULT 0,
+            approved_by VARCHAR(36) REFERENCES users(id),
+            approved_at TIMESTAMPTZ,
+            created_by VARCHAR(36) REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT now(),
+            completed_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ DEFAULT now(),
+            metadata_json JSON DEFAULT '{}'::json
+        )
+        """,
+        "ALTER TABLE tool_calls ALTER COLUMN run_id DROP NOT NULL",
+        "ALTER TABLE tool_calls ALTER COLUMN tool_name TYPE VARCHAR(160)",
+        "ALTER TABLE tool_calls ALTER COLUMN risk_level TYPE VARCHAR(40)",
+        "ALTER TABLE tool_calls ALTER COLUMN status TYPE VARCHAR(40)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(36) REFERENCES workspaces(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS workflow_run_id VARCHAR(36) REFERENCES workflow_runs(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS node_run_id VARCHAR(36) REFERENCES node_runs(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS tool_version VARCHAR(40) NOT NULL DEFAULT '1.0.0'",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS source_type VARCHAR(40) NOT NULL DEFAULT 'internal'",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS cost JSON DEFAULT '{}'::json",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS token_cost INTEGER",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS money_cost DOUBLE PRECISION",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS requires_approval INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS approved_by VARCHAR(36) REFERENCES users(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS created_by VARCHAR(36) REFERENCES users(id)",
+        "ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now()",
+        "CREATE INDEX IF NOT EXISTS ix_tool_calls_workflow_created ON tool_calls (workflow_run_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_tool_calls_node_created ON tool_calls (node_run_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_tool_calls_workspace_status ON tool_calls (workspace_id, status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_tool_calls_name_created ON tool_calls (tool_name, created_at DESC)",
+        """
+        CREATE TABLE IF NOT EXISTS workspace_tool_policies (
+            id VARCHAR(36) PRIMARY KEY,
+            workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id),
+            tool_name VARCHAR(160) NOT NULL,
+            auto_run_enabled BOOLEAN NOT NULL DEFAULT false,
+            created_by VARCHAR(36) NOT NULL REFERENCES users(id),
+            updated_by VARCHAR(36) NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now(),
+            metadata_json JSON DEFAULT '{}'::json,
+            CONSTRAINT uq_workspace_tool_policy UNIQUE (workspace_id, tool_name)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tool_policies_workspace_id ON workspace_tool_policies (workspace_id)",
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tool_policies_tool_name ON workspace_tool_policies (tool_name)",
+        "CREATE INDEX IF NOT EXISTS ix_workspace_tool_policies_workspace_tool ON workspace_tool_policies (workspace_id, tool_name)",
+        """
         DO $$
         BEGIN
             IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
@@ -629,6 +697,7 @@ class PostgresArtifactStore:
             "models.admin_orm",
             "models.workflow_orm",
             "orm.knowledge_orm",
+            "orm.tool_orm",
             "orm.autonomous_agent_orm",
             "orm.scenario_orm",
         ):
@@ -882,6 +951,91 @@ class PostgresArtifactStore:
             )
             orm = result.scalars().first()
             return orm.to_model() if orm else None
+
+        return await self._run_with_session(_operation)
+
+    async def create_tool_call(self, tool_call):
+        """创建工具调用审计记录。"""
+
+        async def _operation(session: AsyncSession):
+            from orm.tool_orm import ToolCallORM
+
+            orm = ToolCallORM.from_workflow_model(tool_call)
+            session.add(orm)
+            await session.commit()
+            return tool_call
+
+        return await self._run_with_session(_operation)
+
+    async def update_tool_call(self, tool_call):
+        """更新工具调用审计记录。"""
+
+        async def _operation(session: AsyncSession):
+            from orm.tool_orm import ToolCallORM
+
+            result = await session.execute(
+                select(ToolCallORM).where(ToolCallORM.id == tool_call.id)
+            )
+            orm = result.scalar_one_or_none()
+            if orm:
+                orm.status = tool_call.status.value
+                orm.output_json = tool_call.output_json
+                orm.error_message = tool_call.error_message
+                orm.latency_ms = tool_call.latency_ms
+                orm.token_cost = tool_call.token_cost
+                orm.money_cost = tool_call.money_cost
+                orm.completed_at = tool_call.completed_at
+                orm.requires_approval = 1 if tool_call.requires_approval else 0
+                orm.approved_by = tool_call.approved_by
+                orm.approved_at = tool_call.approved_at
+                orm.updated_at = tool_call.updated_at
+                orm.metadata_json = tool_call.metadata
+                await session.commit()
+            return tool_call
+
+        return await self._run_with_session(_operation)
+
+    async def get_tool_call(self, tool_call_id: str):
+        """获取工具调用记录。"""
+
+        async def _operation(session: AsyncSession):
+            from orm.tool_orm import ToolCallORM
+
+            result = await session.execute(
+                select(ToolCallORM).where(ToolCallORM.id == tool_call_id)
+            )
+            orm = result.scalar_one_or_none()
+            return orm.to_workflow_model() if orm else None
+
+        return await self._run_with_session(_operation)
+
+    async def list_tool_calls_by_workflow(self, workflow_run_id: str):
+        """获取工作流下的所有工具调用。"""
+
+        async def _operation(session: AsyncSession):
+            from orm.tool_orm import ToolCallORM
+
+            result = await session.execute(
+                select(ToolCallORM)
+                .where(ToolCallORM.workflow_run_id == workflow_run_id)
+                .order_by(ToolCallORM.created_at)
+            )
+            return [orm.to_workflow_model() for orm in result.scalars().all()]
+
+        return await self._run_with_session(_operation)
+
+    async def list_tool_calls_by_node(self, node_run_id: str):
+        """获取节点下的所有工具调用。"""
+
+        async def _operation(session: AsyncSession):
+            from orm.tool_orm import ToolCallORM
+
+            result = await session.execute(
+                select(ToolCallORM)
+                .where(ToolCallORM.node_run_id == node_run_id)
+                .order_by(ToolCallORM.created_at)
+            )
+            return [orm.to_workflow_model() for orm in result.scalars().all()]
 
         return await self._run_with_session(_operation)
 

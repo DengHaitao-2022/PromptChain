@@ -18,6 +18,7 @@ class GraphState(TypedDict, total=False):
     workflow_run_id: str
     workspace_id: str | None
     user_id: str | None
+    workspace_role: str | None
     model_provider_id: str | None
     model_provider_name: str | None
     model_name: str | None
@@ -83,6 +84,13 @@ class GraphState(TypedDict, total=False):
     fact_check_decisions: dict[str, str] | None
     manual_corrections: dict[str, str] | None
     fact_corrections: dict[str, dict[str, str]] | None
+
+    # 工具执行
+    tool_results: dict[str, Any]
+    tool_call_ids: list[str]
+    tool_phase_completed: dict[str, bool]
+    awaiting_tool_approval: bool
+    tool_approvals: dict[str, str] | None
 
     # 错误处理
     error: str | None

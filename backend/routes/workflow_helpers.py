@@ -36,11 +36,13 @@ WorkflowStatus = Literal[
     "needs_clarification",
     "awaiting_outline_approval",
     "awaiting_fact_check_approval",
+    "awaiting_tool_approval",
     "completed",
     "failed",
 ]
 OutlineAction = Literal["approve", "modify", "regenerate"]
 FactCheckDecision = Literal["confirm", "use_suggestion", "manual"]
+ToolApprovalDecision = Literal["approve", "deny"]
 
 
 # ==================== 请求/响应模型 ====================
@@ -81,6 +83,14 @@ class ApproveFactCheckRequest(BaseModel):
 
     decisions: dict[str, FactCheckDecision]
     manual_corrections: dict[str, str] = Field(default_factory=dict)
+
+
+class ApproveToolCallRequest(BaseModel):
+    """工具风险审批请求"""
+
+    tool_call_id: str
+    action: ToolApprovalDecision
+    reason: str | None = None
 
 
 class PauseWorkflowRequest(BaseModel):
@@ -150,9 +160,11 @@ _GATE_STATUS_TO_TYPE: dict[str, str] = {
     "needs_clarification": "clarification",
     "awaiting_outline_approval": "outline_approval",
     "awaiting_fact_check_approval": "fact_check",
+    "awaiting_tool_approval": "tool_approval",
 }
 _GATE_TYPE_ALIASES: dict[str, str] = {
     "fact_check_approval": "fact_check",
+    "tool_risk_approval": "tool_approval",
 }
 _GATE_STATUSES = set(_GATE_STATUS_TO_TYPE)
 
@@ -169,6 +181,7 @@ def _normalize_status(value: Any) -> WorkflowStatus:
         "needs_clarification",
         "awaiting_outline_approval",
         "awaiting_fact_check_approval",
+        "awaiting_tool_approval",
         "completed",
         "failed",
     }:
@@ -371,6 +384,18 @@ def _quality_metrics(workflow_run: Any | None) -> dict[str, Any] | None:
         "quality_score_count": 0,
         "revisions_requested": 0,
         "fact_check": None,
+        "tools": {
+            "total_calls": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "pending_approval": 0,
+            "denied": 0,
+            "timeout": 0,
+            "total_latency_ms": 0,
+            "total_token_cost": 0,
+            "total_money_cost": 0,
+            "by_tool": {},
+        },
         "tokens": {
             "total": getattr(workflow_run, "total_tokens", 0),
             "llm_call_count": getattr(workflow_run, "total_llm_calls", 0),
@@ -1067,6 +1092,47 @@ def _build_fact_check_gate_questions(state: dict) -> list[dict[str, Any]]:
     return questions
 
 
+def _build_tool_gate_questions(
+    state: dict,
+    gate_metadata: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """构建工具风险审批 Gate 的问题列表。"""
+    metadata = gate_metadata or {}
+    questions = metadata.get("questions")
+    if isinstance(questions, list) and questions:
+        return questions
+
+    tool_call_id = metadata.get("tool_call_id")
+    step_id = metadata.get("tool_step_id")
+    tool_results = state.get("tool_results") if isinstance(state.get("tool_results"), dict) else {}
+    approval_request: dict[str, Any] = {}
+    if tool_call_id:
+        for result in tool_results.values():
+            if not isinstance(result, dict):
+                continue
+            if result.get("tool_call_id") == tool_call_id:
+                raw_request = result.get("approval_request")
+                if isinstance(raw_request, dict):
+                    approval_request = raw_request
+                break
+    elif step_id and isinstance(tool_results.get(str(step_id)), dict):
+        raw_request = tool_results[str(step_id)].get("approval_request")
+        if isinstance(raw_request, dict):
+            approval_request = raw_request
+
+    return [
+        {
+            "question": "请确认是否允许执行该工具调用。",
+            "tool_call_id": tool_call_id or approval_request.get("tool_call_id"),
+            "tool_name": metadata.get("tool_name") or approval_request.get("tool_name"),
+            "risk_level": metadata.get("risk_level") or approval_request.get("risk_level"),
+            "required_permissions": approval_request.get("required_permissions") or [],
+            "input_preview": approval_request.get("input_preview"),
+            "action_options": ["approve", "deny"],
+        }
+    ]
+
+
 def _normalize_gate_state(
     status: WorkflowStatus | None,
     state: dict,
@@ -1089,10 +1155,14 @@ def _normalize_gate_state(
         questions = gate_metadata.get("questions") or _build_outline_gate_questions(state)
         answers = state.get("user_decision")
         trigger_reason = gate_metadata.get("trigger_reason") or "outline_review"
-    else:
+    elif gate_type == "fact_check":
         questions = gate_metadata.get("questions") or _build_fact_check_gate_questions(state)
         answers = state.get("fact_check_decisions") or state.get("manual_corrections")
         trigger_reason = gate_metadata.get("trigger_reason") or "fact_risk"
+    else:
+        questions = _build_tool_gate_questions(state, gate_metadata)
+        answers = state.get("tool_approvals") or gate_metadata.get("answers")
+        trigger_reason = gate_metadata.get("trigger_reason") or "tool_risk"
 
     opened_at = _coerce_iso(gate_metadata.get("opened_at"))
     handled_at = _coerce_iso(gate_metadata.get("handled_at"))

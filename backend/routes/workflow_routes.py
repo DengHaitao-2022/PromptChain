@@ -31,6 +31,7 @@ from routes.workflow_helpers import (
     _GATE_STATUSES,
     ApproveFactCheckRequest,
     ApproveOutlineRequest,
+    ApproveToolCallRequest,
     ClarifyRequest,
     PauseWorkflowRequest,
     RerunRequest,
@@ -152,6 +153,26 @@ def _workflow_run_snapshot(workflow_run) -> dict:
     }
 
 
+def _assert_tool_gate_call_matches(workflow_run, tool_call_id: str) -> None:
+    """确保审批请求命中当前 Tool Gate 等待的调用记录。"""
+    metadata = getattr(workflow_run, "metadata", None) or {}
+    gate_metadata = (
+        metadata.get("gate")
+        if isinstance(metadata, dict) and isinstance(metadata.get("gate"), dict)
+        else {}
+    )
+    expected_tool_call_id = gate_metadata.get("tool_call_id")
+    if expected_tool_call_id and expected_tool_call_id != tool_call_id:
+        raise DomainError(
+            code=WORKFLOW_GATE_CONFLICT,
+            message="工具审批目标与当前 Gate 不匹配。",
+            details={
+                "expected_tool_call_id": expected_tool_call_id,
+                "received_tool_call_id": tool_call_id,
+            },
+        )
+
+
 async def _audit_actor_context(request: Request, workflow_run) -> tuple[str, str]:
     from routes.auth_routes import get_current_user
 
@@ -201,7 +222,7 @@ async def _start_workflow_run(
     """启动工作流的共享实现，JSON 与带上传文件入口保持一致。"""
     from graph import get_workflow
 
-    user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
+    user_id, workspace_id, role = await workflow_helpers.require_workspace_permission(
         request, "workflow", "execute"
     )
     scenario_code = body.scenario_code
@@ -236,6 +257,7 @@ async def _start_workflow_run(
         "workflow_version_id": workflow_version_id,
         "workspace_id": workspace_id,
         "user_id": user_id,
+        "workspace_role": role.value if hasattr(role, "value") else str(role),
         "model_provider_id": body.model_provider_id,
         "model_name": body.model_name,
         "retrieval_config": body.retrieval_config,
@@ -681,6 +703,60 @@ async def approve_fact_check(workflow_run_id: str, request: Request, body: Appro
         raise
     except Exception as exc:
         logger.exception("事实核查审批失败: workflow_run_id=%s", workflow_run_id)
+        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
+
+
+@router.post("/{workflow_run_id}/approve-tool-call", response_model=WorkflowResponse)
+async def approve_tool_call(workflow_run_id: str, request: Request, body: ApproveToolCallRequest):
+    """处理工具风险审批。"""
+    try:
+        access_workflow_run = await workflow_helpers.require_workflow_run_access(
+            request, workflow_run_id, resource="workflow", action="execute"
+        )
+        _, workflow, workflow_run, _, status = await _load_runtime_context(workflow_run_id)
+        _assert_status(
+            status,
+            allowed={"awaiting_tool_approval"},
+            action="工具审批",
+            paused_detail="当前工作流已手动暂停，请先恢复后再处理工具审批。",
+        )
+        _assert_tool_gate_call_matches(workflow_run, body.tool_call_id)
+        actor_user_id, workspace_id = await _audit_actor_context(request, access_workflow_run)
+        result = await workflow.approve_tool_call(
+            workflow_run_id=workflow_run_id,
+            tool_call_id=body.tool_call_id,
+            action=body.action,
+            approved_by=actor_user_id,
+            reason=body.reason,
+        )
+        refreshed_workflow_run = await _get_workflow_run_if_exists(workflow_run_id) or workflow_run
+        await _record_workflow_audit(
+            request,
+            actor_user_id=actor_user_id,
+            workspace_id=workspace_id,
+            action=AuditAction.WORKFLOW_APPROVE,
+            workflow_run_id=workflow_run_id,
+            detail={
+                "gate_type": "tool_approval",
+                "tool_call_id": body.tool_call_id,
+                "decision": body.action,
+                "has_reason": bool(body.reason),
+            },
+            workflow_run=refreshed_workflow_run,
+        )
+        return _build_workflow_response(
+            workflow_run_id=result["workflow_run_id"],
+            status=_normalize_status(result["status"]),
+            state=result["state"],
+            workflow_run=refreshed_workflow_run,
+            viewer_user_id=workflow_helpers.get_request_user_id(request),
+        )
+    except PromptChainError:
+        raise
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("工具审批失败: workflow_run_id=%s", workflow_run_id)
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR) from exc
 
 

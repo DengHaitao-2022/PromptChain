@@ -50,6 +50,16 @@ class Settings:
             "WORKFLOW_EVENT_BUS_REDIS_CHANNEL_PREFIX",
             "promptchain:workflow-events",
         )
+        self.TOOL_RATE_LIMIT_BACKEND: str = os.getenv(
+            "TOOL_RATE_LIMIT_BACKEND",
+            self.WORKFLOW_EVENT_BUS_BACKEND,
+        ).lower()
+        if self.TOOL_RATE_LIMIT_BACKEND not in {"memory", "redis"}:
+            raise RuntimeError("TOOL_RATE_LIMIT_BACKEND 仅支持 memory 或 redis")
+        self.TOOL_RATE_LIMIT_REDIS_PREFIX: str = os.getenv(
+            "TOOL_RATE_LIMIT_REDIS_PREFIX",
+            "promptchain:tool-rate",
+        )
 
         # LLM 配置 - 关键修改：这里现在在 __init__ 中读取，支持 monkeypatch
         self.DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "openai")

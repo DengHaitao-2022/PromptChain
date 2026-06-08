@@ -10,6 +10,7 @@ from .intent_parser import clarify_intent, parse_intent
 from .knowledge_retriever import retrieve_knowledge
 from .outline_generator import approve_outline, generate_outline
 from .self_refiner import self_refine_loop
+from .tool_runner import run_post_content_tools, run_pre_finalize_tools, run_pre_outline_tools
 
 __all__ = [
     # intent_parser
@@ -25,6 +26,10 @@ __all__ = [
     "regenerate_section",
     # self_refiner
     "self_refine_loop",
+    # tool_runner
+    "run_pre_outline_tools",
+    "run_post_content_tools",
+    "run_pre_finalize_tools",
     # fact_checker
     "check_facts",
     "approve_fact_check",

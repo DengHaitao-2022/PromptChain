@@ -62,6 +62,11 @@ class AuditAction(StrEnum):
     WORKFLOW_RERUN = "workflow.rerun"
     WORKFLOW_RESTORE = "workflow.restore"
 
+    # 工具治理相关
+    TOOL_EXECUTE = "tool.execute"
+    TOOL_APPROVE = "tool.approve"
+    TOOL_POLICY_UPDATE = "tool.policy_update"
+
     # 配置相关
     MODEL_PROVIDER_CREATE = "model_provider.create"
     MODEL_PROVIDER_UPDATE = "model_provider.update"

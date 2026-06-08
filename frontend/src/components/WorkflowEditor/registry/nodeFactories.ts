@@ -3,7 +3,7 @@
  * 为什么这样分层：把默认的 5 类节点统一通过 registry 进行声明，分离具体的 UI 组件与其配置元数据。
  */
 
-import { FileInput, Cpu, UserCheck, ShieldCheck, FileOutput } from 'lucide-react';
+import { Cpu, FileInput, FileOutput, ShieldCheck, UserCheck, Wrench } from 'lucide-react';
 import { registry } from './index';
 
 // 节点组件
@@ -12,6 +12,7 @@ import ProcessNode from '../nodes/ProcessNode';
 import GateNode from '../nodes/GateNode';
 import CheckerNode from '../nodes/CheckerNode';
 import OutputNode from '../nodes/OutputNode';
+import ToolNode from '../nodes/ToolNode';
 
 // 配置 Schema
 import {
@@ -20,6 +21,7 @@ import {
     gateSchema,
     checkerSchema,
     outputSchema,
+    toolSchema,
 } from './nodeSchemas';
 
 export function registerDefaultNodes() {
@@ -57,6 +59,36 @@ export function registerDefaultNodes() {
         component: GateNode,
         formSchema: gateSchema,
         defaultData: { config: { gateType: 'approval', timeout: 3600, autoApproveThreshold: 0.95 } },
+    });
+
+    registry.register({
+        type: 'tool',
+        title: '工具节点',
+        category: '工具',
+        description: '调用 Tool Registry 中的受控工具',
+        icon: Wrench,
+        color: '#14b8a6', // teal-500
+        component: ToolNode,
+        formSchema: toolSchema,
+        defaultData: {
+            config: {
+                toolName: 'validation.json_schema_validate',
+                executionPhase: 'pre_outline',
+                approvalMode: 'policy_default',
+                failureStrategy: 'terminate',
+                maxAttempts: 2,
+                input: {
+                    schema: { type: 'object' },
+                    instance: {},
+                },
+                inputMapping: {},
+                outputMapping: {
+                    stateKey: 'tool_result',
+                    persistArtifact: false,
+                    artifactType: 'tool_result',
+                },
+            },
+        },
     });
 
     registry.register({

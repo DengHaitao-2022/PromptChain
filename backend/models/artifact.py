@@ -31,6 +31,7 @@ class ArtifactType(StrEnum):
     SECTION_CONTENT = "section_content"
     REFINEMENT_FEEDBACK = "refinement_feedback"
     FINAL_CONTENT = "final_content"
+    TOOL_RESULT = "tool_result"
     SCENARIO_CHECK_REPORT = "scenario_check_report"
     PROJECT_MEMORY_UPDATE_CANDIDATES = "project_memory_update_candidates"
     AGENT_PLAN = "agent_plan"

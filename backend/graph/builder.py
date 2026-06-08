@@ -16,9 +16,14 @@ from langgraph.graph import END, StateGraph
 from core.time import utc_now_naive
 from graph.conditions import (
     should_clarify,
+    should_continue_after_post_content_tools,
+    should_continue_after_pre_finalize_tools,
+    should_continue_after_pre_outline_tools,
     should_proceed_after_fact_check,
     should_regenerate_outline,
     should_run_fact_check,
+    should_run_pre_finalize_tools,
+    should_run_pre_outline_tools,
     should_run_self_refine,
 )
 from graph.state import GraphState
@@ -32,6 +37,9 @@ from nodes import (
     generate_outline,
     parse_intent,
     retrieve_knowledge,
+    run_post_content_tools,
+    run_pre_finalize_tools,
+    run_pre_outline_tools,
     self_refine_loop,
 )
 from services import get_artifact_store, get_postgres_checkpoint_saver
@@ -163,11 +171,13 @@ def build_content_generation_graph():
     graph.add_node("retrieve_knowledge", retrieve_knowledge)
 
     # 提纲生成
+    graph.add_node("run_pre_outline_tools", run_pre_outline_tools)
     graph.add_node("generate_outline", generate_outline)
     graph.add_node("approve_outline", approve_outline)
 
     # 内容生成
     graph.add_node("generate_content", generate_all_sections)
+    graph.add_node("run_post_content_tools", run_post_content_tools)
 
     # 自检修订
     graph.add_node("self_refine", self_refine_loop)
@@ -177,6 +187,7 @@ def build_content_generation_graph():
     graph.add_node("approve_fact_check", approve_fact_check)
 
     # 最终处理
+    graph.add_node("run_pre_finalize_tools", run_pre_finalize_tools)
     graph.add_node("finalize", finalize_output)
 
     # ==================== 设置边 ====================
@@ -193,7 +204,19 @@ def build_content_generation_graph():
 
     # 澄清后 → 提纲
     graph.add_edge("clarify_intent", "retrieve_knowledge")
-    graph.add_edge("retrieve_knowledge", "generate_outline")
+    graph.add_conditional_edges(
+        "retrieve_knowledge",
+        should_run_pre_outline_tools,
+        {
+            "run_pre_outline_tools": "run_pre_outline_tools",
+            "generate_outline": "generate_outline",
+        },
+    )
+    graph.add_conditional_edges(
+        "run_pre_outline_tools",
+        should_continue_after_pre_outline_tools,
+        {"generate_outline": "generate_outline", END: END},
+    )
 
     # 提纲生成 -> 条件分支(等待审批或继续)
     graph.add_conditional_edges(
@@ -220,14 +243,31 @@ def build_content_generation_graph():
         should_run_self_refine,
         {
             "self_refine": "self_refine",
+            "run_post_content_tools": "run_post_content_tools",
             "check_facts": "check_facts",
+            "run_pre_finalize_tools": "run_pre_finalize_tools",
             "finalize": "finalize",
+        },
+    )
+    graph.add_conditional_edges(
+        "run_post_content_tools",
+        should_continue_after_post_content_tools,
+        {
+            "self_refine": "self_refine",
+            "check_facts": "check_facts",
+            "run_pre_finalize_tools": "run_pre_finalize_tools",
+            "finalize": "finalize",
+            END: END,
         },
     )
     graph.add_conditional_edges(
         "self_refine",
         should_run_fact_check,
-        {"check_facts": "check_facts", "finalize": "finalize"},
+        {
+            "check_facts": "check_facts",
+            "run_pre_finalize_tools": "run_pre_finalize_tools",
+            "finalize": "finalize",
+        },
     )
 
     # 事实核查 -> 条件分支(高风险项需要用户确认)
@@ -236,13 +276,23 @@ def build_content_generation_graph():
         should_proceed_after_fact_check,
         {
             "approve_fact_check": "approve_fact_check",
+            "run_pre_finalize_tools": "run_pre_finalize_tools",
             "finalize": "finalize",
             END: END,  # 暂停等待用户确认高风险项
         },
     )
 
-    # 事实核查审批 → 最终处理
-    graph.add_edge("approve_fact_check", "finalize")
+    # 事实核查审批 → 按计划进入收尾工具或最终处理
+    graph.add_conditional_edges(
+        "approve_fact_check",
+        should_run_pre_finalize_tools,
+        {"run_pre_finalize_tools": "run_pre_finalize_tools", "finalize": "finalize"},
+    )
+    graph.add_conditional_edges(
+        "run_pre_finalize_tools",
+        should_continue_after_pre_finalize_tools,
+        {"finalize": "finalize", END: END},
+    )
 
     # 最终处理 → 结束
     graph.add_edge("finalize", END)
@@ -265,6 +315,9 @@ def build_content_generation_graph():
             "self_refine",
             "check_facts",
             "retrieve_knowledge",
+            "run_pre_outline_tools",
+            "run_post_content_tools",
+            "run_pre_finalize_tools",
             "approve_fact_check",
             "finalize",
         ],

@@ -98,6 +98,11 @@ def _register_routes(application: FastAPI) -> None:
 
     application.include_router(knowledge_router, prefix="/api", tags=["knowledge"])
 
+    # Tool Factory 路由
+    from routes.tool_routes import router as tool_router
+
+    application.include_router(tool_router, prefix="/api", tags=["tools"])
+
     # MVP3 场景内容项目路由
     from routes.scenario_routes import router as scenario_router
 

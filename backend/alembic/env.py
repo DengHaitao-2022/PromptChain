@@ -26,7 +26,8 @@ import models.auth_orm  # noqa: E402
 import models.workflow_orm  # noqa: F401,E402
 import orm.autonomous_agent_orm  # noqa: E402
 import orm.knowledge_orm  # noqa: E402
-import orm.scenario_orm  # noqa: F401,E402
+import orm.scenario_orm  # noqa: E402
+import orm.tool_orm  # noqa: F401,E402
 from db.postgres_store import Base  # noqa: E402
 
 target_metadata = Base.metadata
