@@ -95,6 +95,24 @@ class _FakeStore:
                     "project_id": "project-2",
                 },
             ),
+            "wf-other-user": WorkflowRun(
+                id="wf-other-user",
+                user_input="他人的同项目运行",
+                status=WorkflowRunStatus.RUNNING,
+                metadata={
+                    "workspace_id": "ws-1",
+                    "user_id": "user-2",
+                    "project_id": "project-1",
+                    "scenario_code": "novel_writing",
+                    "project_memory_update_candidates": [
+                        {
+                            "asset_type": "scene_draft",
+                            "title": "他人候选",
+                            "content": {"text": "不应由当前用户写回"},
+                        }
+                    ],
+                },
+            ),
         }
 
     async def get_workflow_run(self, workflow_run_id: str):
@@ -634,6 +652,17 @@ def test_apply_memory_updates_creates_project_asset(monkeypatch):
     body = response.json()
     assert body["assets"][0]["asset_type"] == "scene_draft"
     assert body["assets"][0]["source_artifact_id"] == "artifact-candidates"
+
+
+def test_apply_memory_updates_requires_workflow_run_owner_access(monkeypatch):
+    client, _, _, _ = _client(monkeypatch)
+
+    response = client.post(
+        "/api/content-projects/project-1/memory-updates/apply",
+        json={"workflow_run_id": "wf-other-user", "candidate_indexes": [0]},
+    )
+
+    assert response.status_code in {403, 404}
 
 
 def test_project_run_rejects_invalid_generation_mode(monkeypatch):

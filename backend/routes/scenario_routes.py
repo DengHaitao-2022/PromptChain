@@ -497,12 +497,8 @@ async def apply_project_memory_updates(
     body: ApplyMemoryUpdatesRequest,
 ) -> ApplyMemoryUpdatesResponse:
     """人工确认后，把工作流生成的记忆候选写回项目资产。"""
-    from services import get_artifact_store
-
     user_id, workspace_id, role = await _project_context(request, action="update")
-    workflow_run = await get_artifact_store().get_workflow_run(body.workflow_run_id)
-    if workflow_run is None:
-        raise HTTPException(status_code=404, detail="工作流运行不存在")
+    workflow_run = await workflow_helpers.require_workflow_run_access(request, body.workflow_run_id)
     metadata = workflow_run.metadata if isinstance(workflow_run.metadata, dict) else {}
     if metadata.get("project_id") != project_id or metadata.get("workspace_id") != workspace_id:
         raise HTTPException(status_code=403, detail="工作流运行不属于当前内容项目")
