@@ -35,6 +35,16 @@ class ProjectAssetEmbeddingStatus(StrEnum):
     FAILED = "failed"
 
 
+class ProjectAssetLifecycleStatus(StrEnum):
+    """项目资产生命周期状态。"""
+
+    DRAFT = "draft"
+    CANDIDATE = "candidate"
+    CANON = "canon"
+    CONFLICT = "conflict"
+    DEPRECATED = "deprecated"
+
+
 class ScenarioTemplate(BaseModel):
     """场景模板读模型。"""
 
@@ -96,6 +106,7 @@ class ProjectAsset(BaseModel):
     version: int = Field(default=1, ge=1)
     source_artifact_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    lifecycle_status: ProjectAssetLifecycleStatus = ProjectAssetLifecycleStatus.CANON
     embedding_status: ProjectAssetEmbeddingStatus = ProjectAssetEmbeddingStatus.SKIPPED
     created_by: str
     created_at: datetime = Field(default_factory=utc_now_naive)

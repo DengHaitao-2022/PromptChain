@@ -18,6 +18,7 @@ from db.postgres_store import Base
 from models.scenario import (
     ContentProjectStatus,
     ProjectAssetEmbeddingStatus,
+    ProjectAssetLifecycleStatus,
     ScenarioTemplateStatus,
 )
 
@@ -107,6 +108,12 @@ class ProjectAssetORM(Base):
     version = Column(Integer, nullable=False, default=1)
     source_artifact_id = Column(String(36), ForeignKey("artifacts.id"), nullable=True, index=True)
     metadata_json = Column(JSON, default=dict, nullable=False)
+    lifecycle_status = Column(
+        String(20),
+        nullable=False,
+        default=ProjectAssetLifecycleStatus.CANON.value,
+        index=True,
+    )
     embedding_status = Column(
         String(20),
         nullable=False,
@@ -125,7 +132,15 @@ class ProjectAssetORM(Base):
         cascade="all, delete-orphan",
     )
 
-    __table_args__ = (Index("ix_project_assets_project_type", "project_id", "asset_type"),)
+    __table_args__ = (
+        Index("ix_project_assets_project_type", "project_id", "asset_type"),
+        Index(
+            "ix_project_assets_project_type_lifecycle",
+            "project_id",
+            "asset_type",
+            "lifecycle_status",
+        ),
+    )
 
 
 class ProjectAssetVersionORM(Base):

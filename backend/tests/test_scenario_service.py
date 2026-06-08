@@ -14,6 +14,7 @@ from models.auth_models import MemberRole
 from models.auth_orm import MembershipORM, UserORM, WorkspaceORM
 from models.fact_check import FactCheckReport
 from models.knowledge import KnowledgeScope, KnowledgeSearchRequest
+from models.scenario import ProjectAssetLifecycleStatus
 from orm.knowledge_orm import KnowledgeBaseORM
 from services.scenario_runtime_service import ScenarioRuntimeService
 from services.scenario_service import ScenarioService
@@ -102,6 +103,7 @@ def test_seed_templates_and_project_asset_versioning(run_with_scenario_session):
             content={"name": "林澈", "trait": "谨慎但执着"},
         )
         assert asset.version == 1
+        assert asset.lifecycle_status == ProjectAssetLifecycleStatus.CANON
 
         with pytest.raises(ValueError, match="资产类型不属于当前场景模板"):
             await service.create_asset(
@@ -118,11 +120,15 @@ def test_seed_templates_and_project_asset_versioning(run_with_scenario_session):
             workspace_id="ws-1",
             user_id="user-owner",
             content={"name": "林澈", "trait": "谨慎但愿意冒险"},
+            lifecycle_status=ProjectAssetLifecycleStatus.CANDIDATE,
         )
         assert updated.version == 2
+        assert updated.lifecycle_status == ProjectAssetLifecycleStatus.CANDIDATE
 
         versions = await service.list_asset_versions(asset_id=asset.id, workspace_id="ws-1")
         assert [version.version for version in versions] == [2, 1]
+        assert versions[0].metadata["lifecycle_status"] == "candidate"
+        assert versions[1].metadata["lifecycle_status"] == "canon"
 
         restored = await service.restore_asset_version(
             asset_id=asset.id,
@@ -132,6 +138,8 @@ def test_seed_templates_and_project_asset_versioning(run_with_scenario_session):
         )
         assert restored.version == 3
         assert restored.content["trait"] == "谨慎但执着"
+        assert restored.lifecycle_status == ProjectAssetLifecycleStatus.CANON
+        assert restored.metadata["restored_from_lifecycle_status"] == "canon"
 
         with pytest.raises(ValueError, match="生成模式不属于当前场景模板"):
             await service.validate_project_run_context(
@@ -139,6 +147,46 @@ def test_seed_templates_and_project_asset_versioning(run_with_scenario_session):
                 workspace_id="ws-1",
                 generation_mode="xiaohongshu_post",
             )
+
+    run_with_scenario_session(scenario)
+
+
+def test_project_asset_lifecycle_statuses_and_filtering(run_with_scenario_session):
+    async def scenario(session):
+        service = ScenarioService(session)
+        project = await service.create_project(
+            workspace_id="ws-1",
+            user_id="user-owner",
+            scenario_code="novel_writing",
+            title="镜海列传",
+        )
+
+        for status in (
+            ProjectAssetLifecycleStatus.DRAFT,
+            ProjectAssetLifecycleStatus.CANDIDATE,
+            ProjectAssetLifecycleStatus.CONFLICT,
+            ProjectAssetLifecycleStatus.DEPRECATED,
+        ):
+            created = await service.create_asset(
+                project_id=project.id,
+                workspace_id="ws-1",
+                user_id="user-owner",
+                asset_type="scene_card",
+                title=f"场景卡：{status.value}",
+                content={"status": status.value},
+                lifecycle_status=status,
+            )
+            assert created.lifecycle_status == status
+
+        candidate_assets = await service.list_assets(
+            project_id=project.id,
+            workspace_id="ws-1",
+            lifecycle_status=ProjectAssetLifecycleStatus.CANDIDATE,
+        )
+
+        assert [asset.lifecycle_status for asset in candidate_assets] == [
+            ProjectAssetLifecycleStatus.CANDIDATE
+        ]
 
     run_with_scenario_session(scenario)
 

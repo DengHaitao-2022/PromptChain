@@ -18,6 +18,7 @@ from models.scenario import (
     ContentProjectStatus,
     ProjectAsset,
     ProjectAssetEmbeddingStatus,
+    ProjectAssetLifecycleStatus,
     ProjectAssetVersion,
     ScenarioTemplate,
     ScenarioTemplateStatus,
@@ -29,6 +30,7 @@ from orm.scenario_orm import (
     ScenarioTemplateORM,
 )
 from services.knowledge_service import KnowledgeService, _row_to_knowledge_base
+from services.novel import NOVEL_ASSET_TYPES
 from services.permission_service import check_permission
 
 DEFAULT_SCENARIO_TEMPLATES: list[dict[str, Any]] = [
@@ -40,7 +42,9 @@ DEFAULT_SCENARIO_TEMPLATES: list[dict[str, Any]] = [
         "schema_version": 1,
         "default_generation_modes": [
             {"code": "initialize_story", "name": "初始化故事资产"},
+            {"code": "plan_scene", "name": "规划场景"},
             {"code": "continue_scene", "name": "续写当前场景"},
+            {"code": "generate_scene", "name": "生成场景正文"},
             {"code": "rewrite_scene", "name": "重写当前场景"},
             {"code": "expand_scene", "name": "扩写场景描写"},
             {"code": "compress_scene", "name": "压缩场景"},
@@ -49,20 +53,7 @@ DEFAULT_SCENARIO_TEMPLATES: list[dict[str, Any]] = [
             {"code": "fix_character_consistency", "name": "修复人物一致性"},
             {"code": "fix_timeline_conflict", "name": "修复时间线冲突"},
         ],
-        "artifact_schema": {
-            "asset_types": [
-                "story_bible",
-                "character_card",
-                "world_setting",
-                "plot_arc",
-                "timeline_event",
-                "chapter_outline",
-                "scene_draft",
-                "style_guide",
-                "foreshadowing_record",
-                "consistency_report",
-            ]
-        },
+        "artifact_schema": {"asset_types": list(NOVEL_ASSET_TYPES)},
         "checker_rules": {
             "required_checks": [
                 "character_consistency_check",
@@ -237,6 +228,9 @@ def _row_to_asset(row: ProjectAssetORM) -> ProjectAsset:
         version=row.version,
         source_artifact_id=row.source_artifact_id,
         metadata=row.metadata_json or {},
+        lifecycle_status=ProjectAssetLifecycleStatus(
+            row.lifecycle_status or ProjectAssetLifecycleStatus.CANON.value
+        ),
         embedding_status=ProjectAssetEmbeddingStatus(row.embedding_status),
         created_by=row.created_by,
         created_at=row.created_at,
@@ -439,11 +433,14 @@ class ScenarioService:
         project_id: str,
         workspace_id: str,
         asset_type: str | None = None,
+        lifecycle_status: ProjectAssetLifecycleStatus | None = None,
     ) -> list[ProjectAsset]:
         await self.get_project(project_id=project_id, workspace_id=workspace_id)
         filters = [ProjectAssetORM.project_id == project_id]
         if asset_type:
             filters.append(ProjectAssetORM.asset_type == asset_type)
+        if lifecycle_status:
+            filters.append(ProjectAssetORM.lifecycle_status == lifecycle_status.value)
         result = await self.session.execute(
             select(ProjectAssetORM)
             .where(and_(*filters))
@@ -462,6 +459,7 @@ class ScenarioService:
         content: Any,
         source_artifact_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        lifecycle_status: ProjectAssetLifecycleStatus = ProjectAssetLifecycleStatus.CANON,
     ) -> ProjectAsset:
         project = await self.get_project(project_id=project_id, workspace_id=workspace_id)
         await self._validate_asset_type(project.scenario_code, asset_type)
@@ -474,6 +472,7 @@ class ScenarioService:
             version=1,
             source_artifact_id=source_artifact_id,
             metadata_json=metadata or {},
+            lifecycle_status=lifecycle_status.value,
             embedding_status=ProjectAssetEmbeddingStatus.SKIPPED.value,
             created_by=user_id,
         )
@@ -521,6 +520,7 @@ class ScenarioService:
         content: Any | None = None,
         source_artifact_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        lifecycle_status: ProjectAssetLifecycleStatus | None = None,
         embedding_status: ProjectAssetEmbeddingStatus | None = None,
     ) -> ProjectAsset:
         row = await self.get_asset_row(asset_id=asset_id, workspace_id=workspace_id)
@@ -533,6 +533,8 @@ class ScenarioService:
             row.source_artifact_id = source_artifact_id
         if metadata is not None:
             row.metadata_json = metadata
+        if lifecycle_status is not None:
+            row.lifecycle_status = lifecycle_status.value
         if embedding_status is not None:
             row.embedding_status = embedding_status.value
         row.updated_at = utc_now_naive()
@@ -574,13 +576,19 @@ class ScenarioService:
         version_row = result.scalar_one_or_none()
         if version_row is None:
             raise ValueError("资产版本不存在")
+        restored_lifecycle_status = (version_row.metadata_json or {}).get("lifecycle_status")
         asset.content = version_row.content
         asset.source_artifact_id = version_row.source_artifact_id
         asset.metadata_json = {
             **(version_row.metadata_json or {}),
             "restored_from_version": version,
+            "restored_from_lifecycle_status": restored_lifecycle_status
+            or ProjectAssetLifecycleStatus.CANON.value,
             "restored_at": utc_now_naive().isoformat(),
         }
+        asset.lifecycle_status = (
+            restored_lifecycle_status or ProjectAssetLifecycleStatus.CANON.value
+        )
         asset.version += 1
         asset.updated_at = utc_now_naive()
         self._add_asset_version(asset, user_id=user_id)
@@ -701,10 +709,17 @@ class ScenarioService:
                 version=row.version,
                 content=row.content,
                 source_artifact_id=row.source_artifact_id,
-                metadata_json=row.metadata_json or {},
+                metadata_json=self._asset_version_metadata(row),
                 created_by=user_id,
             )
         )
+
+    def _asset_version_metadata(self, row: ProjectAssetORM) -> dict[str, Any]:
+        """记录版本快照对应的资产生命周期，便于恢复时还原 canon/candidate 语义。"""
+        return {
+            **(row.metadata_json or {}),
+            "lifecycle_status": row.lifecycle_status or ProjectAssetLifecycleStatus.CANON.value,
+        }
 
     async def _validate_asset_type(self, scenario_code: str, asset_type: str) -> None:
         template = await self.get_template(scenario_code)
