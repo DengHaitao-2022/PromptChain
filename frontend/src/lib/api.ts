@@ -1187,6 +1187,22 @@ export const workflowApi = {
       if (options.retrievalConfig) {
         formData.append('retrieval_config', JSON.stringify(options.retrievalConfig));
       }
+      // multipart 启动同样保留场景项目上下文，保证带上传资料的运行仍可追踪到项目资产。
+      if (options.scenarioCode) {
+        formData.append('scenario_code', options.scenarioCode);
+      }
+      if (options.projectId) {
+        formData.append('project_id', options.projectId);
+      }
+      if (options.editMode) {
+        formData.append('edit_mode', options.editMode);
+      }
+      if (options.generationMode) {
+        formData.append('generation_mode', options.generationMode);
+      }
+      if (options.targetAssetId) {
+        formData.append('target_asset_id', options.targetAssetId);
+      }
       for (const file of options.runUploadFiles) {
         formData.append('files', file);
       }

@@ -57,59 +57,6 @@ def _build_gate_questions(report: FactCheckReport) -> list[dict]:
     return questions
 
 
-def _normalize_scenario_risk(level: object) -> str:
-    return str(level) if str(level) in {"low", "medium", "high"} else "high"
-
-
-def _append_scenario_consistency_checks(report: FactCheckReport, state: dict) -> dict | None:
-    """把场景一致性检查映射为现有 FactCheck Gate 可审阅的高风险项。"""
-    scenario_report = ScenarioRuntimeService().build_scenario_report(state)
-    if not scenario_report:
-        return None
-
-    for check in scenario_report.get("checks") or []:
-        if not isinstance(check, dict):
-            continue
-        check_type = str(check.get("type") or "scenario_check")
-        label = str(check.get("label") or check_type)
-        passed = bool(check.get("passed"))
-        risk_level = _normalize_scenario_risk(check.get("risk_level"))
-        suggestion = check.get("suggestion")
-        evidence = check.get("evidence") if isinstance(check.get("evidence"), dict) else {}
-        claim_id = f"scenario_{check_type}"
-        evidence_summary = json.dumps(evidence, ensure_ascii=False, default=str)
-        report.claims.append(
-            FactClaim(
-                id=claim_id,
-                text=f"{label}检查：{evidence_summary}",
-                section_id="scenario_consistency",
-                category="other",
-            )
-        )
-        report.results.append(
-            VerificationResult(
-                claim_id=claim_id,
-                is_verified=passed,
-                confidence=1.0 if passed else 0.72,
-                evidence_status="supported" if passed else "unsupported",
-                source="Project Memory",
-                suggested_correction=None,
-                risk_level=risk_level,
-                verification_question=f"请确认{label}是否满足项目记忆约束。",
-                verification_answer=str(
-                    suggestion
-                    or (
-                        f"{label}通过，未发现与项目记忆冲突。"
-                        if passed
-                        else f"{label}未通过，需要人工复核。"
-                    )
-                ),
-            )
-        )
-
-    return scenario_report
-
-
 async def _update_gate_metadata(store, workflow_run_id: str, gate_payload: dict | None) -> None:
     workflow_run = await store.get_workflow_run(workflow_run_id)
     if workflow_run is None:
@@ -446,7 +393,7 @@ async def check_facts(state: dict) -> dict:
 
         # 生成报告，并把场景一致性检查映射进同一个可审批 Gate。
         report = FactCheckReport(claims=all_claims, results=all_results)
-        scenario_report = _append_scenario_consistency_checks(report, state)
+        scenario_report = ScenarioRuntimeService().append_checks_to_fact_report(report, state)
         report.compute_stats()
         fact_check_gate_enabled = runtime_feature_enabled(
             state,

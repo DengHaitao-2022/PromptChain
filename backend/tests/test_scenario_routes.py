@@ -683,3 +683,29 @@ def test_direct_workflow_start_validates_project_context_and_passes_metadata(mon
         },
     )
     assert mismatch_response.status_code == 400
+
+
+def test_uploaded_workflow_start_keeps_project_metadata(monkeypatch):
+    client, fake_workflow, _, _ = _client(monkeypatch)
+
+    response = client.post(
+        "/api/workflow/start-with-uploads",
+        data={
+            "user_input": "带临时资料续写项目场景",
+            "project_id": "project-1",
+            "scenario_code": "novel_writing",
+            "generation_mode": "continue_scene",
+            "target_asset_id": "asset-1",
+            "edit_mode": "project_workbench",
+        },
+        files={"files": ("brief.txt", "林澈需要进入雾城灯塔。".encode(), "text/plain")},
+    )
+
+    assert response.status_code == 200
+    call = fake_workflow.calls[-1]
+    assert call["project_id"] == "project-1"
+    assert call["scenario_code"] == "novel_writing"
+    assert call["generation_mode"] == "continue_scene"
+    assert call["target_asset_id"] == "asset-1"
+    assert call["edit_mode"] == "project_workbench"
+    assert call["run_upload_documents"][0]["file_name"] == "brief.txt"

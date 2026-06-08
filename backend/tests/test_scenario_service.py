@@ -12,6 +12,7 @@ import orm.scenario_orm  # noqa: F401
 from db.postgres_store import Base
 from models.auth_models import MemberRole
 from models.auth_orm import MembershipORM, UserORM, WorkspaceORM
+from models.fact_check import FactCheckReport
 from models.knowledge import KnowledgeScope, KnowledgeSearchRequest
 from orm.knowledge_orm import KnowledgeBaseORM
 from services.scenario_runtime_service import ScenarioRuntimeService
@@ -283,6 +284,35 @@ def test_novel_runtime_missing_memory_becomes_high_risk():
     assert {item["type"] for item in failed_checks} >= {
         "character_consistency_check",
         "timeline_consistency_check",
+    }
+
+
+def test_novel_consistency_checks_are_mapped_to_fact_check_gate_risks():
+    service = ScenarioRuntimeService()
+    report = FactCheckReport()
+    scenario_report = service.append_checks_to_fact_report(
+        report,
+        {
+            "scenario_code": "novel_writing",
+            "project_id": "project-1",
+            "final_content": {"scene": "一段没有既有人物和时间线承接的正文。"},
+            "project_memory_context": {
+                "assets": {
+                    "character_card": [{"title": "林澈"}],
+                    "timeline_event": [{"title": "灯塔熄灭"}],
+                }
+            },
+        },
+    )
+
+    assert scenario_report is not None
+    assert scenario_report["risk_level"] == "high"
+    report.compute_stats()
+    assert report.has_high_risk_items()
+    assert {result.claim_id for result in report.results if result.risk_level == "high"} >= {
+        "scenario_character_consistency_check",
+        "scenario_timeline_consistency_check",
+        "scenario_worldbuilding_consistency_check",
     }
 
 

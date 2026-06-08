@@ -371,6 +371,11 @@ async def start_workflow_with_uploads(
     model_provider_id: str | None = Form(None),
     model_name: str | None = Form(None),
     retrieval_config: str | None = Form(None),
+    scenario_code: str | None = Form(None),
+    project_id: str | None = Form(None),
+    edit_mode: str | None = Form(None),
+    generation_mode: str | None = Form(None),
+    target_asset_id: str | None = Form(None),
     files: list[UploadFile] | None = File(None),
 ) -> WorkflowResponse:
     """启动工作流并先索引本次运行上传资料。"""
@@ -387,11 +392,13 @@ async def start_workflow_with_uploads(
             model_provider_id=model_provider_id,
             model_name=model_name,
             retrieval_config=config,
-            scenario_code=None,
-            project_id=None,
-            edit_mode=None,
-            generation_mode=None,
-            target_asset_id=None,
+            # multipart 入口与 JSON 入口保持同一场景 metadata 语义，
+            # 避免项目运行携带临时资料时丢失可追踪上下文。
+            scenario_code=scenario_code,
+            project_id=project_id,
+            edit_mode=edit_mode,
+            generation_mode=generation_mode,
+            target_asset_id=target_asset_id,
         )
         return await _start_workflow_run(request, body, run_upload_documents=documents)
     except HTTPException:

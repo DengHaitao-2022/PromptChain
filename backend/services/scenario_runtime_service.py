@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from models.fact_check import FactCheckReport, FactClaim, VerificationResult
 
 NOVEL_REQUIRED_ASSET_TYPES = (
     "story_bible",
@@ -159,8 +162,64 @@ def _has_required_memory(memory_context: dict[str, Any], asset_types: tuple[str,
     return all(_asset_titles(memory_context, asset_type) for asset_type in asset_types)
 
 
+def _normalize_scenario_risk(level: object) -> str:
+    return str(level) if str(level) in {"low", "medium", "high"} else "high"
+
+
 class ScenarioRuntimeService:
     """为场景运行生成检查报告和记忆更新候选。"""
+
+    def append_checks_to_fact_report(
+        self,
+        report: FactCheckReport,
+        state: dict,
+    ) -> dict[str, Any] | None:
+        """把场景一致性检查映射为现有 FactCheck Gate 可审阅的高风险项。"""
+        scenario_report = self.build_scenario_report(state)
+        if not scenario_report:
+            return None
+
+        for check in scenario_report.get("checks") or []:
+            if not isinstance(check, dict):
+                continue
+            check_type = str(check.get("type") or "scenario_check")
+            label = str(check.get("label") or check_type)
+            passed = bool(check.get("passed"))
+            risk_level = _normalize_scenario_risk(check.get("risk_level"))
+            suggestion = check.get("suggestion")
+            evidence = check.get("evidence") if isinstance(check.get("evidence"), dict) else {}
+            claim_id = f"scenario_{check_type}"
+            evidence_summary = json.dumps(evidence, ensure_ascii=False, default=str)
+            report.claims.append(
+                FactClaim(
+                    id=claim_id,
+                    text=f"{label}检查：{evidence_summary}",
+                    section_id="scenario_consistency",
+                    category="other",
+                )
+            )
+            report.results.append(
+                VerificationResult(
+                    claim_id=claim_id,
+                    is_verified=passed,
+                    confidence=1.0 if passed else 0.72,
+                    evidence_status="supported" if passed else "unsupported",
+                    source="Project Memory",
+                    suggested_correction=None,
+                    risk_level=risk_level,
+                    verification_question=f"请确认{label}是否满足项目记忆约束。",
+                    verification_answer=str(
+                        suggestion
+                        or (
+                            f"{label}通过，未发现与项目记忆冲突。"
+                            if passed
+                            else f"{label}未通过，需要人工复核。"
+                        )
+                    ),
+                )
+            )
+
+        return scenario_report
 
     def build_scenario_report(self, state: dict) -> dict[str, Any] | None:
         scenario_code = state.get("scenario_code")
