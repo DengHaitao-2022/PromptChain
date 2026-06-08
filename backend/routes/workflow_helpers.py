@@ -55,6 +55,11 @@ class StartWorkflowRequest(BaseModel):
     model_provider_id: str | None = None
     model_name: str | None = None
     retrieval_config: RetrievalConfig | None = None
+    scenario_code: str | None = None
+    project_id: str | None = None
+    edit_mode: str | None = None
+    generation_mode: str | None = None
+    target_asset_id: str | None = None
 
 
 class ApproveOutlineRequest(BaseModel):

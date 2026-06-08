@@ -34,6 +34,7 @@ from services.cove_fact_check import (
     extract_fact_claims,
     generate_verification_question,
 )
+from services.scenario_runtime_service import ScenarioRuntimeService
 
 
 def _now_iso() -> str:
@@ -390,8 +391,9 @@ async def check_facts(state: dict) -> dict:
                 )
                 node_run.llm_calls.append(llm_call)
 
-        # 生成报告
+        # 生成报告，并把场景一致性检查映射进同一个可审批 Gate。
         report = FactCheckReport(claims=all_claims, results=all_results)
+        scenario_report = ScenarioRuntimeService().append_checks_to_fact_report(report, state)
         report.compute_stats()
         fact_check_gate_enabled = runtime_feature_enabled(
             state,
@@ -399,6 +401,23 @@ async def check_facts(state: dict) -> dict:
             default=True,
         )
         awaiting_approval = report.has_high_risk_items() and fact_check_gate_enabled
+
+        scenario_report_artifact_id = None
+        if scenario_report:
+            scenario_artifact = await store.create_artifact(
+                artifact_type=ArtifactType.SCENARIO_CHECK_REPORT,
+                content=scenario_report,
+                workflow_run_id=workflow_run_id,
+                node_run_id=node_run.id,
+                metadata={
+                    "scenario_code": state.get("scenario_code"),
+                    "project_id": state.get("project_id"),
+                    "risk_level": scenario_report.get("risk_level"),
+                },
+            )
+            scenario_report_artifact_id = scenario_artifact.id
+            scenario_report = {**scenario_report, "artifact_id": scenario_report_artifact_id}
+            node_run.output_artifact_ids.append(scenario_artifact.id)
 
         # 创建 Artifact
         artifact = await store.create_artifact(
@@ -413,6 +432,7 @@ async def check_facts(state: dict) -> dict:
                 "evidence_artifact_id": state.get("evidence_artifact_id"),
                 "knowledge_conflicts": state.get("knowledge_conflicts", []),
                 "unverified_points": state.get("unverified_points", []),
+                "scenario_check_report_artifact_id": scenario_report_artifact_id,
             },
         )
         node_run.output_artifact_ids.append(artifact.id)
@@ -440,6 +460,7 @@ async def check_facts(state: dict) -> dict:
                 **state,
                 "fact_check_report": report,
                 "fact_check_artifact_id": artifact.id,
+                "scenario_check_report": scenario_report,
                 "awaiting_fact_check_approval": True,
                 "fact_check_decisions": None,
                 "manual_corrections": None,
@@ -454,6 +475,7 @@ async def check_facts(state: dict) -> dict:
             **state,
             "fact_check_report": report,
             "fact_check_artifact_id": artifact.id,
+            "scenario_check_report": scenario_report,
             "awaiting_fact_check_approval": False,
             "fact_check_decisions": None,
             "manual_corrections": None,
@@ -520,6 +542,29 @@ async def approve_fact_check(state: dict) -> dict:
                 failed_corrections[claim_id] = {
                     "claim_id": claim_id,
                     "reason": "claim_or_result_not_found",
+                }
+                continue
+
+            if claim.section_id == "scenario_consistency":
+                if decision == "confirm":
+                    _mark_result_resolved(result)
+                    continue
+                if decision == "manual":
+                    replacement = manual_corrections.get(claim_id)
+                    if not replacement:
+                        failed_corrections[claim_id] = {
+                            "claim_id": claim_id,
+                            "reason": "manual_correction_missing",
+                        }
+                        continue
+                    result.verification_answer = (
+                        f"{result.verification_answer or ''}\n人工复核意见：{replacement}"
+                    ).strip()
+                    _mark_result_resolved(result)
+                    continue
+                failed_corrections[claim_id] = {
+                    "claim_id": claim_id,
+                    "reason": f"unsupported_scenario_decision:{decision}",
                 }
                 continue
 

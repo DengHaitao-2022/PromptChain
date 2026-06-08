@@ -15,6 +15,7 @@ import {
   ChevronRight,
   ClipboardList,
   LibraryBig,
+  Layers3,
   KeyRound,
   LayoutDashboard,
   ScrollText,
@@ -34,7 +35,15 @@ type NavItem = {
   icon: LucideIcon;
   exact?: boolean;
   // 带 resource/action 的导航项会跟随当前角色权限自动显隐。
-  resource?: 'workflow' | 'workflow_run' | 'member' | 'model_provider' | 'secret' | 'audit_log' | 'knowledge_base';
+  resource?:
+    | 'workflow'
+    | 'workflow_run'
+    | 'member'
+    | 'model_provider'
+    | 'secret'
+    | 'audit_log'
+    | 'knowledge_base'
+    | 'content_project';
   action?: 'read';
 };
 
@@ -57,6 +66,13 @@ const NAV_ITEMS: NavItem[] = [
     href: '/console/runs',
     icon: ClipboardList,
     resource: 'workflow_run',
+    action: 'read',
+  },
+  {
+    label: '内容项目',
+    href: '/console/projects',
+    icon: Layers3,
+    resource: 'content_project',
     action: 'read',
   },
   {

@@ -198,6 +198,11 @@ class RerunService:
                 "requested_model_name",
                 "runtime_plan",
                 "retrieval_config",
+                "scenario_code",
+                "project_id",
+                "edit_mode",
+                "generation_mode",
+                "target_asset_id",
             )
             if key in original_metadata
         }

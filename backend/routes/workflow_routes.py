@@ -60,6 +60,12 @@ INTERNAL_SERVER_ERROR = "Internal server error"
 MAX_RUN_UPLOAD_FILES = 5
 MAX_RUN_UPLOAD_BYTES = 20 * 1024 * 1024
 UPLOAD_CHUNK_SIZE = 1024 * 1024
+SCENARIO_RERUN_NODE_ALIASES = {
+    "novel_writing": {
+        "plan_scene": "generate_outline",
+        "generate_scene": "generate_content",
+    }
+}
 
 
 def _format_sse_event(event: str, data: dict, event_id: str | None = None) -> str:
@@ -121,6 +127,14 @@ async def _build_workflow_event_snapshot(
             viewer_user_id=viewer_user_id,
         ),
     }
+
+
+def _resolve_scenario_rerun_node(workflow_run, from_node: str) -> str:
+    """把场景语义节点映射到当前运行时 canonical 节点。"""
+    metadata = workflow_run.metadata if isinstance(workflow_run.metadata, dict) else {}
+    scenario_code = metadata.get("scenario_code")
+    aliases = SCENARIO_RERUN_NODE_ALIASES.get(scenario_code, {})
+    return aliases.get(from_node, from_node)
 
 
 def _workflow_run_snapshot(workflow_run) -> dict:
@@ -190,16 +204,47 @@ async def _start_workflow_run(
     user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
         request, "workflow", "execute"
     )
+    scenario_code = body.scenario_code
+    workflow_definition_id = body.workflow_definition_id
+    workflow_version_id = body.workflow_version_id
+    if body.project_id:
+        from services.scenario_service import ScenarioService
+
+        async with get_postgres_store().initialized_session() as session:
+            try:
+                service = ScenarioService(session)
+                project = await service.validate_project_run_context(
+                    project_id=body.project_id,
+                    workspace_id=workspace_id,
+                    scenario_code=scenario_code,
+                    generation_mode=body.generation_mode,
+                    target_asset_id=body.target_asset_id,
+                )
+                template = await service.get_template(project.scenario_code)
+            except ValueError as exc:
+                message = str(exc)
+                status_code = 404 if "不存在" in message else 400
+                raise HTTPException(status_code=status_code, detail=message) from exc
+            scenario_code = project.scenario_code
+            workflow_definition_id = (
+                workflow_definition_id or template.default_workflow_definition_id
+            )
+            workflow_version_id = workflow_version_id or template.default_workflow_version_id
     workflow = get_workflow()
     start_kwargs = {
-        "workflow_definition_id": body.workflow_definition_id,
-        "workflow_version_id": body.workflow_version_id,
+        "workflow_definition_id": workflow_definition_id,
+        "workflow_version_id": workflow_version_id,
         "workspace_id": workspace_id,
         "user_id": user_id,
         "model_provider_id": body.model_provider_id,
         "model_name": body.model_name,
         "retrieval_config": body.retrieval_config,
         "run_upload_documents": run_upload_documents,
+        "scenario_code": scenario_code,
+        "project_id": body.project_id,
+        "edit_mode": body.edit_mode,
+        "generation_mode": body.generation_mode,
+        "target_asset_id": body.target_asset_id,
     }
     supported_parameters = set(inspect.signature(workflow.start).parameters)
     compatible_kwargs = {
@@ -229,6 +274,9 @@ async def _start_workflow_run(
                 body.retrieval_config.enabled if body.retrieval_config else False
             ),
             "run_upload_document_count": len(run_upload_documents or []),
+            "scenario_code": scenario_code,
+            "project_id": body.project_id,
+            "generation_mode": body.generation_mode,
             "input_length": len(body.user_input),
             "status": status,
         },
@@ -323,6 +371,11 @@ async def start_workflow_with_uploads(
     model_provider_id: str | None = Form(None),
     model_name: str | None = Form(None),
     retrieval_config: str | None = Form(None),
+    scenario_code: str | None = Form(None),
+    project_id: str | None = Form(None),
+    edit_mode: str | None = Form(None),
+    generation_mode: str | None = Form(None),
+    target_asset_id: str | None = Form(None),
     files: list[UploadFile] | None = File(None),
 ) -> WorkflowResponse:
     """启动工作流并先索引本次运行上传资料。"""
@@ -339,6 +392,13 @@ async def start_workflow_with_uploads(
             model_provider_id=model_provider_id,
             model_name=model_name,
             retrieval_config=config,
+            # multipart 入口与 JSON 入口保持同一场景 metadata 语义，
+            # 避免项目运行携带临时资料时丢失可追踪上下文。
+            scenario_code=scenario_code,
+            project_id=project_id,
+            edit_mode=edit_mode,
+            generation_mode=generation_mode,
+            target_asset_id=target_asset_id,
         )
         return await _start_workflow_run(request, body, run_upload_documents=documents)
     except HTTPException:
@@ -810,14 +870,16 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
         user_id, workspace_id, _ = await workflow_helpers.require_workspace_permission(
             request, "workflow", "execute"
         )
-        await workflow_helpers.require_workflow_run_access(
+        source_workflow_run = await workflow_helpers.require_workflow_run_access(
             request, workflow_run_id, resource="workflow", action="execute"
         )
+        requested_from_node = body.from_node
+        runtime_from_node = _resolve_scenario_rerun_node(source_workflow_run, requested_from_node)
         rerun_service = get_rerun_service()
 
         # 1. 准备重跑状态
         preserved_state = await rerun_service.prepare_rerun_state(
-            workflow_run_id, body.from_node, body.updated_input
+            workflow_run_id, runtime_from_node, body.updated_input
         )
 
         # 2. 创建新的 WorkflowRun
@@ -827,7 +889,7 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
 
         new_workflow_run = await rerun_service.create_rerun_workflow(
             workflow_run_id,
-            body.from_node,
+            runtime_from_node,
             body.reason or "",
             updated_user_input=updated_user_input,
         )
@@ -840,13 +902,13 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
         if hasattr(workflow, "start_rerun_from_node"):
             result = await workflow.start_rerun_from_node(
                 new_workflow_run.id,
-                from_node=body.from_node,
+                from_node=runtime_from_node,
                 preserved_state=preserved_state,
             )
         else:
             result = await workflow.rerun_from_node(
                 new_workflow_run.id,
-                from_node=body.from_node,
+                from_node=runtime_from_node,
                 preserved_state=preserved_state,
             )
 
@@ -866,7 +928,8 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
             workflow_run_id=new_workflow_run.id,
             detail={
                 "original_workflow_run_id": workflow_run_id,
-                "from_node": body.from_node,
+                "from_node": requested_from_node,
+                "runtime_from_node": runtime_from_node,
                 "has_updated_input": body.updated_input is not None,
                 "reason": body.reason,
             },
@@ -876,7 +939,8 @@ async def rerun_workflow(workflow_run_id: str, request: Request, body: RerunRequ
         return {
             "original_workflow_run_id": workflow_run_id,
             "new_workflow_run_id": new_workflow_run.id,
-            "rerun_from_node": body.from_node,
+            "rerun_from_node": requested_from_node,
+            "runtime_from_node": runtime_from_node,
             "status": result["status"],
             "state": simplified_state,
         }

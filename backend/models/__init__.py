@@ -103,6 +103,15 @@ from .outline import (
     Outline,
     OutlineSection,
 )
+from .scenario import (
+    ContentProject,
+    ContentProjectStatus,
+    ProjectAsset,
+    ProjectAssetEmbeddingStatus,
+    ProjectAssetVersion,
+    ScenarioTemplate,
+    ScenarioTemplateStatus,
+)
 
 __all__ = [
     # artifact
@@ -159,6 +168,14 @@ __all__ = [
     "KnowledgeSearchResponse",
     "KnowledgeUsageStats",
     "RetrievalConfig",
+    # scenario
+    "ScenarioTemplateStatus",
+    "ContentProjectStatus",
+    "ProjectAssetEmbeddingStatus",
+    "ScenarioTemplate",
+    "ContentProject",
+    "ProjectAsset",
+    "ProjectAssetVersion",
     # fact_check
     "FactClaim",
     "VerificationResult",
